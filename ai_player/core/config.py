@@ -183,11 +183,11 @@ class AppConfig:
     )
     vieneu_tts_decoder_path: str = os.getenv(
         "AI_PLAYER_VIENEU_TTS_DECODER_PATH",
-        INTERNAL_VIENEU_TURBO_DECODER,
+        "",
     )
     vieneu_tts_encoder_path: str = os.getenv(
         "AI_PLAYER_VIENEU_TTS_ENCODER_PATH",
-        INTERNAL_VIENEU_TURBO_ENCODER,
+        "",
     )
     vieneu_tts_standard_codec_path: str = os.getenv(
         "AI_PLAYER_VIENEU_TTS_STANDARD_CODEC_PATH",
@@ -291,8 +291,8 @@ def _app_config_env_values() -> dict[str, object]:
         "vieneu_tts_mode": os.getenv("AI_PLAYER_VIENEU_TTS_MODE", "standard"),
         "vieneu_tts_api_base": os.getenv("AI_PLAYER_VIENEU_TTS_API_BASE", ""),
         "vieneu_tts_model_name": os.getenv("AI_PLAYER_VIENEU_TTS_MODEL_NAME", INTERNAL_VIENEU_STANDARD_GGUF),
-        "vieneu_tts_decoder_path": os.getenv("AI_PLAYER_VIENEU_TTS_DECODER_PATH", INTERNAL_VIENEU_TURBO_DECODER),
-        "vieneu_tts_encoder_path": os.getenv("AI_PLAYER_VIENEU_TTS_ENCODER_PATH", INTERNAL_VIENEU_TURBO_ENCODER),
+        "vieneu_tts_decoder_path": os.getenv("AI_PLAYER_VIENEU_TTS_DECODER_PATH", ""),
+        "vieneu_tts_encoder_path": os.getenv("AI_PLAYER_VIENEU_TTS_ENCODER_PATH", ""),
         "vieneu_tts_standard_codec_path": os.getenv(
             "AI_PLAYER_VIENEU_TTS_STANDARD_CODEC_PATH",
             INTERNAL_VIENEU_STANDARD_CODEC,

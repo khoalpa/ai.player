@@ -6,7 +6,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from ai_player.core.config import MODEL_ROOT, OCR_MODELS_PATH, PROJECT_ROOT
+from ai_player.core.config import (
+    INTERNAL_VIENEU_STANDARD_CODEC,
+    INTERNAL_VIENEU_STANDARD_GGUF,
+    INTERNAL_VIENEU_TURBO_GGUF,
+    MODEL_ROOT,
+    OCR_MODELS_PATH,
+    PROJECT_ROOT,
+)
 
 
 @dataclass(frozen=True)
@@ -63,12 +70,56 @@ TOOLS = {
 
 REQUIRED_TOOLS = {"ffmpeg", "ffplay"}
 
-MODEL_PATHS = {
-    "Whisper": MODEL_ROOT / "asr" / "faster-whisper-base",
-    "NLLB": MODEL_ROOT / "translation" / "nllb-200-distilled-600M",
-    "VieNeu standard": MODEL_ROOT / "tts" / "vieneu" / "standard",
-    "VieNeu turbo": MODEL_ROOT / "tts" / "vieneu" / "turbo",
+MODEL_REQUIREMENTS = {
+    "Whisper": (
+        MODEL_ROOT / "asr" / "faster-whisper-base",
+        (
+            "config.json",
+            "model.bin",
+            "tokenizer.json",
+            "vocabulary.txt",
+        ),
+    ),
+    "NLLB": (
+        MODEL_ROOT / "translation" / "nllb-200-distilled-600M",
+        (
+            "config.json",
+            "pytorch_model.bin",
+            "sentencepiece.bpe.model",
+            "tokenizer_config.json",
+        ),
+    ),
+    "NLLB CTranslate2 int8": (
+        MODEL_ROOT / "translation" / "nllb-200-distilled-600M-ct2-int8",
+        (
+            "config.json",
+            "model.bin",
+            "shared_vocabulary.json",
+        ),
+    ),
+    "VieNeu standard": (
+        MODEL_ROOT / "tts" / "vieneu" / "standard",
+        (
+            Path(INTERNAL_VIENEU_STANDARD_GGUF).name,
+            "voices.json",
+            str(
+                Path(INTERNAL_VIENEU_STANDARD_CODEC).relative_to(
+                    MODEL_ROOT / "tts" / "vieneu" / "standard"
+                )
+                / "pytorch_model.bin"
+            ),
+        ),
+    ),
+    "VieNeu turbo": (
+        MODEL_ROOT / "tts" / "vieneu" / "turbo",
+        (
+            Path(INTERNAL_VIENEU_TURBO_GGUF).name,
+            "voices.json",
+        ),
+    ),
 }
+
+REQUIRED_TESSDATA = ("eng", "osd", "vie")
 
 TESSDATA = OCR_MODELS_PATH / "tessdata"
 
@@ -153,16 +204,23 @@ def _tool_section() -> DiagnosticSection:
 
 def _model_section() -> DiagnosticSection:
     items = []
-    for name, path in MODEL_PATHS.items():
-        ok = path.exists() and any(path.iterdir())
-        items.append(DiagnosticItem(name, "OK" if ok else "WARN", str(path)))
+    for name, (path, required_files) in MODEL_REQUIREMENTS.items():
+        missing = [file for file in required_files if not (path / file).is_file()]
+        if missing:
+            detail = f"{path}; missing: {', '.join(missing)}"
+            items.append(DiagnosticItem(name, "WARN", detail))
+        else:
+            items.append(DiagnosticItem(name, "OK", str(path)))
     return DiagnosticSection("Local model/cache folders", tuple(items))
 
 
 def _tessdata_section() -> DiagnosticSection:
     langs = sorted(path.stem for path in TESSDATA.glob("*.traineddata")) if TESSDATA.exists() else []
-    if langs:
+    missing = [lang for lang in REQUIRED_TESSDATA if lang not in langs]
+    if not missing:
         item = DiagnosticItem(str(TESSDATA), "OK", ", ".join(langs))
+    elif langs:
+        item = DiagnosticItem(str(TESSDATA), "WARN", f"available: {', '.join(langs)}; missing: {', '.join(missing)}")
     else:
         item = DiagnosticItem(str(TESSDATA), "WARN", "no local *.traineddata files")
     return DiagnosticSection("Tesseract language packs", (item,))
