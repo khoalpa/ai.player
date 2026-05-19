@@ -1,0 +1,16 @@
+{
+  "options": [
+    {
+      "value": "ollama",
+      "label": "Ollama"
+    },
+    {
+      "value": "local",
+      "label": "Local"
+    },
+    {
+      "value": "openai",
+      "label": "OpenAI-compatible"
+    }
+  ]
+}

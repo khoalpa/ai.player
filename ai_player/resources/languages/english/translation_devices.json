@@ -1,0 +1,16 @@
+{
+  "options": [
+    {
+      "value": "auto",
+      "label": "Auto"
+    },
+    {
+      "value": "cpu",
+      "label": "CPU"
+    },
+    {
+      "value": "cuda",
+      "label": "CUDA"
+    }
+  ]
+}

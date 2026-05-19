@@ -1,0 +1,32 @@
+{
+  "options": [
+    {
+      "value": "original",
+      "label": "Original"
+    },
+    {
+      "value": "system",
+      "label": "System"
+    },
+    {
+      "value": "microphone",
+      "label": "Microphone"
+    },
+    {
+      "value": "system_microphone",
+      "label": "System + Microphone"
+    },
+    {
+      "value": "transcript",
+      "label": "Transcript"
+    },
+    {
+      "value": "document_editor",
+      "label": "Editor"
+    },
+    {
+      "value": "subtitle",
+      "label": "Subtitle"
+    }
+  ]
+}

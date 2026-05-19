@@ -1,0 +1,230 @@
+from __future__ import annotations
+
+import importlib.util
+import os
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import requests
+
+from ai_player.core.config import AppConfig
+from ai_player.core.optional_imports import block_unneeded_transformers_optional_imports
+
+
+class TranscriptCleanupError(RuntimeError):
+    pass
+
+
+_LOCAL_GGUF_CACHE: dict[str, Any] = {}
+_LOCAL_TRANSFORMERS_CACHE: dict[str, tuple[Any, Any]] = {}
+
+
+@dataclass(frozen=True)
+class CleanupContext:
+    source_language: str | None = None
+    previous_text: str = ""
+
+
+class TranscriptCleaner:
+    def __init__(self, config: AppConfig) -> None:
+        self._config = config
+        self._previous_text = ""
+
+    @property
+    def enabled(self) -> bool:
+        return _cleanup_mode(self._config.transcript_cleanup_mode) != "off"
+
+    def clean(self, text: str, source_language: str | None = None) -> str:
+        clean_text = " ".join(str(text or "").split())
+        if not clean_text or not self.enabled:
+            return clean_text
+        context = CleanupContext(source_language=source_language, previous_text=self._previous_text)
+        try:
+            result = _clean_with_provider(clean_text, context, self._config)
+        except Exception:
+            result = clean_text
+        result = _sanitize_llm_output(result) or clean_text
+        self._previous_text = result
+        return result
+
+
+def _clean_with_provider(text: str, context: CleanupContext, config: AppConfig) -> str:
+    provider = _cleanup_provider(config.transcript_cleanup_provider)
+    prompt = _build_prompt(text, context, config)
+    if provider == "openai":
+        return _call_openai_compatible(prompt, config)
+    if provider == "local":
+        return _call_headless_local(prompt, config)
+    return _call_ollama(prompt, config)
+
+
+def _build_prompt(text: str, context: CleanupContext, config: AppConfig) -> str:
+    mode = _cleanup_mode(config.transcript_cleanup_mode)
+    strength = (
+        "Sửa rất nhẹ: chỉ sửa lỗi nhận diện giọng nói rõ ràng, dấu câu, chính tả, thuật ngữ."
+        if mode == "light"
+        else (
+            "Sửa mạnh hơn nhưng không thêm ý mới: phục hồi câu bị vỡ nhẹ "
+            "bằng ngữ cảnh, chuẩn hóa dấu câu và thuật ngữ."
+        )
+    )
+    language = context.source_language or config.source_language or "auto"
+    previous = context.previous_text.strip()
+    previous_block = f"\nNgữ cảnh trước đó: {previous}" if previous else ""
+    return (
+        "Bạn là bộ sửa lỗi transcript ASR.\n"
+        f"Ngôn ngữ nguồn: {language}\n"
+        f"{strength}\n"
+        "Quy tắc bắt buộc:\n"
+        "- Chỉ trả về transcript đã sửa, không giải thích.\n"
+        "- Không dịch sang ngôn ngữ khác.\n"
+        "- Không thêm thông tin không có trong câu gốc.\n"
+        "- Giữ nguyên tên riêng, lệnh terminal, URL, API, model, số liệu nếu không chắc.\n"
+        "- Nếu câu quá nhiễu hoặc không chắc, trả về gần giống câu gốc nhất.\n"
+        f"{previous_block}\n"
+        f"Transcript thô: {text}\n"
+        "Transcript đã sửa:"
+    )
+
+
+def _call_ollama(prompt: str, config: AppConfig) -> str:
+    base = str(config.transcript_cleanup_api_base or "http://127.0.0.1:11434").rstrip("/")
+    response = requests.post(
+        f"{base}/api/generate",
+        json={
+            "model": config.transcript_cleanup_model or "llama3.1",
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.1},
+        },
+        timeout=max(1.0, float(config.transcript_cleanup_timeout_seconds)),
+    )
+    response.raise_for_status()
+    data = response.json()
+    return str(data.get("response") or "")
+
+
+def _call_openai_compatible(prompt: str, config: AppConfig) -> str:
+    base = str(config.transcript_cleanup_api_base or "https://api.openai.com/v1").rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    if config.transcript_cleanup_api_key:
+        headers["Authorization"] = f"Bearer {config.transcript_cleanup_api_key}"
+    response = requests.post(
+        f"{base}/chat/completions",
+        headers=headers,
+        json={
+            "model": config.transcript_cleanup_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+        },
+        timeout=max(1.0, float(config.transcript_cleanup_timeout_seconds)),
+    )
+    response.raise_for_status()
+    data = response.json()
+    return str(data["choices"][0]["message"]["content"])
+
+
+def _call_headless_local(prompt: str, config: AppConfig) -> str:
+    model_value = str(config.transcript_cleanup_model or "").strip()
+    if not model_value:
+        raise TranscriptCleanupError("Chưa cấu hình Cleanup model cho Headless local.")
+    model_path = Path(model_value)
+    if model_path.is_file() and model_path.suffix.lower() == ".gguf":
+        return _call_local_gguf(prompt, model_path, config)
+    if model_path.is_dir():
+        return _call_local_transformers(prompt, model_path, config)
+    raise TranscriptCleanupError("Headless local cần Cleanup model là file .gguf hoặc thư mục model HuggingFace local.")
+
+
+def _call_local_gguf(prompt: str, model_path: Path, config: AppConfig) -> str:
+    key = str(model_path.resolve())
+    model = _LOCAL_GGUF_CACHE.get(key)
+    if model is None:
+        try:
+            from llama_cpp import Llama
+        except ImportError as exc:
+            raise TranscriptCleanupError("Thiếu llama-cpp-python cho Headless local GGUF.") from exc
+        model = Llama(
+            model_path=key,
+            n_ctx=2048,
+            n_threads=max(1, min(8, os.cpu_count() or 4)),
+            verbose=False,
+        )
+        _LOCAL_GGUF_CACHE[key] = model
+    output = model(
+        prompt,
+        max_tokens=160,
+        temperature=0.1,
+        stop=["\n\n", "Transcript thô:", "Transcript đã sửa:"],
+    )
+    return str(output["choices"][0]["text"])
+
+
+def _call_local_transformers(prompt: str, model_path: Path, config: AppConfig) -> str:
+    key = str(model_path.resolve())
+    cached = _LOCAL_TRANSFORMERS_CACHE.get(key)
+    if cached is None:
+        try:
+            with block_unneeded_transformers_optional_imports():
+                import torch
+                from transformers import AutoModelForCausalLM, AutoTokenizer
+        except ImportError as exc:
+            raise TranscriptCleanupError("Thiếu torch/transformers cho Headless local.") from exc
+        with block_unneeded_transformers_optional_imports():
+            tokenizer = AutoTokenizer.from_pretrained(key, local_files_only=True)
+        kwargs = {
+            "local_files_only": True,
+            "torch_dtype": torch.float16 if torch.cuda.is_available() else torch.float32,
+        }
+        if torch.cuda.is_available() and importlib.util.find_spec("accelerate") is not None:
+            kwargs["device_map"] = "auto"
+        with block_unneeded_transformers_optional_imports():
+            model = AutoModelForCausalLM.from_pretrained(key, **kwargs)
+        if "device_map" not in kwargs:
+            model.to("cuda" if torch.cuda.is_available() else "cpu")
+        model.eval()
+        cached = (tokenizer, model)
+        _LOCAL_TRANSFORMERS_CACHE[key] = cached
+    tokenizer, model = cached
+    import torch
+
+    encoded = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1800)
+    encoded = {name: value.to(model.device) for name, value in encoded.items()}
+    with torch.no_grad():
+        output = model.generate(
+            **encoded,
+            max_new_tokens=160,
+            do_sample=False,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+    generated = output[0][encoded["input_ids"].shape[-1] :]
+    return tokenizer.decode(generated, skip_special_tokens=True)
+
+
+def _sanitize_llm_output(text: str) -> str:
+    value = str(text or "").strip()
+    value = re.sub(r"^Transcript đã sửa:\s*", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"^Transcript da sua:\s*", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"^Corrected transcript:\s*", "", value, flags=re.IGNORECASE)
+    value = value.strip().strip('"').strip()
+    return " ".join(value.split())
+
+
+def _cleanup_mode(value: object) -> str:
+    raw = str(value or "off").strip().lower().replace("-", "_").replace(" ", "_")
+    if raw in {"light", "nhe", "nhẹ"}:
+        return "light"
+    if raw in {"strong", "manh", "mạnh"}:
+        return "strong"
+    return "off"
+
+
+def _cleanup_provider(value: object) -> str:
+    raw = str(value or "ollama").strip().lower().replace("-", "_").replace(" ", "_")
+    if raw in {"openai", "openai_compatible", "api"}:
+        return "openai"
+    if raw in {"local", "headless", "headless_local", "local_headless", "transformers", "llamacpp", "llama_cpp"}:
+        return "local"
+    return "ollama"

@@ -1,0 +1,16 @@
+{
+  "options": [
+    {
+      "value": "int8",
+      "label": "int8"
+    },
+    {
+      "value": "float16",
+      "label": "float16"
+    },
+    {
+      "value": "float32",
+      "label": "float32"
+    }
+  ]
+}

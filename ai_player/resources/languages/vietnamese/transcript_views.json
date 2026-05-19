@@ -1,0 +1,20 @@
+{
+  "options": [
+    {
+      "value": "off",
+      "label": "Tắt"
+    },
+    {
+      "value": "all",
+      "label": "Tất cả"
+    },
+    {
+      "value": "source",
+      "label": "Nguồn"
+    },
+    {
+      "value": "target",
+      "label": "Đích"
+    }
+  ]
+}

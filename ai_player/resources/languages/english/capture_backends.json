@@ -1,0 +1,16 @@
+{
+  "options": [
+    {
+      "value": "auto",
+      "label": "Auto"
+    },
+    {
+      "value": "soundcard",
+      "label": "Soundcard"
+    },
+    {
+      "value": "ffmpeg",
+      "label": "FFmpeg DirectShow"
+    }
+  ]
+}

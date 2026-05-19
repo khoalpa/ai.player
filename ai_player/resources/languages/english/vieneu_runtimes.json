@@ -1,0 +1,16 @@
+{
+  "options": [
+    {
+      "value": "subprocess",
+      "label": "Subprocess"
+    },
+    {
+      "value": "auto",
+      "label": "Auto"
+    },
+    {
+      "value": "inprocess",
+      "label": "In-process"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "options": [
+    {
+      "value": "subprocess",
+      "label": "Tiến trình con"
+    },
+    {
+      "value": "auto",
+      "label": "Tự động"
+    },
+    {
+      "value": "inprocess",
+      "label": "Trong tiến trình"
+    }
+  ]
+}

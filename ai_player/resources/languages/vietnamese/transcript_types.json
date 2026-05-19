@@ -1,0 +1,20 @@
+{
+  "options": [
+    {
+      "value": "off",
+      "label": "Tắt"
+    },
+    {
+      "value": "all",
+      "label": "Tất cả"
+    },
+    {
+      "value": "raw",
+      "label": "Thô"
+    },
+    {
+      "value": "cleaned",
+      "label": "Đã sửa"
+    }
+  ]
+}

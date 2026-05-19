@@ -1,0 +1,16 @@
+{
+  "options": [
+    {
+      "value": "auto",
+      "label": "Tự động"
+    },
+    {
+      "value": "cuda",
+      "label": "CUDA"
+    },
+    {
+      "value": "cpu",
+      "label": "CPU"
+    }
+  ]
+}

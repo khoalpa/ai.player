@@ -1,0 +1,48 @@
+{
+  "options": [
+    {
+      "value": "vi",
+      "label": "Vietnamese"
+    },
+    {
+      "value": "en",
+      "label": "English"
+    },
+    {
+      "value": "ja",
+      "label": "Japanese"
+    },
+    {
+      "value": "zh",
+      "label": "Chinese"
+    },
+    {
+      "value": "ko",
+      "label": "Korean"
+    },
+    {
+      "value": "fr",
+      "label": "French"
+    },
+    {
+      "value": "de",
+      "label": "German"
+    },
+    {
+      "value": "es",
+      "label": "Spanish"
+    },
+    {
+      "value": "ru",
+      "label": "Russian"
+    },
+    {
+      "value": "th",
+      "label": "Thai"
+    },
+    {
+      "value": "id",
+      "label": "Indonesian"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "options": [
+    {
+      "value": "off",
+      "label": "Off"
+    },
+    {
+      "value": "all",
+      "label": "All"
+    },
+    {
+      "value": "raw",
+      "label": "Raw"
+    },
+    {
+      "value": "cleaned",
+      "label": "Cleaned"
+    }
+  ]
+}

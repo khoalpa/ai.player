@@ -1,0 +1,24 @@
+{
+  "options": [
+    {
+      "value": "source",
+      "label": "Nguồn"
+    },
+    {
+      "value": "compact",
+      "label": "Gọn (720p)"
+    },
+    {
+      "value": "balanced",
+      "label": "Cân bằng"
+    },
+    {
+      "value": "high",
+      "label": "Cao (1080p)"
+    },
+    {
+      "value": "archival",
+      "label": "Lưu trữ"
+    }
+  ]
+}

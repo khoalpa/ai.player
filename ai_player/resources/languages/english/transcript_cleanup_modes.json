@@ -1,0 +1,16 @@
+{
+  "options": [
+    {
+      "value": "off",
+      "label": "Off"
+    },
+    {
+      "value": "light",
+      "label": "Light"
+    },
+    {
+      "value": "strong",
+      "label": "Strong"
+    }
+  ]
+}

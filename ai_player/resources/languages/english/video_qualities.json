@@ -1,0 +1,24 @@
+{
+  "options": [
+    {
+      "value": "source",
+      "label": "Source"
+    },
+    {
+      "value": "compact",
+      "label": "Compact (720p)"
+    },
+    {
+      "value": "balanced",
+      "label": "Balanced"
+    },
+    {
+      "value": "high",
+      "label": "High (1080p)"
+    },
+    {
+      "value": "archival",
+      "label": "Archival"
+    }
+  ]
+}

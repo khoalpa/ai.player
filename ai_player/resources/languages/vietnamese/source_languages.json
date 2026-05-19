@@ -1,0 +1,52 @@
+{
+  "options": [
+    {
+      "value": "auto",
+      "label": "Tự động"
+    },
+    {
+      "value": "en",
+      "label": "Tiếng Anh"
+    },
+    {
+      "value": "ja",
+      "label": "Tiếng Nhật"
+    },
+    {
+      "value": "zh",
+      "label": "Tiếng Trung"
+    },
+    {
+      "value": "ko",
+      "label": "Tiếng Hàn"
+    },
+    {
+      "value": "fr",
+      "label": "Tiếng Pháp"
+    },
+    {
+      "value": "de",
+      "label": "Tiếng Đức"
+    },
+    {
+      "value": "es",
+      "label": "Tiếng Tây Ban Nha"
+    },
+    {
+      "value": "ru",
+      "label": "Tiếng Nga"
+    },
+    {
+      "value": "th",
+      "label": "Tiếng Thái"
+    },
+    {
+      "value": "id",
+      "label": "Tiếng Indonesia"
+    },
+    {
+      "value": "vi",
+      "label": "Tiếng Việt"
+    }
+  ]
+}

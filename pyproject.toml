@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-player"
+version = "0.1.0"
+description = "Windows AI video player with offline ASR, translation, OCR, and dubbing."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "PySide6-Essentials>=6.7",
+  "PySide6-Addons>=6.7",
+  "python-docx>=1.2",
+  "python-pptx>=1.0",
+  "pypdf>=6.0",
+  "PyMuPDF>=1.24",
+  "Pillow>=10.0",
+  "faster-whisper>=1.0",
+  "ctranslate2>=4.4",
+  "argostranslate>=1.9",
+  "edge-tts>=6.1",
+  "sentencepiece>=0.2",
+  "torch>=2.2",
+  "transformers>=4.41",
+  "huggingface_hub>=0.23",
+  "sea-g2p>=0.7.5",
+  "llama-cpp-python==0.3.16",
+  "soundfile>=0.12",
+  "soundcard>=0.4.6",
+  "librosa>=0.11",
+  "perth>=0.2.0",
+  "neucodec>=0.0.5",
+  "yt-dlp>=2025.1.15",
+  "onnxruntime-gpu>=1.23; platform_system == 'Windows'",
+  "onnxruntime>=1.18; platform_system != 'Windows'",
+  "nvidia-cublas-cu12>=12.9; platform_system == 'Windows'",
+  "nvidia-cudnn-cu12>=9.22; platform_system == 'Windows'",
+  "nvidia-cuda-nvrtc-cu12>=12.9; platform_system == 'Windows'",
+  "requests>=2.31",
+  "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.5",
+]
+packaging = [
+  "pyinstaller>=6.0",
+]
+audio-separation = [
+  "demucs>=4.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["ai_player*"]
+
+[tool.setuptools.package-data]
+ai_player = [
+  "resources/languages/*/*.json",
+  "vieneu_tts/vieneu/assets/*.json",
+  "vieneu_tts/vieneu/assets/samples/*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [
+  ".venv",
+  "build",
+  "dist",
+  "models",
+  "data",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"ai_player/app.py" = ["E402"]
+"ai_player/ui/user_guide.py" = ["E501"]
+"scripts/gpu_deep_benchmark.py" = ["E402"]
+"scripts/runtime_doctor.py" = ["E402"]

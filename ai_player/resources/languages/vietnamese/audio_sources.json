@@ -1,0 +1,32 @@
+{
+  "options": [
+    {
+      "value": "original",
+      "label": "Gốc"
+    },
+    {
+      "value": "system",
+      "label": "Hệ thống"
+    },
+    {
+      "value": "microphone",
+      "label": "Micro"
+    },
+    {
+      "value": "system_microphone",
+      "label": "Hệ thống + Micro"
+    },
+    {
+      "value": "transcript",
+      "label": "Bản chép lời"
+    },
+    {
+      "value": "document_editor",
+      "label": "Trình soạn thảo"
+    },
+    {
+      "value": "subtitle",
+      "label": "Phụ đề"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "options": [
+    {
+      "value": "off",
+      "label": "Tắt"
+    },
+    {
+      "value": "light",
+      "label": "Nhẹ"
+    },
+    {
+      "value": "strong",
+      "label": "Mạnh"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "options": [
+    {
+      "value": "auto",
+      "label": "Tự động"
+    },
+    {
+      "value": "native",
+      "label": "Native"
+    },
+    {
+      "value": "lmdeploy",
+      "label": "LMDeploy"
+    }
+  ]
+}
