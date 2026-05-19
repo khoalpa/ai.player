@@ -116,6 +116,8 @@ def _create_whisper_model(
         device=device,
         compute_type=compute_type,
         local_files_only=local_files_only,
+        cpu_threads=_whisper_cpu_threads(),
+        num_workers=_whisper_num_workers(),
     )
 
 
@@ -137,3 +139,19 @@ def _cuda_runtime_available() -> bool:
     search_roots = [Path(value) for value in (os.environ.get("CUDA_PATH"),) if value]
     search_roots.append(PROJECT_ROOT / ".venv")
     return ctranslate2_cuda_available() or cuda_runtime_files_available(*search_roots)
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _whisper_cpu_threads() -> int:
+    cpu_count = os.cpu_count() or 2
+    return max(1, min(cpu_count, _env_int("AI_PLAYER_WHISPER_CPU_THREADS", max(4, cpu_count // 2))))
+
+
+def _whisper_num_workers() -> int:
+    return max(1, min(4, _env_int("AI_PLAYER_WHISPER_NUM_WORKERS", 2)))

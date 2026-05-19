@@ -10,6 +10,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from ai_player.services.ffmpeg import ffmpeg_executable, resolve_media_command
+
 CAPTURE_BACKENDS = {"auto", "soundcard", "ffmpeg"}
 
 
@@ -146,7 +148,7 @@ def _normalize_capture_backend(value: object) -> str:
 
 
 def list_dshow_audio_devices() -> list[str]:
-    command = ["ffmpeg", "-hide_banner", "-f", "dshow", "-list_devices", "true", "-i", "dummy"]
+    command = [ffmpeg_executable(), "-hide_banner", "-f", "dshow", "-list_devices", "true", "-i", "dummy"]
     process = subprocess.run(command, capture_output=True, text=True, errors="replace")
     text = f"{process.stdout}\n{process.stderr}"
     devices: list[str] = []
@@ -177,7 +179,7 @@ def _preferred_system_audio_device(devices: list[str]) -> str:
 def _capture_dshow_audio(device: str, output_path: Path, duration_seconds: int, label: str) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     command = [
-        "ffmpeg",
+        ffmpeg_executable(),
         "-hide_banner",
         "-loglevel",
         "error",
@@ -368,7 +370,7 @@ def _capture_ffmpeg_meeting(
 
 def _start_dshow_recording(device: str, output_path: Path) -> subprocess.Popen:
     command = [
-        "ffmpeg",
+        ffmpeg_executable(),
         "-hide_banner",
         "-loglevel",
         "error",
@@ -396,7 +398,7 @@ def _mix_audio_files(system_path: Path, micro_path: Path, output_path: Path) -> 
         raise RuntimeError("Meeting không tạo được audio System/Micro.")
     if len(inputs) == 1:
         command = [
-            "ffmpeg",
+            ffmpeg_executable(),
             "-hide_banner",
             "-loglevel",
             "error",
@@ -411,7 +413,7 @@ def _mix_audio_files(system_path: Path, micro_path: Path, output_path: Path) -> 
         ]
     else:
         command = [
-            "ffmpeg",
+            ffmpeg_executable(),
             "-hide_banner",
             "-loglevel",
             "error",
@@ -428,7 +430,7 @@ def _mix_audio_files(system_path: Path, micro_path: Path, output_path: Path) -> 
             "-y",
             str(output_path),
         ]
-    subprocess.run(command, check=True)
+    subprocess.run(resolve_media_command(command), check=True)
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise RuntimeError("Meeting không tạo được tệp audio.")
 

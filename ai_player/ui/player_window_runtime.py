@@ -16,6 +16,7 @@ from ai_player.core.runtime_diagnostics import (
     collect_runtime_diagnostics,
     format_runtime_diagnostics_summary,
 )
+from ai_player.services.ffmpeg import ffprobe_executable
 from ai_player.ui.player_window_utils import (
     float_value as _float_value,
 )
@@ -165,7 +166,7 @@ class PlayerRuntimeMixin:
         path = Path(source_path)
         if not path.exists():
             return self._tr("runtime_missing_file").format(source=source_path)
-        ffprobe = shutil.which("ffprobe")
+        ffprobe = ffprobe_executable()
         if not ffprobe:
             return self._tr("runtime_missing_ffprobe").format(path=path)
         command = [

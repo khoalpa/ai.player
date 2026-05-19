@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ai_player.core.config import AppConfig
+from ai_player.core.gpu import ctranslate2_cuda_available, onnx_cuda_available, torch_cuda_available
 from ai_player.core.runtime_catalog import (
     available_dropdown_options,
     load_gui_text_aliases,
@@ -95,7 +96,9 @@ def is_ytdlp_source_cache(path: Path) -> bool:
 
 
 def safe_native_dubbing_config(config: AppConfig) -> AppConfig:
-    if os.getenv("AI_PLAYER_ENABLE_CUDA", "").strip().lower() in {"1", "true", "yes", "on"}:
+    if os.getenv("AI_PLAYER_DISABLE_CUDA", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return _cpu_dubbing_config(config)
+    if _cuda_runtime_ready():
         return config
     if not any(
         str(value or "").strip().lower() == "cuda"
@@ -106,6 +109,10 @@ def safe_native_dubbing_config(config: AppConfig) -> AppConfig:
         )
     ):
         return config
+    return _cpu_dubbing_config(config)
+
+
+def _cpu_dubbing_config(config: AppConfig) -> AppConfig:
     return replace(
         config,
         local_translation_device="cpu",
@@ -114,3 +121,7 @@ def safe_native_dubbing_config(config: AppConfig) -> AppConfig:
         vieneu_tts_device="cpu",
         vieneu_tts_backend="native",
     )
+
+
+def _cuda_runtime_ready() -> bool:
+    return torch_cuda_available() or ctranslate2_cuda_available() or onnx_cuda_available()

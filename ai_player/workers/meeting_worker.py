@@ -10,16 +10,18 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from faster_whisper import WhisperModel
 from PySide6.QtCore import QThread, Signal
 
 from ai_player.core.config import AppConfig
 from ai_player.core.offline_env import OfflineEnvironmentToken, pop_hf_offline_environment, push_hf_offline_environment
 from ai_player.core.performance import measure_stage
 from ai_player.services.capture_sources import capture_system_microphone_audio
+from ai_player.services.ffmpeg import ffmpeg_executable, ffplay_executable
 from ai_player.services.transcript_cleanup import TranscriptCleaner
-from ai_player.services.translation import VietnameseTranslator
+from ai_player.services.translation_runtime import get_shared_vietnamese_translator
 from ai_player.services.tts import create_tts_provider, normalize_tts_provider
+from ai_player.services.whisper_runtime import SharedWhisperModel, get_shared_whisper_model
+from ai_player.services.whisper_runtime import effective_whisper_compute_type as shared_whisper_compute_type
 from ai_player.workers.dubbing_worker import _effective_whisper_device
 
 
@@ -46,8 +48,8 @@ class MeetingWorker(QThread):
         self._started_at = datetime.now()
         self._started_monotonic = time.monotonic()
         self._whisper_device = _effective_whisper_device(config.whisper_device)
-        self._whisper_compute_type = config.whisper_compute_type
-        self._model: WhisperModel | None = None
+        self._whisper_compute_type = shared_whisper_compute_type(config.whisper_compute_type, self._whisper_device)
+        self._model: SharedWhisperModel | None = None
         self._translator = None
         self._transcript_cleaner = TranscriptCleaner(self._config)
         self._tts_provider = None
@@ -76,7 +78,7 @@ class MeetingWorker(QThread):
 
             temp_dir = Path(tempfile.mkdtemp(prefix="ai-player-meeting-live-"))
             self._model = self._load_model()
-            self._translator = VietnameseTranslator(self._config)
+            self._translator = get_shared_vietnamese_translator(self._config)
             self._tts_provider = None if _tts_disabled(self._config) else create_tts_provider(self._config)
             self._start_playback_worker()
             chunk_paths: list[Path] = []
@@ -173,20 +175,22 @@ class MeetingWorker(QThread):
         language = str(self._config.source_language or "auto").strip().lower()
         return None if language in {"", "auto"} else language
 
-    def _load_model(self) -> WhisperModel:
+    def _load_model(self) -> SharedWhisperModel:
         try:
-            return WhisperModel(
+            return get_shared_whisper_model(
                 self._config.whisper_model,
                 device=self._whisper_device,
                 compute_type=self._whisper_compute_type,
+                local_files_only=self._config.whisper_offline,
             )
         except Exception:
             self._whisper_device = "cpu"
             self._whisper_compute_type = "int8"
-            return WhisperModel(
+            return get_shared_whisper_model(
                 self._config.whisper_model,
                 device=self._whisper_device,
                 compute_type=self._whisper_compute_type,
+                local_files_only=self._config.whisper_offline,
             )
 
     def _transcribe_segments(self, audio_path: Path):
@@ -244,7 +248,7 @@ class MeetingWorker(QThread):
 
     def _translate(self, text: str, detected_language: str | None) -> str:
         if self._translator is None:
-            self._translator = VietnameseTranslator(self._config)
+            self._translator = get_shared_vietnamese_translator(self._config)
         return self._translator.translate(text, detected_language or self._selected_whisper_language())
 
     def _dub_segment(self, text: str, output_path: Path) -> None:
@@ -301,7 +305,7 @@ class MeetingWorker(QThread):
 
     def _play_audio(self, output_path: Path) -> None:
         command = [
-            "ffplay",
+            ffplay_executable(),
             "-nodisp",
             "-autoexit",
             "-loglevel",
@@ -348,7 +352,7 @@ class MeetingWorker(QThread):
             encoding="utf-8",
         )
         command = [
-            "ffmpeg",
+            ffmpeg_executable(),
             "-hide_banner",
             "-loglevel",
             "error",

@@ -9,6 +9,8 @@ from typing import Protocol
 
 import numpy as np
 
+from ai_player.services.ffmpeg import ffplay_executable
+
 
 class AudioPlaybackHandle(Protocol):
     def poll(self) -> int | None:
@@ -150,7 +152,7 @@ def _is_pcm_wav(audio_path: Path) -> bool:
 
 def _start_ffplay(audio_path: Path, *, volume: int) -> ProcessAudioPlaybackHandle:
     command = [
-        "ffplay",
+        ffplay_executable(),
         "-nodisp",
         "-autoexit",
         "-loglevel",

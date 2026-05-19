@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
+import hashlib
 import importlib.util
 import inspect
 import json
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -23,6 +26,7 @@ from ai_player.core.config import (
     INTERNAL_VIENEU_TURBO_GGUF,
     INTERNAL_VIENEU_TURBO_PATH,
     PROJECT_ROOT,
+    RUNTIME_DIR,
     AppConfig,
 )
 from ai_player.core.offline_env import pop_hf_offline_environment, push_hf_offline_environment
@@ -68,6 +72,9 @@ TURBO_VIENEU_VOICES = [
 
 _VIENEU_ENGINE_LOCK = threading.Lock()
 _VIENEU_ENGINE_CACHE: dict[tuple[str, ...], Any] = {}
+_VIENEU_SERVER_CACHE_LOCK = threading.Lock()
+_VIENEU_SERVER_CACHE: dict[tuple[str, ...], VieNeuServerClient] = {}
+_TTS_CACHE_LOCK = threading.Lock()
 
 
 def available_tts_providers() -> list[VoiceOption]:
@@ -202,8 +209,8 @@ def create_tts_provider(config: AppConfig) -> BaseTTSProvider:
     if provider == "none":
         return NoTTSProvider(config)
     if provider == "vieneu":
-        return VieNeuTTSProvider(config)
-    return EdgeTTSProvider(config)
+        return CachedTTSProvider(VieNeuTTSProvider(config), config, provider)
+    return CachedTTSProvider(EdgeTTSProvider(config), config, provider)
 
 
 def normalize_tts_provider(value: object) -> str:
@@ -318,6 +325,41 @@ class NoTTSProvider(BaseTTSProvider):
         raise TTSError("Không TTS không tạo audio mới.")
 
 
+class CachedTTSProvider(BaseTTSProvider):
+    def __init__(self, inner: BaseTTSProvider, config: AppConfig, provider: str) -> None:
+        self._inner = inner
+        self._config = config
+        self._provider = normalize_tts_provider(provider)
+
+    def synthesize(self, text: str, output_path: Path, voice: str | None = None) -> None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if not _tts_cache_enabled():
+            self._inner.synthesize(text, output_path, voice=voice)
+            return
+
+        cache_path = _tts_cache_path(self._provider, self._config, text, voice or self._config.tts_voice, output_path)
+        with _TTS_CACHE_LOCK:
+            if cache_path.exists() and cache_path.stat().st_size > 0:
+                shutil.copyfile(cache_path, output_path)
+                return
+
+        self._inner.synthesize(text, output_path, voice=voice)
+        if not output_path.exists() or output_path.stat().st_size <= 0:
+            return
+
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_cache_path = cache_path.with_name(f"{cache_path.name}.tmp")
+        with _TTS_CACHE_LOCK:
+            if cache_path.exists() and cache_path.stat().st_size > 0:
+                return
+            shutil.copyfile(output_path, temp_cache_path)
+            temp_cache_path.replace(cache_path)
+
+    def close(self) -> None:
+        self._inner.close()
+
+
 class EdgeTTSProvider(BaseTTSProvider):
     def __init__(self, config: AppConfig) -> None:
         self._voice = config.tts_voice
@@ -410,8 +452,7 @@ class VieNeuTTSProvider(BaseTTSProvider):
         voice_id: str,
     ) -> None:
         if self._server is None or self._server.config_key != _vieneu_server_config_key(config):
-            self._reset_server()
-            self._server = VieNeuServerClient(config)
+            self._server = _get_shared_vieneu_server(config)
         self._server.synthesize(
             text=text,
             voice=voice_id,
@@ -429,11 +470,11 @@ class VieNeuTTSProvider(BaseTTSProvider):
         return python.exists() and _vieneu_import_root(Path(config.vieneu_tts_path)).exists()
 
     def close(self) -> None:
-        self._reset_server()
+        self._server = None
 
     def _reset_server(self) -> None:
         if self._server is not None:
-            self._server.close()
+            _discard_shared_vieneu_server(self._server)
             self._server = None
 
 
@@ -620,6 +661,35 @@ class VieNeuServerClient:
                     process.kill()
                 except Exception:
                     pass
+
+
+def _get_shared_vieneu_server(config: AppConfig) -> VieNeuServerClient:
+    key = _vieneu_server_config_key(config)
+    with _VIENEU_SERVER_CACHE_LOCK:
+        server = _VIENEU_SERVER_CACHE.get(key)
+        if server is None:
+            server = VieNeuServerClient(config)
+            _VIENEU_SERVER_CACHE[key] = server
+        return server
+
+
+def _discard_shared_vieneu_server(server: VieNeuServerClient) -> None:
+    with _VIENEU_SERVER_CACHE_LOCK:
+        for key, cached in list(_VIENEU_SERVER_CACHE.items()):
+            if cached is server:
+                _VIENEU_SERVER_CACHE.pop(key, None)
+    server.close()
+
+
+def _close_shared_vieneu_servers() -> None:
+    with _VIENEU_SERVER_CACHE_LOCK:
+        servers = list(_VIENEU_SERVER_CACHE.values())
+        _VIENEU_SERVER_CACHE.clear()
+    for server in servers:
+        server.close()
+
+
+atexit.register(_close_shared_vieneu_servers)
 
 
 def _vieneu_fallback_configs(config: AppConfig) -> list[AppConfig]:
@@ -1050,6 +1120,32 @@ def migrate_vieneu_legacy_voice_id(
         ranked.sort(key=lambda item: (-item[0], item[1]))
         return ranked[0][1]
     return raw
+
+
+def _tts_cache_enabled() -> bool:
+    return str(os.getenv("AI_PLAYER_TTS_CACHE", "1")).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _tts_cache_path(provider: str, config: AppConfig, text: str, voice: str, output_path: Path) -> Path:
+    suffix = output_path.suffix.lower() or f".{tts_output_suffix(provider)}"
+    payload = {
+        "version": 1,
+        "provider": normalize_tts_provider(provider),
+        "text": _clean_text(text),
+        "voice": str(voice or ""),
+        "vieneu_core": str(config.vieneu_tts_core),
+        "vieneu_mode": str(config.vieneu_tts_mode),
+        "vieneu_model": str(config.vieneu_tts_model_name),
+        "vieneu_decoder": str(config.vieneu_tts_decoder_path),
+        "vieneu_encoder": str(config.vieneu_tts_encoder_path),
+        "vieneu_codec": str(config.vieneu_tts_standard_codec_path),
+        "vieneu_device": str(config.vieneu_tts_device),
+        "vieneu_backend": str(config.vieneu_tts_backend),
+        "vieneu_temperature": float(config.vieneu_tts_temperature),
+        "vieneu_max_chars": int(config.vieneu_tts_max_chars_chunk),
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")).hexdigest()
+    return RUNTIME_DIR / "tts-cache" / f"{digest}{suffix}"
 
 
 def _strip_accents(value: object) -> str:

@@ -15,5 +15,6 @@ $NllbCt2Model = Join-Path $ProjectRoot "models\translation\nllb-200-distilled-60
 
 & (Join-Path $PSScriptRoot "download_vieneu_tts_models.ps1")
 & (Join-Path $PSScriptRoot "download_tessdata_models.ps1")
+& (Join-Path $PSScriptRoot "download_speaker_gender_model.ps1")
 
 Write-Host "Offline model download steps completed."

@@ -81,6 +81,16 @@ DEFAULT_SOURCE_LANGUAGE_CODES = (
 DEFAULT_TARGET_LANGUAGE_CODES = tuple(code for code in DEFAULT_SOURCE_LANGUAGE_CODES if code != "auto")
 LANGUAGE_PACKS_DIR = PROJECT_ROOT / "ai_player" / "resources" / "languages"
 LANGUAGE_PACK_FALLBACKS = ("vi", "en", "vietnamese", "english")
+PRESET_PATH_SETTING_KEYS = {
+    "local_translation_model",
+    "transcript_cleanup_model",
+    "tts_voice",
+    "vieneu_tts_decoder_path",
+    "vieneu_tts_encoder_path",
+    "vieneu_tts_model_name",
+    "vieneu_tts_standard_codec_path",
+    "whisper_model",
+}
 
 
 def available_language_options(*, include_auto: bool, language_id: str | None = None) -> list[RuntimeOption]:
@@ -297,7 +307,7 @@ def load_performance_presets() -> dict[str, dict[str, object]]:
                 preset_id = str(item.get("value") or item.get("id") or item.get("code") or "").strip()
                 settings = item.get("settings", {})
                 if preset_id and isinstance(settings, dict):
-                    presets[preset_id] = {str(key): value for key, value in settings.items()}
+                    presets[preset_id] = _resolve_preset_settings(settings)
         if presets:
             return presets
 
@@ -315,8 +325,26 @@ def load_performance_presets() -> dict[str, dict[str, object]]:
         settings = data.get("settings", data)
         if not isinstance(settings, dict):
             continue
-        presets[preset_id] = {str(key): value for key, value in settings.items()}
+        presets[preset_id] = _resolve_preset_settings(settings)
     return presets
+
+
+def _resolve_preset_settings(settings: dict[object, object]) -> dict[str, object]:
+    return {str(key): _resolve_preset_value(str(key), value) for key, value in settings.items()}
+
+
+def _resolve_preset_value(key: str, value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text:
+        return value
+    project_root = str(PROJECT_ROOT)
+    if "${PROJECT_ROOT}" in text or "$PROJECT_ROOT" in text:
+        return text.replace("${PROJECT_ROOT}", project_root).replace("$PROJECT_ROOT", project_root)
+    if key in PRESET_PATH_SETTING_KEYS and (text.startswith("models/") or text.startswith("models\\")):
+        return str(PROJECT_ROOT / Path(text))
+    return value
 
 
 def _language_pack_dropdown_file(folder_name: str, language_id: str | None = None) -> Path | None:

@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from faster_whisper import WhisperModel
 from PySide6.QtCore import QThread, Signal
 
 from ai_player.core.config import PROJECT_ROOT, AppConfig
@@ -24,18 +23,20 @@ from ai_player.services.audio_matcher import (
     audio_duration_seconds,
     extract_audio_range,
     match_tts_to_reference,
-    profile_reference_audio,
 )
 from ai_player.services.capture_sources import (
     capture_microphone_audio,
     capture_system_audio,
     capture_system_microphone_audio,
 )
-from ai_player.services.ffmpeg import ProcessCancelled, run_ffmpeg_cancelable
+from ai_player.services.ffmpeg import ProcessCancelled, ffplay_executable, run_ffmpeg_cancelable
+from ai_player.services.speaker_voice_selector import VoiceGenderSelector, select_voice_for_reference
 from ai_player.services.subtitle_ocr import recognize_hard_subtitles
 from ai_player.services.transcript_cleanup import TranscriptCleaner
-from ai_player.services.translation import VietnameseTranslator
-from ai_player.services.tts import create_tts_provider, normalize_tts_provider, select_voice_for_gender
+from ai_player.services.translation_runtime import get_shared_vietnamese_translator
+from ai_player.services.tts import create_tts_provider, normalize_tts_provider
+from ai_player.services.whisper_runtime import SharedWhisperModel, get_shared_whisper_model
+from ai_player.services.whisper_runtime import effective_whisper_compute_type as shared_whisper_compute_type
 
 PendingAudio = tuple[float, float, Path, str, str]
 PLAYBACK_AUDIO_LEAD_SECONDS = 0.25
@@ -80,12 +81,13 @@ class DubbingWorker(QThread):
         self._is_playing = is_playing
         self._config = config
         self._stop_requested = False
-        self._translator = VietnameseTranslator(self._config)
+        self._translator = get_shared_vietnamese_translator(self._config)
         self._transcript_cleaner = TranscriptCleaner(self._config)
         self._tts_provider = create_tts_provider(self._config)
-        self._model: WhisperModel | None = None
+        self._voice_selector = VoiceGenderSelector(self._config)
+        self._model: SharedWhisperModel | None = None
         self._whisper_device = _effective_whisper_device(config.whisper_device)
-        self._whisper_compute_type = config.whisper_compute_type
+        self._whisper_compute_type = shared_whisper_compute_type(config.whisper_compute_type, self._whisper_device)
         self._next_segment_start = 0.0
         self._covered_until = 0.0
         self._prepared_segments = 0
@@ -102,6 +104,11 @@ class DubbingWorker(QThread):
         self._state_lock = threading.RLock()
         self._segment_executor: ThreadPoolExecutor | None = None
         self._segment_futures: dict[Future[None], float] = {}
+        self._completed_segment_starts: set[int] = set()
+        self._source_audio_cache_path: Path | None = None
+        self._source_audio_cache_ready = False
+        self._source_audio_cache_cancel = False
+        self._source_audio_cache_thread: threading.Thread | None = None
 
     def stop(self) -> None:
         self._stop_requested = True
@@ -114,6 +121,7 @@ class DubbingWorker(QThread):
                 raise RuntimeError(_unsupported_audio_source_message(self._config.audio_source))
             offline_env = self._configure_offline_environment()
             self._temp_dir = Path(tempfile.mkdtemp(prefix="ai-player-"))
+            self._start_source_audio_cache()
             if self._config.audio_source in {"transcript", "document_editor"}:
                 self._run_transcript_source()
                 return
@@ -135,7 +143,7 @@ class DubbingWorker(QThread):
                 self._request_pause("\u0110ang chu\u1ea9n b\u1ecb gi\u1ecdng Vi\u1ec7t...")
             self.status_changed.emit("\u0110ang t\u1ea1o b\u1ed9 \u0111\u1ec7m l\u1ed3ng ti\u1ebfng Vi\u1ec7t...")
             if self._can_process_segments_async():
-                self._segment_executor = ThreadPoolExecutor(max_workers=1)
+                self._segment_executor = ThreadPoolExecutor(max_workers=self._segment_worker_count())
 
             while not self._stop_requested:
                 current = self._get_time_ms() / 1000.0
@@ -183,6 +191,7 @@ class DubbingWorker(QThread):
                 self.failed.emit(_clean_message(exc))
         finally:
             self._shutdown_segment_executor()
+            self._stop_source_audio_cache()
             self._cleanup_temp_dir()
             if offline_env is not None:
                 pop_hf_offline_environment(offline_env)
@@ -290,7 +299,7 @@ class DubbingWorker(QThread):
             return
         self.status_changed.emit(f"\u0110ang t\u1ea1o gi\u1ecdng Vi\u1ec7t t\u1ea1i {_format_hhmmss(entry.start)}...")
         self._tts_provider.synthesize(translated, tts_path, voice=self._config.tts_voice)
-        final_path = self._trim_leading_silence(tts_path)
+        final_path = tts_path if self._skip_tts_postprocess() else self._trim_leading_silence(tts_path)
         final_duration = audio_duration_seconds(final_path)
         with self._state_lock:
             scheduled_start = max(entry.start, self._scheduled_audio_until)
@@ -303,16 +312,18 @@ class DubbingWorker(QThread):
         if self._segment_executor is not None:
             self._shutdown_segment_executor()
             if self._can_process_segments_async() and not self._stop_requested:
-                self._segment_executor = ThreadPoolExecutor(max_workers=1)
+                self._segment_executor = ThreadPoolExecutor(max_workers=self._segment_worker_count())
         self._next_segment_start = max(0.0, start_seconds)
         self._covered_until = self._next_segment_start
         with self._state_lock:
             self._prepared_segments = 0
             self._pending_audio.clear()
             self._scheduled_text_keys.clear()
+            self._completed_segment_starts.clear()
             self._scheduled_audio_until = self._next_segment_start
         self._last_video_time = self._next_segment_start
         self._last_wall_time = time.monotonic()
+        self._voice_selector.reset()
         self._buffering = True
         self._request_pause("\u0110ang \u0111\u1ed3ng b\u1ed9 l\u1ea1i gi\u1ecdng Vi\u1ec7t...")
 
@@ -335,13 +346,30 @@ class DubbingWorker(QThread):
         for future in completed:
             start_seconds = self._segment_futures.pop(future)
             future.result()
-            self._covered_until = max(self._covered_until, start_seconds + self._config.segment_seconds)
+            self._completed_segment_starts.add(_segment_start_key(start_seconds))
+            self._advance_covered_until()
             self._resume_if_buffer_ready(current_seconds)
 
     def _cancel_segment_futures(self) -> None:
         for future in list(self._segment_futures):
             future.cancel()
         self._segment_futures.clear()
+        self._completed_segment_starts.clear()
+
+    def _advance_covered_until(self) -> None:
+        while _segment_start_key(self._covered_until) in self._completed_segment_starts:
+            self._completed_segment_starts.remove(_segment_start_key(self._covered_until))
+            self._covered_until += self._config.segment_seconds
+
+    def _segment_worker_count(self) -> int:
+        configured = os.getenv("AI_PLAYER_DUBBING_SEGMENT_WORKERS", "").strip()
+        if configured:
+            try:
+                return max(1, min(8, int(configured)))
+            except ValueError:
+                pass
+        cpu_count = os.cpu_count() or 2
+        return max(1, min(4, cpu_count // 2, int(self._config.dubbing_lookahead_segments or 1)))
 
     def _shutdown_segment_executor(self) -> None:
         self._cancel_segment_futures()
@@ -390,12 +418,13 @@ class DubbingWorker(QThread):
                 "ho\u1eb7c scripts\\download_whisper_model.ps1 \u0111\u1ec3 t\u1ea3i models\\asr\\faster-whisper-base."
             )
 
-    def _load_whisper_model(self) -> WhisperModel:
+    def _load_whisper_model(self) -> SharedWhisperModel:
         try:
-            return WhisperModel(
+            return get_shared_whisper_model(
                 self._config.whisper_model,
                 device=self._whisper_device,
                 compute_type=self._whisper_compute_type,
+                local_files_only=self._config.whisper_offline,
             )
         except Exception as exc:
             if self._whisper_device == "cpu" and self._whisper_compute_type != "int8":
@@ -406,13 +435,14 @@ class DubbingWorker(QThread):
             self.status_changed.emit("Whisper không chạy được CUDA/Auto, chuyển sang CPU...")
             return self._switch_whisper_to_cpu(exc)
 
-    def _switch_whisper_to_cpu(self, _cause: Exception | None = None) -> WhisperModel:
+    def _switch_whisper_to_cpu(self, _cause: Exception | None = None) -> SharedWhisperModel:
         self._whisper_device = "cpu"
         self._whisper_compute_type = "int8"
-        self._model = WhisperModel(
+        self._model = get_shared_whisper_model(
             self._config.whisper_model,
             device=self._whisper_device,
             compute_type=self._whisper_compute_type,
+            local_files_only=self._config.whisper_offline,
         )
         return self._model
 
@@ -502,6 +532,7 @@ class DubbingWorker(QThread):
             tts_path = self._temp_dir / f"vi-{segment_ms}-{index}.{tts_suffix}"
             reference_path = self._temp_dir / f"ref-{segment_ms}-{index}.wav"
             matched_path = self._temp_dir / f"vi-{segment_ms}-{index}-matched.wav"
+            needs_reference_audio = self._needs_reference_audio()
 
             self.status_changed.emit(f"\u0110ang d\u1ecbch c\u00e2u t\u1ea1i {_format_hhmmss(absolute_start)}...")
             with measure_stage("dubbing", "translate", start=f"{absolute_start:.3f}"):
@@ -511,25 +542,25 @@ class DubbingWorker(QThread):
                 self._remember_scheduled_text(original, absolute_start)
                 continue
 
-            with measure_stage("dubbing", "reference", start=f"{absolute_start:.3f}"):
-                extract_audio_range(
-                    wav_path,
-                    speech_start,
-                    speech_duration,
-                    reference_path,
-                    cancel_callback=self._is_stop_requested,
-                )
-                if self._config.dubbing_auto_voice_gender:
-                    audio_profile = profile_reference_audio(reference_path)
-                else:
-                    audio_profile = None
+            if needs_reference_audio:
+                with measure_stage("dubbing", "reference", start=f"{absolute_start:.3f}"):
+                    extract_audio_range(
+                        wav_path,
+                        speech_start,
+                        speech_duration,
+                        reference_path,
+                        cancel_callback=self._is_stop_requested,
+                    )
+            else:
+                reference_path = wav_path
             voice = self._config.tts_voice
-            if audio_profile is not None:
-                voice = select_voice_for_gender(
-                    self._config.tts_provider,
-                    self._config,
-                    audio_profile.gender,
-                )
+            if self._config.dubbing_auto_voice_gender:
+                voice = select_voice_for_reference(
+                    reference_path,
+                    provider=self._config.tts_provider,
+                    config=self._config,
+                    selector=self._voice_selector,
+                ).voice
 
             self.status_changed.emit(
                 f"\u0110ang t\u1ea1o gi\u1ecdng Vi\u1ec7t t\u1ea1i {_format_hhmmss(absolute_start)}..."
@@ -539,17 +570,20 @@ class DubbingWorker(QThread):
             if self._stop_requested:
                 return
             with measure_stage("dubbing", "postprocess", start=f"{absolute_start:.3f}"):
-                trimmed_path = self._trim_leading_silence(tts_path)
-                if self._stop_requested:
-                    return
-                final_path = match_tts_to_reference(
-                    reference_path=reference_path,
-                    tts_path=trimmed_path,
-                    output_path=matched_path,
-                    target_duration_seconds=speech_duration,
-                    config=self._config,
-                    cancel_callback=self._is_stop_requested,
-                )
+                if self._skip_tts_postprocess():
+                    final_path = tts_path
+                else:
+                    trimmed_path = self._trim_leading_silence(tts_path)
+                    if self._stop_requested:
+                        return
+                    final_path = match_tts_to_reference(
+                        reference_path=reference_path,
+                        tts_path=trimmed_path,
+                        output_path=matched_path,
+                        target_duration_seconds=speech_duration,
+                        config=self._config,
+                        cancel_callback=self._is_stop_requested,
+                    )
             final_duration = audio_duration_seconds(final_path)
             with self._state_lock:
                 scheduled_start = max(absolute_start, self._scheduled_audio_until)
@@ -602,7 +636,7 @@ class DubbingWorker(QThread):
                 f"\u0110ang t\u1ea1o gi\u1ecdng Vi\u1ec7t t\u1ea1i {_format_hhmmss(absolute_start)}..."
             )
             self._tts_provider.synthesize(translated, tts_path, voice=self._config.tts_voice)
-            final_path = self._trim_leading_silence(tts_path)
+            final_path = tts_path if self._skip_tts_postprocess() else self._trim_leading_silence(tts_path)
             final_duration = audio_duration_seconds(final_path)
             with self._state_lock:
                 scheduled_start = max(absolute_start, self._scheduled_audio_until)
@@ -663,6 +697,17 @@ class DubbingWorker(QThread):
             )
             return
 
+        cached_source = self._cached_source_audio()
+        if cached_source is not None:
+            extract_audio_range(
+                cached_source,
+                start_seconds,
+                self._config.segment_seconds,
+                wav_path,
+                cancel_callback=self._is_stop_requested,
+            )
+            return
+
         args: list[object] = []
         if self._is_http_source(self._video_path):
             args.extend(
@@ -698,8 +743,87 @@ class DubbingWorker(QThread):
         )
         run_ffmpeg_cancelable(args, cancel_callback=self._is_stop_requested, loglevel="fatal")
 
+    def _start_source_audio_cache(self) -> None:
+        if self._temp_dir is None:
+            return
+        if self._config.audio_source != "original":
+            return
+        if self._is_http_source(self._video_path):
+            return
+        source_path = Path(self._video_path)
+        if not source_path.exists() or not source_path.is_file():
+            return
+        self._source_audio_cache_path = self._temp_dir / "source-cache-16k.wav"
+        self._source_audio_cache_ready = False
+        self._source_audio_cache_cancel = False
+        self._source_audio_cache_thread = threading.Thread(
+            target=self._build_source_audio_cache,
+            args=(source_path, self._source_audio_cache_path),
+            daemon=True,
+        )
+        self._source_audio_cache_thread.start()
+
+    def _build_source_audio_cache(self, source_path: Path, cache_path: Path) -> None:
+        temp_path = cache_path.with_suffix(".tmp.wav")
+        try:
+            with measure_stage("dubbing", "source_audio_cache"):
+                run_ffmpeg_cancelable(
+                    [
+                        "-i",
+                        source_path,
+                        "-map",
+                        "0:a:0",
+                        "-vn",
+                        "-sn",
+                        "-dn",
+                        "-ac",
+                        "1",
+                        "-ar",
+                        "16000",
+                        "-y",
+                        temp_path,
+                    ],
+                    cancel_callback=self._source_audio_cache_cancelled,
+                    loglevel="fatal",
+                )
+            if temp_path.exists() and temp_path.stat().st_size > 0 and not self._source_audio_cache_cancelled():
+                temp_path.replace(cache_path)
+                self._source_audio_cache_ready = True
+        except Exception:
+            self._source_audio_cache_ready = False
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def _cached_source_audio(self) -> Path | None:
+        path = self._source_audio_cache_path
+        if self._source_audio_cache_ready and path is not None and path.exists() and path.stat().st_size > 0:
+            return path
+        return None
+
+    def _stop_source_audio_cache(self) -> None:
+        self._source_audio_cache_cancel = True
+        thread = self._source_audio_cache_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+        self._source_audio_cache_thread = None
+
+    def _source_audio_cache_cancelled(self) -> bool:
+        return self._stop_requested or self._source_audio_cache_cancel
+
     def _clean_transcript_text(self, text: str, source_language: str | None = None) -> str:
         return self._transcript_cleaner.clean(text, source_language)
+
+    def _needs_reference_audio(self) -> bool:
+        return bool(self._config.dubbing_auto_voice_gender or self._config.dubbing_auto_match_audio)
+
+    def _skip_tts_postprocess(self) -> bool:
+        return (
+            str(self._config.performance_preset or "").strip().lower() == "low_latency"
+            and not self._config.dubbing_auto_match_audio
+            and int(self._config.dubbing_speed_percent or 0) == 0
+        )
 
     def _trim_leading_silence(self, audio_path: Path) -> Path:
         trimmed_path = audio_path.with_name(f"{audio_path.stem}-trimmed{audio_path.suffix}")
@@ -793,7 +917,7 @@ class DubbingWorker(QThread):
         self.audio_started.emit(display_start)
         self.segment_ready.emit(original, translated)
         command = [
-            "ffplay",
+            ffplay_executable(),
             "-nodisp",
             "-autoexit",
             "-loglevel",
@@ -985,6 +1109,10 @@ def _text_keys_similar(left: str, right: str) -> bool:
     if len(shorter) >= 12 and shorter in longer:
         return True
     return SequenceMatcher(None, left, right).ratio() >= 0.82
+
+
+def _segment_start_key(value: float) -> int:
+    return int(round(float(value or 0.0) * 1000))
 
 
 def _effective_whisper_device(value: str) -> str:

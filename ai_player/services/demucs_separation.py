@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
+
+from ai_player.core.config import PROJECT_ROOT
 
 
 class DemucsSeparationError(RuntimeError):
@@ -10,7 +13,20 @@ class DemucsSeparationError(RuntimeError):
 
 
 def demucs_available() -> bool:
-    return shutil.which("demucs") is not None
+    executable = demucs_executable()
+    return Path(executable).is_file() or shutil.which(executable) is not None
+
+
+def demucs_executable() -> str:
+    configured = os.getenv("AI_PLAYER_DEMUCS_PATH", "").strip()
+    candidates = [
+        Path(configured) if configured else None,
+        PROJECT_ROOT / ".venv" / "Scripts" / "demucs.exe",
+    ]
+    for candidate in candidates:
+        if candidate and candidate.is_file():
+            return str(candidate)
+    return shutil.which("demucs") or "demucs"
 
 
 def separate_vocals(input_path: Path, output_dir: Path, *, model: str = "htdemucs") -> Path:
@@ -21,7 +37,7 @@ def separate_vocals(input_path: Path, output_dir: Path, *, model: str = "htdemuc
     output_dir.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [
-            "demucs",
+            demucs_executable(),
             "-n",
             model,
             "--two-stems",

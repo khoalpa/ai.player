@@ -14,6 +14,7 @@ from ai_player.core.config import (
     OCR_MODELS_PATH,
     PROJECT_ROOT,
 )
+from ai_player.services.ffmpeg import ffmpeg_executable, ffplay_executable
 
 
 @dataclass(frozen=True)
@@ -247,6 +248,10 @@ def _audio_capture_section() -> DiagnosticSection:
 
 
 def _first_tool(candidates: tuple[str, ...]) -> str:
+    if candidates == ("ffmpeg",):
+        return ffmpeg_executable()
+    if candidates == ("ffplay",):
+        return ffplay_executable()
     for candidate in candidates:
         found = shutil.which(candidate)
         if found:

@@ -135,7 +135,11 @@ class PlayerSourceMixin:
             QMessageBox.information(self, self._tr("app_title"), self._tr("msg_url_opening"))
             return
 
-        self.statusBar().showMessage(self._tr("status_open_url_cache"))
+        self.statusBar().showMessage(
+            self._tr("status_open_url_cache")
+            if self._config.video_url_full_cache
+            else self._tr("status_open_url_stream")
+        )
         self._stop_dubbing()
         self._reset_document_state_for_video()
         self._open_url_button.setEnabled(False)
@@ -144,8 +148,14 @@ class PlayerSourceMixin:
             self._cache_dialog.close()
             self._cache_dialog = None
         quality_label = self._combo_text(self._playback_quality_combo)
-        self.statusBar().showMessage(self._tr("status_open_url_quality").format(quality=quality_label))
-        self._url_worker = VideoSourceWorker(url, self._config.playback_video_quality, self)
+        status_key = "status_open_url_quality" if self._config.video_url_full_cache else "status_open_url_stream_quality"
+        self.statusBar().showMessage(self._tr(status_key).format(quality=quality_label))
+        self._url_worker = VideoSourceWorker(
+            url,
+            self._config.playback_video_quality,
+            self._config.video_url_full_cache,
+            self,
+        )
         self._url_worker.progress_changed.connect(self._video_cache_progress_changed)
         self._url_worker.resolved.connect(self._video_url_resolved)
         self._url_worker.failed.connect(self._video_url_failed)

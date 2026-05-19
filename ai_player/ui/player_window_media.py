@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import html
-import shutil
 import subprocess
 import tempfile
 import time
@@ -13,6 +12,8 @@ from PySide6.QtCore import QEvent, QPoint, Qt, QUrl
 from PySide6.QtGui import QPixmap
 
 from ai_player.core.config import write_preserved_terms_file
+from ai_player.services.ffmpeg import ffprobe_executable
+from ai_player.services.source_voice_filter import source_voice_filter_signature
 from ai_player.services.video_source import _cleanup_cache_root
 from ai_player.ui.player_window_utils import (
     is_ytdlp_source_cache as _is_ytdlp_source_cache,
@@ -33,11 +34,22 @@ class PlayerMediaMixin:
         state = self._tr("state_on") if checked else self._tr("state_off")
         self.statusBar().showMessage(self._tr("status_source_filter_changed").format(state=state))
 
+    def _source_voice_filter_mode_changed(self, *_args) -> None:
+        self._queue_save_settings()
+        if self._source_filter_check.isChecked() and not self._document_mode and self._video_path:
+            if self._source_filter_worker is not None and self._source_filter_worker.isRunning():
+                self._source_filter_restart_pending = True
+                self._source_filter_worker.stop()
+                self.statusBar().showMessage(self._tr("status_source_filter_preparing"))
+                return
+            self._load_current_video_for_playback(preserve_state=True)
+
     def _load_current_video_for_playback(self, preserve_state: bool = False) -> None:
         if not self._video_path:
             return
         if self._source_filter_check.isChecked() and self._can_filter_source_audio(self._video_path):
-            filtered_path = self._source_filter_cache.get(self._video_path)
+            filter_key = self._source_filter_cache_key(self._video_path)
+            filtered_path = self._source_filter_cache.get(filter_key)
             if filtered_path and Path(filtered_path).exists():
                 self._switch_player_source(filtered_path, preserve_state)
                 return
@@ -49,13 +61,14 @@ class PlayerMediaMixin:
             self._start_source_audio_filter(self._video_path)
             return
         if self._needs_qt_playback_compat(self._video_path):
-            compat_path = self._playback_compat_cache.get(self._video_path)
+            compat_key = self._playback_compat_cache_key(self._video_path)
+            compat_path = self._playback_compat_cache.get(compat_key)
             if compat_path and Path(compat_path).exists():
                 self._switch_player_source(compat_path, preserve_state)
                 return
             output_path = self._playback_compat_output_path(self._video_path)
             if output_path.exists() and output_path.stat().st_size > 0:
-                self._playback_compat_cache[self._video_path] = str(output_path)
+                self._playback_compat_cache[compat_key] = str(output_path)
                 self._switch_player_source(str(output_path), preserve_state)
                 return
             self._player.stop()
@@ -78,17 +91,32 @@ class PlayerMediaMixin:
     def _start_source_audio_filter(self, source_path: str) -> None:
         if self._source_filter_worker is not None and self._source_filter_worker.isRunning():
             return
-        output_path = self._source_filter_output_path(source_path)
-        self._source_filter_worker = SourceAudioFilterWorker(source_path, output_path, self)
+        mode = self._selected_source_filter_mode()
+        output_path = self._source_filter_output_path(source_path, mode)
+        self._source_filter_worker_mode = mode
+        self._source_filter_worker = SourceAudioFilterWorker(
+            source_path,
+            output_path,
+            mode,
+            self,
+        )
         self._source_filter_worker.ready.connect(self._source_audio_filter_ready)
         self._source_filter_worker.failed.connect(self._source_audio_filter_failed)
+        self._source_filter_worker.warning.connect(self._source_audio_filter_warning)
         self._source_filter_worker.finished.connect(self._source_audio_filter_finished)
         self._source_filter_worker.start()
         self.statusBar().showMessage(self._tr("status_source_filter_preparing"))
 
-    def _source_audio_filter_ready(self, source_path: str, filtered_path: str) -> None:
-        self._source_filter_cache[source_path] = filtered_path
+    def _source_audio_filter_ready(self, source_path: str, filtered_path: str, backend: str = "") -> None:
+        worker_mode = getattr(self, "_source_filter_worker_mode", self._selected_source_filter_mode())
+        expected_output = self._source_filter_output_path(source_path, worker_mode)
+        if Path(filtered_path) != expected_output:
+            return
+        self._source_filter_cache[self._source_filter_cache_key(source_path, worker_mode, backend)] = filtered_path
         if self._video_path == source_path and self._source_filter_check.isChecked() and not self._document_mode:
+            if worker_mode != self._selected_source_filter_mode():
+                self._source_filter_restart_pending = True
+                return
             self._switch_player_source(filtered_path, preserve_state=True)
             self.statusBar().showMessage(self._tr("status_source_filter_ready"))
 
@@ -97,10 +125,18 @@ class PlayerMediaMixin:
             detail = _repair_mojibake(message)
             self.statusBar().showMessage(self._tr("status_source_filter_failed").format(detail=detail))
 
+    def _source_audio_filter_warning(self, source_path: str, message: str) -> None:
+        if self._video_path == source_path:
+            detail = _repair_mojibake(message)
+            self.statusBar().showMessage(self._tr("status_source_filter_warning").format(detail=detail))
+
     def _source_audio_filter_finished(self) -> None:
         if self._source_filter_worker is not None:
             self._source_filter_worker.deleteLater()
             self._source_filter_worker = None
+        if self._source_filter_restart_pending and self._video_path and self._source_filter_check.isChecked():
+            self._source_filter_restart_pending = False
+            self._start_source_audio_filter(self._video_path)
 
     def _start_playback_compat(self, source_path: str) -> None:
         if self._playback_compat_worker is not None and self._playback_compat_worker.isRunning():
@@ -114,7 +150,10 @@ class PlayerMediaMixin:
         self.statusBar().showMessage(self._tr("status_playback_compat_preparing"))
 
     def _playback_compat_ready(self, source_path: str, compat_path: str) -> None:
-        self._playback_compat_cache[source_path] = compat_path
+        expected_output = self._playback_compat_output_path(source_path)
+        if Path(compat_path) != expected_output:
+            return
+        self._playback_compat_cache[self._playback_compat_cache_key(source_path)] = compat_path
         if self._video_path == source_path and not self._document_mode:
             self._switch_player_source(compat_path, preserve_state=True)
             self.statusBar().showMessage(self._tr("status_playback_compat_ready"))
@@ -143,7 +182,7 @@ class PlayerMediaMixin:
             return False
         if not Path(source_path).exists():
             return False
-        ffprobe = shutil.which("ffprobe")
+        ffprobe = ffprobe_executable()
         if not ffprobe:
             return False
         try:
@@ -182,34 +221,42 @@ class PlayerMediaMixin:
         return _is_ytdlp_source_cache(path) or PlayerMediaMixin._is_qt_unsafe_local_video(source_path)
 
     @staticmethod
-    def _source_filter_output_path(source_path: str) -> Path:
-        stat_key = ""
-        try:
-            source_stat = Path(source_path).stat()
-            stat_key = f":{source_stat.st_mtime_ns}:{source_stat.st_size}"
-        except OSError:
-            pass
+    def _source_filter_output_path(source_path: str, mode: str = "auto") -> Path:
+        stat_key = PlayerMediaMixin._source_stat_key(source_path)
+        signature = source_voice_filter_signature(mode)
         digest = hashlib.sha1(
-            f"{source_path}{stat_key}:source-filter-h264-720p-v3".encode("utf-8", errors="replace")
+            f"{source_path}{stat_key}:source-filter:{signature}".encode("utf-8", errors="replace")
         ).hexdigest()[:16]
         root = Path(tempfile.gettempdir()) / "ai-player-source-filter"
         _cleanup_cache_root(root, max_bytes=10 * 1024 * 1024 * 1024)
         return root / f"{digest}.mp4"
 
+    def _source_filter_cache_key(self, source_path: str, mode: str | None = None, backend: str | None = None) -> str:
+        selected_mode = self._selected_source_filter_mode() if mode is None else mode
+        signature = source_voice_filter_signature(selected_mode, backend)
+        return f"{source_path}{self._source_stat_key(source_path)}:{signature}"
+
     @staticmethod
     def _playback_compat_output_path(source_path: str) -> Path:
-        stat_key = ""
-        try:
-            source_stat = Path(source_path).stat()
-            stat_key = f":{source_stat.st_mtime_ns}:{source_stat.st_size}"
-        except OSError:
-            pass
+        stat_key = PlayerMediaMixin._source_stat_key(source_path)
         digest = hashlib.sha1(
             f"{source_path}{stat_key}:qt-playback-main-h264-720p-v2".encode("utf-8", errors="replace")
         ).hexdigest()[:16]
         root = Path(tempfile.gettempdir()) / "ai-player-playback-cache"
         _cleanup_cache_root(root, max_bytes=10 * 1024 * 1024 * 1024)
         return root / f"{digest}.mp4"
+
+    @staticmethod
+    def _playback_compat_cache_key(source_path: str) -> str:
+        return f"{source_path}{PlayerMediaMixin._source_stat_key(source_path)}:qt-playback-main-h264-720p-v2"
+
+    @staticmethod
+    def _source_stat_key(source_path: str) -> str:
+        try:
+            source_stat = Path(source_path).stat()
+        except OSError:
+            return ""
+        return f":{source_stat.st_mtime_ns}:{source_stat.st_size}"
 
     def _save_preserved_terms(self) -> None:
         terms = self._normalized_preserved_terms_text()
@@ -641,39 +688,41 @@ class PlayerMediaMixin:
                 return True
         return super().eventFilter(watched, event)
 
-    def _expand_video_panel(self) -> None:
-        self._adjust_panel_sizes(video_delta=120)
+    def _toggle_sidebar_panel(self) -> None:
+        self._set_sidebar_panel_visible(self._sidebar_panel_hidden)
 
-    def _shrink_video_panel(self) -> None:
-        self._adjust_panel_sizes(video_delta=-120)
-
-    def _expand_sidebar_panel(self) -> None:
-        self._adjust_panel_sizes(video_delta=-120)
-
-    def _shrink_sidebar_panel(self) -> None:
-        self._adjust_panel_sizes(video_delta=120)
+    def _set_sidebar_panel_visible(self, visible: bool) -> None:
+        if not hasattr(self, "_settings_scroll"):
+            return
+        if visible:
+            self._settings_scroll.show()
+            self._sidebar_panel_hidden = False
+            self._splitter.setSizes(self._sidebar_panel_sizes or [900, 460])
+            self._panel_toggle_button.setText(self._tr("panel_hide"))
+            self._panel_toggle_button.setProperty("i18n_key", "panel_hide")
+            self.statusBar().showMessage(self._tr("status_panel_shown"))
+        else:
+            sizes = self._splitter.sizes()
+            if len(sizes) >= 2 and sizes[1] > 0:
+                self._sidebar_panel_sizes = sizes
+            self._settings_scroll.hide()
+            self._sidebar_panel_hidden = True
+            self._panel_toggle_button.setText(self._tr("panel_show"))
+            self._panel_toggle_button.setProperty("i18n_key", "panel_show")
+            self.statusBar().showMessage(self._tr("status_panel_hidden"))
+        self._apply_media_aspect_ratio()
 
     def _reset_panel_sizes(self, show_status: bool = True) -> None:
+        if hasattr(self, "_settings_scroll"):
+            self._settings_scroll.show()
+        self._sidebar_panel_hidden = False
+        self._sidebar_panel_sizes = [900, 460]
         self._splitter.setSizes([900, 460])
+        if hasattr(self, "_panel_toggle_button"):
+            self._panel_toggle_button.setText(self._tr("panel_hide"))
+            self._panel_toggle_button.setProperty("i18n_key", "panel_hide")
         if show_status:
             self.statusBar().showMessage(self._tr("status_panel_size_reset"))
-
-    def _adjust_panel_sizes(self, video_delta: int) -> None:
-        sizes = self._splitter.sizes()
-        if len(sizes) < 2:
-            return
-        total = max(1, sum(sizes))
-        min_video = max(260, int(total * 0.35))
-        min_sidebar = max(300, int(total * 0.20))
-        video = max(min_video, min(total - min_sidebar, sizes[0] + video_delta))
-        sidebar = total - video
-        self._splitter.setSizes([video, sidebar])
-        self.statusBar().showMessage(
-            self._tr("status_panel_ratio").format(
-                video=int(video / total * 100),
-                sidebar=int(sidebar / total * 100),
-            )
-        )
 
     def _begin_seek(self) -> None:
         self._is_seeking = True

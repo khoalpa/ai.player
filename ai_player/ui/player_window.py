@@ -4,6 +4,7 @@ import time
 
 from PySide6.QtCore import Qt, QThread, QTimer
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QMainWindow,
 )
@@ -34,6 +35,7 @@ from ai_player.workers.dubbing_worker import DubbingWorker
 from ai_player.workers.meeting_worker import MeetingWorker
 from ai_player.workers.player_window_workers import (
     PlaybackCompatibilityWorker,
+    RuntimeWarmupWorker,
     SourceAudioFilterWorker,
     VideoSourceWorker,
 )
@@ -85,9 +87,14 @@ class PlayerWindow(
         self._meeting_worker: MeetingWorker | None = None
         self._meeting_elapsed = "00:00:00"
         self._url_worker: VideoSourceWorker | None = None
+        self._runtime_warmup_worker: RuntimeWarmupWorker | None = None
         self._document_worker = None
         self._source_filter_worker: SourceAudioFilterWorker | None = None
+        self._source_filter_worker_mode = self._config.original_audio_voice_filter_mode
+        self._source_filter_restart_pending = False
         self._playback_compat_worker: PlaybackCompatibilityWorker | None = None
+        self._sidebar_panel_hidden = False
+        self._sidebar_panel_sizes: list[int] = [900, 460]
         self._source_filter_cache: dict[str, str] = {}
         self._playback_compat_cache: dict[str, str] = {}
         self._is_seeking = False
@@ -139,3 +146,24 @@ class PlayerWindow(
                 voice=self._config.tts_voice,
             )
         )
+        self._start_runtime_warmup()
+
+    def _start_runtime_warmup(self) -> None:
+        if not self._config.runtime_warmup_enabled:
+            return
+        app = QApplication.instance()
+        if app is not None and app.platformName().lower() == "offscreen":
+            return
+        if self._runtime_warmup_worker is not None:
+            return
+        worker = RuntimeWarmupWorker(self._config, self)
+        self._runtime_warmup_worker = worker
+        worker.status_changed.connect(self.statusBar().showMessage)
+        worker.failed.connect(lambda message: self.statusBar().showMessage(f"Runtime warm-up failed: {message}"))
+        worker.finished.connect(lambda worker=worker: self._runtime_warmup_worker_finished(worker))
+        worker.start()
+
+    def _runtime_warmup_worker_finished(self, worker: RuntimeWarmupWorker) -> None:
+        if self._runtime_warmup_worker is worker:
+            self._runtime_warmup_worker = None
+        worker.deleteLater()

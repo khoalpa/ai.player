@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -8,6 +11,8 @@ from typing import Any
 
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
+FFPLAY = "ffplay"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class ProcessCancelled(RuntimeError):
@@ -21,7 +26,7 @@ def run_ffmpeg(
     loglevel: str | None = "error",
     **kwargs: Any,
 ) -> subprocess.CompletedProcess:
-    command: list[str] = [FFMPEG, "-hide_banner"]
+    command: list[str] = [ffmpeg_executable(), "-hide_banner"]
     if loglevel:
         command.extend(["-loglevel", loglevel])
     command.extend(str(arg) for arg in args)
@@ -36,7 +41,7 @@ def run_cancelable_process(
     poll_interval_seconds: float = 0.1,
     **kwargs: Any,
 ) -> subprocess.CompletedProcess:
-    command_text = [str(arg) for arg in command]
+    command_text = resolve_media_command(command)
     process = subprocess.Popen(command_text, **kwargs)
     while True:
         return_code = process.poll()
@@ -59,7 +64,7 @@ def run_ffmpeg_cancelable(
     loglevel: str | None = "error",
     **kwargs: Any,
 ) -> subprocess.CompletedProcess:
-    command: list[object] = [FFMPEG, "-hide_banner"]
+    command: list[object] = [ffmpeg_executable(), "-hide_banner"]
     if loglevel:
         command.extend(["-loglevel", loglevel])
     command.extend(args)
@@ -72,8 +77,74 @@ def run_ffprobe(
     check: bool = True,
     **kwargs: Any,
 ) -> subprocess.CompletedProcess:
-    command = [FFPROBE, *[str(arg) for arg in args]]
+    command = [ffprobe_executable(), *[str(arg) for arg in args]]
     return subprocess.run(command, check=check, **kwargs)
+
+
+def ffmpeg_executable() -> str:
+    return _resolve_media_executable("ffmpeg", "AI_PLAYER_FFMPEG_PATH")
+
+
+def ffprobe_executable() -> str:
+    return _resolve_media_executable("ffprobe", "AI_PLAYER_FFPROBE_PATH")
+
+
+def ffplay_executable() -> str:
+    return _resolve_media_executable("ffplay", "AI_PLAYER_FFPLAY_PATH")
+
+
+def resolve_media_command(command: Sequence[object]) -> list[str]:
+    command_text = [str(arg) for arg in command]
+    if not command_text:
+        return command_text
+    executable = Path(command_text[0]).name.lower()
+    if executable in {"ffmpeg", "ffmpeg.exe"}:
+        command_text[0] = ffmpeg_executable()
+    elif executable in {"ffprobe", "ffprobe.exe"}:
+        command_text[0] = ffprobe_executable()
+    elif executable in {"ffplay", "ffplay.exe"}:
+        command_text[0] = ffplay_executable()
+    return command_text
+
+
+def _resolve_media_executable(name: str, env_var: str) -> str:
+    for candidate in _media_executable_candidates(name, env_var):
+        if candidate.is_file():
+            return str(candidate)
+    return shutil.which(name) or name
+
+
+def _media_executable_candidates(name: str, env_var: str) -> list[Path]:
+    executable = _executable_name(name)
+    candidates: list[Path] = []
+    configured = os.getenv(env_var, "").strip()
+    if configured:
+        candidates.append(Path(configured))
+
+    candidates.extend(
+        [
+            PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / executable,
+            PROJECT_ROOT / "dist" / "ffmpeg" / "bin" / executable,
+            PROJECT_ROOT / "models" / "ffmpeg" / "bin" / executable,
+        ]
+    )
+
+    if os.name == "nt":
+        chocolatey_root = Path(os.getenv("ChocolateyInstall", r"C:\ProgramData\chocolatey"))
+        candidates.append(chocolatey_root / "lib" / "ffmpeg" / "tools" / "ffmpeg" / "bin" / executable)
+
+    found = shutil.which(name)
+    if found:
+        candidates.append(Path(found))
+    return candidates
+
+
+def _executable_name(name: str) -> str:
+    if os.name == "nt" and Path(name).suffix.lower() != ".exe":
+        return f"{name}.exe"
+    if sys.platform == "win32" and Path(name).suffix.lower() != ".exe":
+        return f"{name}.exe"
+    return name
 
 
 def concat_escape(path: Path) -> str:

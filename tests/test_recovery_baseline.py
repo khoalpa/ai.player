@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ai_player.core.config import AppConfig
+from ai_player.core.config import DEFAULT_PERFORMANCE_PRESET, AppConfig
 from ai_player.core.runtime_diagnostics import collect_runtime_diagnostics
 from ai_player.services.document_reader import create_text_document_transcript, is_supported_document_path
 from ai_player.services.translation import (
@@ -12,11 +12,13 @@ from ai_player.services.tts import available_tts_providers, normalize_tts_provid
 from ai_player.services.video_source import is_supported_video_url, resolve_video_source
 
 
-def test_app_config_defaults_are_constructible() -> None:
+def test_app_config_defaults_are_constructible(monkeypatch) -> None:
+    monkeypatch.delenv("AI_PLAYER_PERFORMANCE_PRESET", raising=False)
     config = AppConfig.from_env()
 
     assert config.gui_language
     assert config.target_language
+    assert config.performance_preset == DEFAULT_PERFORMANCE_PRESET == "max_hardware"
 
 
 def test_runtime_diagnostics_collects_required_sections() -> None:

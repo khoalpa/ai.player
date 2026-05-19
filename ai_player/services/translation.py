@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import sys
 import threading
@@ -173,6 +174,9 @@ class PassthroughTranslator:
     def translate(self, text: str, source_language: str | None = None) -> str:
         return " ".join(str(text or "").split())
 
+    def translate_many(self, texts: list[str], source_language: str | None = None) -> list[str]:
+        return [self.translate(text, source_language) for text in texts]
+
 
 class LocalNllbTranslator:
     def __init__(self, config: AppConfig) -> None:
@@ -181,19 +185,30 @@ class LocalNllbTranslator:
         self._model = None
 
     def translate(self, text: str, source_language: str | None = None) -> str:
-        clean = " ".join(text.split())
-        if not clean:
-            return ""
+        return self.translate_many([text], source_language)[0]
 
+    def translate_many(self, texts: list[str], source_language: str | None = None) -> list[str]:
+        clean_texts = [" ".join(str(text or "").split()) for text in texts]
+        if not clean_texts:
+            return []
         src_lang = self._source_language(source_language)
         target_lang = self._target_language()
         if src_lang == target_lang:
-            return clean
+            return clean_texts
 
-        protected = _protect_english_terms(clean, self._config)
+        active_items = [(index, clean) for index, clean in enumerate(clean_texts) if clean]
+        if not active_items:
+            return clean_texts
+
+        protected_items = [(index, _protect_english_terms(clean, self._config)) for index, clean in active_items]
         self._load_model()
         self._tokenizer.src_lang = src_lang
-        encoded = self._tokenizer(protected.text, return_tensors="pt", truncation=True)
+        encoded = self._tokenizer(
+            [protected.text for _index, protected in protected_items],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+        )
         encoded = {key: value.to(self._model.device) for key, value in encoded.items()}
         output = self._model.generate(
             **encoded,
@@ -201,8 +216,11 @@ class LocalNllbTranslator:
             max_new_tokens=self._config.translation_max_tokens,
             num_beams=self._config.translation_num_beams,
         )
-        translated = self._tokenizer.batch_decode(output, skip_special_tokens=True)[0].strip()
-        return _restore_english_terms(translated, protected)
+        translated_batch = self._tokenizer.batch_decode(output, skip_special_tokens=True)
+        results = list(clean_texts)
+        for (index, protected), translated in zip(protected_items, translated_batch, strict=False):
+            results[index] = _restore_english_terms(translated.strip(), protected)
+        return results
 
     def _load_model(self) -> None:
         if self._model is not None and self._tokenizer is not None:
@@ -303,12 +321,19 @@ class CTranslate2NllbTranslator(LocalNllbTranslator):
             source_ids = self._tokenizer(protected.text, return_tensors="pt", truncation=True).input_ids[0]
             source_tokens_batch.append(self._tokenizer.convert_ids_to_tokens(source_ids))
             target_prefixes.append([target_lang])
-        results = self._translator.translate_batch(
-            source_tokens_batch,
-            target_prefix=target_prefixes,
-            beam_size=max(1, int(self._config.translation_num_beams)),
-            max_decoding_length=max(32, int(self._config.translation_max_tokens)),
-        )
+        translate_kwargs = {
+            "target_prefix": target_prefixes,
+            "beam_size": max(1, int(self._config.translation_num_beams)),
+            "max_decoding_length": max(32, int(self._config.translation_max_tokens)),
+            "batch_type": "tokens",
+            "max_batch_size": _translation_batch_size(self._config),
+        }
+        try:
+            results = self._translator.translate_batch(source_tokens_batch, **translate_kwargs)
+        except TypeError:
+            translate_kwargs.pop("batch_type", None)
+            translate_kwargs.pop("max_batch_size", None)
+            results = self._translator.translate_batch(source_tokens_batch, **translate_kwargs)
         translated_texts = []
         for result, protected in zip(results, protected_texts, strict=False):
             output_tokens = list(result.hypotheses[0])
@@ -351,11 +376,11 @@ class CTranslate2NllbTranslator(LocalNllbTranslator):
         if device == "auto":
             device = "cuda" if ctranslate2_cuda_available() else "cpu"
         try:
-            self._translator = ctranslate2.Translator(str(model_path), device=device)
+            self._translator = _create_ctranslate2_translator(ctranslate2, model_path, device)
         except Exception:
             if device == "cpu":
                 raise
-            self._translator = ctranslate2.Translator(str(model_path), device="cpu")
+            self._translator = _create_ctranslate2_translator(ctranslate2, model_path, "cpu")
 
 
 class MarianTranslator:
@@ -699,6 +724,33 @@ def _looks_like_ctranslate2_model(path: Path) -> bool:
 def _has_ctranslate2_name_hint(path: Path) -> bool:
     name = path.name.lower()
     return bool(name) and ("ct2" in name or "ctranslate2" in name)
+
+
+def _create_ctranslate2_translator(ctranslate2, model_path: Path, device: str):
+    cpu_count = os.cpu_count() or 2
+    inter_threads = _env_int("AI_PLAYER_CT2_INTER_THREADS", 2 if device == "cuda" else min(4, cpu_count))
+    intra_threads = _env_int("AI_PLAYER_CT2_INTRA_THREADS", max(1, cpu_count // max(1, inter_threads)))
+    kwargs = {
+        "device": device,
+        "inter_threads": max(1, inter_threads),
+        "intra_threads": max(1, intra_threads),
+    }
+    try:
+        return ctranslate2.Translator(str(model_path), **kwargs)
+    except TypeError:
+        return ctranslate2.Translator(str(model_path), device=device)
+
+
+def _translation_batch_size(config: AppConfig) -> int:
+    default = 8 if str(config.local_translation_device).strip().lower() == "cuda" else 4
+    return max(1, min(64, _env_int("AI_PLAYER_TRANSLATION_BATCH_SIZE", default)))
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
 
 
 def _disable_unneeded_transformers_optional_imports() -> dict[str, object]:

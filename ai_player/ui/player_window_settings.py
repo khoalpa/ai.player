@@ -4,9 +4,11 @@ from dataclasses import replace
 
 from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QLineEdit, QPushButton, QSlider, QWidget
 
-from ai_player.core.config import AppConfig
+from ai_player.core.config import DEFAULT_PERFORMANCE_PRESET, AppConfig
 from ai_player.core.runtime_catalog import available_language_options
 from ai_player.core.settings_store import save_app_config
+from ai_player.services.source_voice_filter import normalize_source_voice_filter_mode
+from ai_player.services.speaker_voice_selector import normalize_voice_gender_mode
 from ai_player.services.translation import available_translation_models, is_ctranslate2_model_path
 from ai_player.services.tts import available_vieneu_models, available_voices, voice_gender
 from ai_player.ui.player_window_utils import (
@@ -92,7 +94,7 @@ class PlayerSettingsMixin:
 
     def _sync_auto_voice_controls_enabled(self, *_args) -> None:
         enabled = self._auto_voice_gender_check.isChecked()
-        for widget in (self._tts_male_voice_combo, self._tts_female_voice_combo):
+        for widget in (self._auto_voice_gender_mode_combo, self._tts_male_voice_combo, self._tts_female_voice_combo):
             widget.setEnabled(enabled)
 
     def _populate_gender_voice_combo(
@@ -120,6 +122,11 @@ class PlayerSettingsMixin:
     def _selected_audio_source(self) -> str:
         return self._audio_source_combo.currentData() or self._config.audio_source
 
+    def _selected_source_filter_mode(self) -> str:
+        if hasattr(self, "_source_filter_mode_combo"):
+            return normalize_source_voice_filter_mode(self._source_filter_mode_combo.currentData())
+        return normalize_source_voice_filter_mode(self._config.original_audio_voice_filter_mode)
+
     def _selected_video_aspect_ratio(self) -> str:
         value = self._aspect_combo.currentData() if hasattr(self, "_aspect_combo") else ""
         return value if value in {"16:9", "9:16"} else "16:9"
@@ -128,6 +135,11 @@ class PlayerSettingsMixin:
         if hasattr(self, "_playback_quality_combo"):
             return self._playback_quality_combo.currentData() or self._config.playback_video_quality
         return self._config.playback_video_quality
+
+    def _selected_video_url_full_cache(self) -> bool:
+        if hasattr(self, "_video_url_full_cache_check"):
+            return self._video_url_full_cache_check.isChecked()
+        return self._config.video_url_full_cache
 
     def _selected_source_language(self) -> str:
         return self._source_language_combo.currentData() or "auto"
@@ -183,7 +195,7 @@ class PlayerSettingsMixin:
         self._nllb_model_combo.setEnabled(provider not in {"argos", "none"} and self._nllb_model_combo.count() > 0)
 
     def _selected_performance_preset(self) -> str:
-        return self._performance_preset_combo.currentData() or "balanced"
+        return self._performance_preset_combo.currentData() or DEFAULT_PERFORMANCE_PRESET
 
     def _selected_export_video_quality(self) -> str:
         return self._export_video_quality_combo.currentData() or self._config.export_video_quality
@@ -205,6 +217,11 @@ class PlayerSettingsMixin:
 
     def _selected_tts_female_voice(self) -> str:
         return self._tts_female_voice_combo.currentData() or self._selected_tts_voice()
+
+    def _selected_auto_voice_gender_mode(self) -> str:
+        if hasattr(self, "_auto_voice_gender_mode_combo"):
+            return normalize_voice_gender_mode(self._auto_voice_gender_mode_combo.currentData())
+        return normalize_voice_gender_mode(self._config.dubbing_auto_voice_gender_mode)
 
     def _selected_vieneu_mode(self) -> str:
         return self._vieneu_mode_combo.currentData() or self._config.vieneu_tts_mode
@@ -270,6 +287,7 @@ class PlayerSettingsMixin:
             gui_language=self._selected_gui_language(),
             video_aspect_ratio=self._selected_video_aspect_ratio(),
             playback_video_quality=self._selected_playback_video_quality(),
+            video_url_full_cache=self._selected_video_url_full_cache(),
             audio_source=self._selected_audio_source(),
             capture_backend=self._selected_capture_backend(),
             capture_system_device=self._selected_capture_system_device(),
@@ -301,12 +319,14 @@ class PlayerSettingsMixin:
             dubbing_speed_percent=int(self._dub_speed_slider.value()),
             dubbing_auto_match_audio=self._auto_match_audio_check.isChecked(),
             dubbing_auto_voice_gender=self._auto_voice_gender_check.isChecked(),
+            dubbing_auto_voice_gender_mode=self._selected_auto_voice_gender_mode(),
             dubbing_speed_min=float(self._speed_min_slider.value() / 100),
             dubbing_speed_max=float(self._speed_max_slider.value() / 100),
             dubbing_volume_gain_min_db=float(self._volume_gain_min_slider.value()),
             dubbing_volume_gain_max_db=float(self._volume_gain_max_slider.value()),
             original_audio_volume=int(self._volume_slider.value()),
             original_audio_voice_filter=self._source_filter_check.isChecked(),
+            original_audio_voice_filter_mode=self._selected_source_filter_mode(),
             original_audio_playback_delay_seconds=int(self._video_delay_slider.value()),
             dubbing_enabled_by_default=self._dub_button.isChecked(),
             source_language=self._selected_source_language(),
@@ -380,8 +400,10 @@ class PlayerSettingsMixin:
         )
         self._set_slider_value(self._dub_speed_slider, preset.get("dubbing_speed_percent"))
         self._set_checkbox(self._auto_voice_gender_check, preset.get("dubbing_auto_voice_gender"))
+        self._set_combo_data(self._auto_voice_gender_mode_combo, preset.get("dubbing_auto_voice_gender_mode"))
         self._set_checkbox(self._auto_match_audio_check, preset.get("dubbing_auto_match_audio"))
         self._set_slider_value(self._video_delay_slider, preset.get("original_audio_playback_delay_seconds"))
+        self._set_combo_data(self._source_filter_mode_combo, preset.get("original_audio_voice_filter_mode"))
         self._set_combo_data(self._export_video_quality_combo, preset.get("export_video_quality"))
         self._set_slider_value(
             self._speed_min_slider,
@@ -405,6 +427,7 @@ class PlayerSettingsMixin:
             self._export_video_quality_combo,
             self._playback_quality_combo,
             self._audio_source_combo,
+            self._source_filter_mode_combo,
             self._source_language_combo,
             self._target_language_combo,
             self._translator_combo,
@@ -414,6 +437,7 @@ class PlayerSettingsMixin:
             self._vieneu_mode_combo,
             self._vieneu_model_combo,
             self._tts_voice_combo,
+            self._auto_voice_gender_mode_combo,
             self._tts_male_voice_combo,
             self._tts_female_voice_combo,
             self._whisper_device_combo,
@@ -442,6 +466,7 @@ class PlayerSettingsMixin:
             self._auto_match_audio_check,
             self._dub_button,
             self._source_filter_check,
+            self._video_url_full_cache_check,
         )
         for checkbox in checks:
             checkbox.toggled.connect(self._queue_save_settings)
@@ -562,6 +587,21 @@ class PlayerSettingsMixin:
                 ("#ff8bd1", "pink"),
             ):
                 self._set_combo_item_text(self._subtitle_color_combo, value, self._tr(key))
+        if hasattr(self, "_source_filter_mode_combo"):
+            for value, key in (
+                ("auto", "source_filter_mode_auto"),
+                ("fast", "source_filter_mode_fast"),
+                ("ai", "source_filter_mode_ai"),
+            ):
+                self._set_combo_item_text(self._source_filter_mode_combo, value, self._tr(key))
+        if hasattr(self, "_auto_voice_gender_mode_combo"):
+            for value, key in (
+                ("stable", "voice_gender_mode_stable"),
+                ("balanced", "voice_gender_mode_balanced"),
+                ("sensitive", "voice_gender_mode_sensitive"),
+                ("ai", "voice_gender_mode_ai"),
+            ):
+                self._set_combo_item_text(self._auto_voice_gender_mode_combo, value, self._tr(key))
 
     @staticmethod
     def _set_combo_item_text(combo: QComboBox, data, text: str) -> None:

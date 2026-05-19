@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ai_player.core.config import PROJECT_ROOT
+from ai_player.services.ffmpeg import ffmpeg_executable
 
 
 @dataclass(frozen=True)
@@ -62,7 +63,7 @@ def _extract_subtitle_frames(
     output_pattern: Path,
 ) -> None:
     command = [
-        "ffmpeg",
+        ffmpeg_executable(),
         "-hide_banner",
         "-loglevel",
         "error",

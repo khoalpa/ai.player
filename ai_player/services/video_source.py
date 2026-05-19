@@ -67,13 +67,15 @@ def resolve_video_source(
     playback_quality: str = "720p",
     progress_callback=None,
     cancel_callback=None,
+    *,
+    full_cache: bool = True,
 ) -> VideoSource:
     url = value.strip()
     if not url:
         raise VideoSourceError("URL rỗng.")
 
     if _should_resolve_with_ytdlp(url):
-        return _resolve_page_url(url, playback_quality, progress_callback, cancel_callback)
+        return _resolve_page_url(url, playback_quality, full_cache, progress_callback, cancel_callback)
 
     return VideoSource(input_url=url, playback_url=url, title=url, is_resolved=False)
 
@@ -97,7 +99,13 @@ def _looks_like_direct_media_url(path: str) -> bool:
     return Path(path.lower()).suffix in DIRECT_MEDIA_EXTENSIONS
 
 
-def _resolve_page_url(url: str, playback_quality: str, progress_callback=None, cancel_callback=None) -> VideoSource:
+def _resolve_page_url(
+    url: str,
+    playback_quality: str,
+    full_cache: bool,
+    progress_callback=None,
+    cancel_callback=None,
+) -> VideoSource:
     try:
         import yt_dlp
     except ImportError as exc:
@@ -108,20 +116,20 @@ def _resolve_page_url(url: str, playback_quality: str, progress_callback=None, c
 
     provider = _provider_name(url)
     quality = _normalize_playback_quality(playback_quality)
-    cache_dir = _source_cache_dir(provider, quality)
+    cache_dir = _source_cache_dir(provider, quality) if full_cache else None
 
     def check_cancelled() -> None:
         if cancel_callback is not None and cancel_callback():
             raise VideoSourceCancelled("Da huy mo URL.")
 
     check_cancelled()
-    if progress_callback is not None:
+    if full_cache and progress_callback is not None:
         progress_callback(
             {
                 "status": "starting",
                 "provider": provider,
                 "quality": quality,
-                "cache_dir": str(cache_dir),
+                "cache_dir": str(cache_dir or ""),
                 "url": url,
             }
         )
@@ -140,7 +148,7 @@ def _resolve_page_url(url: str, playback_quality: str, progress_callback=None, c
                 "filename": data.get("filename") or data.get("tmpfilename") or "",
                 "provider": provider,
                 "quality": quality,
-                "cache_dir": str(cache_dir),
+                "cache_dir": str(cache_dir or ""),
                 "url": url,
             }
         )
@@ -148,29 +156,48 @@ def _resolve_page_url(url: str, playback_quality: str, progress_callback=None, c
     options = {
         "quiet": True,
         "no_warnings": True,
-        "skip_download": False,
+        "skip_download": not full_cache,
         "noplaylist": True,
         "socket_timeout": 30,
         "retries": 3,
         "fragment_retries": 3,
-        "format": _format_selector(quality),
-        "merge_output_format": "mp4",
-        "outtmpl": str(cache_dir / "%(extractor_key)s-%(id)s-%(format_id)s-%(height)sp.%(ext)s"),
-        "continuedl": True,
-        "overwrites": False,
+        "format": _format_selector(quality) if full_cache else _stream_format_selector(quality),
         "windowsfilenames": True,
-        "progress_hooks": [progress_hook],
     }
+    if full_cache and cache_dir is not None:
+        options.update(
+            {
+                "merge_output_format": "mp4",
+                "outtmpl": str(cache_dir / "%(extractor_key)s-%(id)s-%(format_id)s-%(height)sp.%(ext)s"),
+                "continuedl": True,
+                "overwrites": False,
+                "progress_hooks": [progress_hook],
+            }
+        )
     try:
         check_cancelled()
         with yt_dlp.YoutubeDL(options) as ydl:
-            info = ydl.extract_info(url, download=True)
+            info = ydl.extract_info(url, download=full_cache)
         check_cancelled()
     except VideoSourceCancelled:
         raise
     except Exception as exc:
         raise VideoSourceError(f"Không tải được video từ {provider}: {exc}") from exc
 
+    if not full_cache:
+        playback_url = _stream_playback_url(info)
+        if not playback_url:
+            raise VideoSourceError(f"Khong tim thay URL phat truc tiep tu {provider}.")
+        return VideoSource(
+            input_url=url,
+            playback_url=playback_url,
+            title=str(info.get("title") or url),
+            provider=provider,
+            is_resolved=True,
+        )
+
+    if cache_dir is None:
+        cache_dir = _source_cache_dir(provider, quality)
     local_path = _downloaded_file_path(info, cache_dir)
     if not local_path:
         raise VideoSourceError(f"Không tìm thấy file video {provider} đã tải.")
@@ -181,7 +208,7 @@ def _resolve_page_url(url: str, playback_quality: str, progress_callback=None, c
                 "status": "cached",
                 "provider": provider,
                 "quality": quality,
-                "cache_dir": str(cache_dir),
+                "cache_dir": str(cache_dir or ""),
                 "filename": local_path,
                 "url": url,
             }
@@ -226,6 +253,26 @@ def _format_selector(playback_quality: str) -> str:
         f"bestvideo[height<={max_height}]+bestaudio/"
         f"best[ext=mp4][vcodec!=none][acodec!=none][height<={max_height}]/"
         f"best[vcodec!=none][acodec!=none][height<={max_height}]/"
+        "best[ext=mp4][vcodec!=none][acodec!=none]/"
+        "best[vcodec!=none][acodec!=none]/best"
+    )
+
+
+def _stream_format_selector(playback_quality: str) -> str:
+    max_height_by_quality = {
+        "360p": 360,
+        "480p": 480,
+        "720p": 720,
+        "1080p": 1080,
+    }
+    quality = _normalize_playback_quality(playback_quality)
+    max_height = max_height_by_quality.get(quality)
+    height_filter = f"[height<={max_height}]" if max_height is not None else ""
+    return (
+        f"best[ext=mp4][vcodec^=avc1][acodec!=none]{height_filter}/"
+        f"best[ext=mp4][vcodec!=none][acodec!=none]{height_filter}/"
+        f"best[vcodec!=none][acodec!=none]{height_filter}/"
+        "best[ext=mp4][vcodec^=avc1][acodec!=none]/"
         "best[ext=mp4][vcodec!=none][acodec!=none]/"
         "best[vcodec!=none][acodec!=none]/best"
     )
@@ -331,4 +378,26 @@ def _downloaded_file_path(info: dict, cache_dir: Path) -> str:
         for path in sorted(cache_dir.glob(f"*{video_id}.*")):
             if path.is_file() and path.suffix.lower() not in {".part", ".ytdl"}:
                 return str(path)
+    return ""
+
+
+def _stream_playback_url(info: dict) -> str:
+    direct_url = str(info.get("url") or "").strip()
+    if direct_url:
+        return direct_url
+
+    requested_formats = info.get("requested_formats") or []
+    if len(requested_formats) == 1:
+        return str(requested_formats[0].get("url") or "").strip()
+
+    formats = info.get("formats") or []
+    playable_formats = [
+        video_format
+        for video_format in formats
+        if str(video_format.get("url") or "").strip()
+        and str(video_format.get("vcodec") or "none") != "none"
+        and str(video_format.get("acodec") or "none") != "none"
+    ]
+    if playable_formats:
+        return str(playable_formats[-1].get("url") or "").strip()
     return ""

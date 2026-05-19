@@ -9,20 +9,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
-from faster_whisper import WhisperModel
 from PySide6.QtCore import QThread, Signal
 
 from ai_player.core.config import PROJECT_ROOT, AppConfig
 from ai_player.core.gpu import ctranslate2_cuda_available, cuda_runtime_files_available
 from ai_player.core.offline_env import OfflineEnvironmentToken, pop_hf_offline_environment, push_hf_offline_environment
 from ai_player.core.performance import measure_stage
-from ai_player.services.audio_matcher import extract_audio_range, match_tts_to_reference, profile_reference_audio
+from ai_player.services.audio_matcher import extract_audio_range, match_tts_to_reference
 from ai_player.services.document_reader import DocumentPage
 from ai_player.services.ffmpeg import (
     concat_escape,
     concat_file_line,
     probe_duration_seconds,
-    run_ffmpeg,
+    run_ffmpeg_cancelable,
     safe_float,
 )
 from ai_player.services.ffmpeg import (
@@ -34,9 +33,12 @@ from ai_player.services.ffmpeg import (
 from ai_player.services.ffmpeg import (
     trim_leading_silence as ffmpeg_trim_leading_silence,
 )
+from ai_player.services.speaker_voice_selector import VoiceGenderSelector
 from ai_player.services.transcript_cleanup import TranscriptCleaner
-from ai_player.services.translation import VietnameseTranslator
-from ai_player.services.tts import create_tts_provider, normalize_tts_provider, select_voice_for_gender
+from ai_player.services.translation_runtime import get_shared_vietnamese_translator
+from ai_player.services.tts import create_tts_provider, normalize_tts_provider
+from ai_player.services.whisper_runtime import SharedWhisperModel, get_shared_whisper_model
+from ai_player.services.whisper_runtime import effective_whisper_compute_type as shared_whisper_compute_type
 from ai_player.workers.dubbing_worker import _load_transcript_entries
 
 
@@ -91,10 +93,10 @@ class DubbingExportWorker(QThread):
         self._tts_provider = None
         self._translator = None
         self._transcript_cleaner = TranscriptCleaner(self._config)
+        self._voice_selector = VoiceGenderSelector(self._config)
         self._tts_lock = threading.Lock()
         self._whisper_device = _effective_whisper_device(config.whisper_device)
-        self._whisper_compute_type = config.whisper_compute_type
-        self._tts_lock = threading.Lock()
+        self._whisper_compute_type = shared_whisper_compute_type(config.whisper_compute_type, self._whisper_device)
 
     def stop(self) -> None:
         self._stop_requested = True
@@ -113,10 +115,11 @@ class DubbingExportWorker(QThread):
         offline_env: OfflineEnvironmentToken | None = None
         try:
             offline_env = self._configure_offline_environment()
+            self._voice_selector.reset()
             self._set_progress(0)
             self.progress_changed.emit("Đang khởi tạo translator va TTS trong nền...")
             self._tts_provider = create_tts_provider(self._config)
-            self._translator = VietnameseTranslator(self._config)
+            self._translator = get_shared_vietnamese_translator(self._config)
             self._set_progress(8)
             if self._config.audio_source in {"system", "microphone", "system_microphone", "subtitle"}:
                 raise RuntimeError(
@@ -274,7 +277,7 @@ class DubbingExportWorker(QThread):
         )
 
     def _extract_full_audio(self, output_path: Path) -> None:
-        run_ffmpeg(
+        self._run_ffmpeg(
             [
                 "-i",
                 self._video_path,
@@ -320,20 +323,47 @@ class DubbingExportWorker(QThread):
         ):
             self.segment_ready.emit(original, translated)
 
+        prepared_items = []
+        needs_reference_audio = _export_reference_audio_required(self._config)
+        for index, original, start_seconds, duration_seconds in items:
+            if self._stop_requested:
+                break
+            reference_path = self._temp_dir / f"cue-{index:05d}-ref.wav"
+            if needs_reference_audio:
+                with measure_stage("export", "reference", cue=index):
+                    extract_audio_range(
+                        source_audio,
+                        start_seconds,
+                        duration_seconds,
+                        reference_path,
+                        cancel_callback=self._is_stop_requested,
+                    )
+            else:
+                reference_path = source_audio
+            voice = self._config.tts_voice
+            if self._config.dubbing_auto_voice_gender and not _tts_disabled(self._config):
+                voice = self._voice_selector.select_voice(
+                    reference_path,
+                    provider=self._config.tts_provider,
+                    config=self._config,
+                ).voice
+            prepared_items.append((index, original, start_seconds, duration_seconds, reference_path, voice))
+
         futures = []
         cues: list[ExportCue] = []
         max_workers = _export_worker_count()
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for item, translated in zip(items, translated_items, strict=False):
+            for item, translated in zip(prepared_items, translated_items, strict=False):
                 futures.append(
                     executor.submit(
                         self._build_source_export_cue,
-                        source_audio,
                         item[0],
                         item[1],
                         translated,
                         item[2],
                         item[3],
+                        item[4],
+                        item[5],
                         tts_suffix,
                     )
                 )
@@ -351,24 +381,18 @@ class DubbingExportWorker(QThread):
 
     def _build_source_export_cue(
         self,
-        source_audio: Path,
         index: int,
         original: str,
         translated: str,
         start_seconds: float,
         duration_seconds: float,
+        reference_path: Path,
+        voice: str,
         tts_suffix: str,
     ) -> ExportCue:
         assert self._temp_dir is not None
         tts_path = self._temp_dir / f"cue-{index:05d}.{tts_suffix}"
-        reference_path = self._temp_dir / f"cue-{index:05d}-ref.wav"
         matched_path = self._temp_dir / f"cue-{index:05d}-matched.wav"
-        with measure_stage("export", "reference", cue=index):
-            extract_audio_range(source_audio, start_seconds, duration_seconds, reference_path)
-            if self._config.dubbing_auto_voice_gender:
-                audio_profile = profile_reference_audio(reference_path)
-            else:
-                audio_profile = None
         if _tts_disabled(self._config):
             return ExportCue(
                 start_seconds=start_seconds,
@@ -376,13 +400,6 @@ class DubbingExportWorker(QThread):
                 translated=translated,
                 audio_path=reference_path,
                 duration_seconds=duration_seconds,
-            )
-        voice = self._config.tts_voice
-        if audio_profile is not None:
-            voice = select_voice_for_gender(
-                self._config.tts_provider,
-                self._config,
-                audio_profile.gender,
             )
         with self._tts_lock:
             with measure_stage("export", "tts", cue=index):
@@ -394,6 +411,7 @@ class DubbingExportWorker(QThread):
                 output_path=matched_path,
                 target_duration_seconds=duration_seconds,
                 config=self._config,
+                cancel_callback=self._is_stop_requested,
             )
             final_duration = max(0.25, _probe_duration_seconds(final_audio) or duration_seconds)
         return ExportCue(
@@ -404,12 +422,13 @@ class DubbingExportWorker(QThread):
             duration_seconds=final_duration,
         )
 
-    def _load_whisper_model(self) -> WhisperModel:
+    def _load_whisper_model(self) -> SharedWhisperModel:
         try:
-            return WhisperModel(
+            return get_shared_whisper_model(
                 self._config.whisper_model,
                 device=self._whisper_device,
                 compute_type=self._whisper_compute_type,
+                local_files_only=self._config.whisper_offline,
             )
         except Exception as exc:
             if self._whisper_device == "cpu" and self._whisper_compute_type != "int8":
@@ -420,13 +439,14 @@ class DubbingExportWorker(QThread):
             self.progress_changed.emit("Whisper không chạy được CUDA/Auto, chuyển sang CPU...")
             return self._switch_whisper_to_cpu(exc)
 
-    def _switch_whisper_to_cpu(self, _cause: Exception | None = None) -> WhisperModel:
+    def _switch_whisper_to_cpu(self, _cause: Exception | None = None) -> SharedWhisperModel:
         self._whisper_device = "cpu"
         self._whisper_compute_type = "int8"
-        return WhisperModel(
+        return get_shared_whisper_model(
             self._config.whisper_model,
             device=self._whisper_device,
             compute_type=self._whisper_compute_type,
+            local_files_only=self._config.whisper_offline,
         )
 
     def _transcribe_with_fallback(self, source_audio: Path):
@@ -487,7 +507,7 @@ class DubbingExportWorker(QThread):
             "".join(concat_file_line(path) for path in parts),
             encoding="utf-8",
         )
-        run_ffmpeg(
+        self._run_ffmpeg(
             [
                 "-f",
                 "concat",
@@ -506,16 +526,57 @@ class DubbingExportWorker(QThread):
             ]
         )
 
-    @staticmethod
-    def _make_silence(duration_seconds: float, output_path: Path) -> None:
-        ffmpeg_make_silence(duration_seconds, output_path)
+    def _make_silence(self, duration_seconds: float, output_path: Path) -> None:
+        self._run_ffmpeg(
+            [
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=channel_layout=stereo:sample_rate=44100",
+                "-t",
+                f"{max(0.0, duration_seconds):.3f}",
+                "-c:a",
+                "pcm_s16le",
+                "-y",
+                output_path,
+            ]
+        )
 
-    @staticmethod
-    def _to_wav(input_path: Path, output_path: Path) -> None:
-        ffmpeg_to_wav(input_path, output_path)
+    def _to_wav(self, input_path: Path, output_path: Path) -> None:
+        self._run_ffmpeg(
+            [
+                "-i",
+                input_path,
+                "-ar",
+                44100,
+                "-ac",
+                2,
+                "-c:a",
+                "pcm_s16le",
+                "-y",
+                output_path,
+            ]
+        )
 
     def _trim_leading_silence(self, audio_path: Path) -> Path:
-        return ffmpeg_trim_leading_silence(audio_path)
+        trimmed_path = audio_path.with_name(f"{audio_path.stem}-trimmed{audio_path.suffix}")
+        try:
+            self._run_ffmpeg(
+                [
+                    "-i",
+                    audio_path,
+                    "-af",
+                    "silenceremove=start_periods=1:start_duration=0.02:start_threshold=-45dB",
+                    "-y",
+                    trimmed_path,
+                ],
+                check=False,
+            )
+        except Exception:
+            return audio_path
+        if trimmed_path.exists() and trimmed_path.stat().st_size > 0:
+            return trimmed_path
+        return audio_path
 
     @staticmethod
     def _duration_seconds(path: Path) -> float:
@@ -561,7 +622,15 @@ class DubbingExportWorker(QThread):
                 str(self._output_path),
             ]
         )
-        run_ffmpeg(command)
+        self._run_ffmpeg(command)
+
+    def _run_ffmpeg(self, args: list[object], **kwargs) -> None:
+        if self._stop_requested:
+            raise RuntimeError("Export cancelled")
+        run_ffmpeg_cancelable(args, cancel_callback=self._is_stop_requested, **kwargs)
+
+    def _is_stop_requested(self) -> bool:
+        return self._stop_requested
 
 
 class DocumentReviewExportWorker(QThread):
@@ -589,6 +658,7 @@ class DocumentReviewExportWorker(QThread):
         self._tts_provider = None
         self._translator = None
         self._transcript_cleaner = TranscriptCleaner(self._config)
+        self._tts_lock = threading.Lock()
 
     def stop(self) -> None:
         self._stop_requested = True
@@ -610,7 +680,7 @@ class DocumentReviewExportWorker(QThread):
             self._set_progress(0)
             self.progress_changed.emit("Đang khởi tạo translator và TTS trong nền...")
             self._tts_provider = create_tts_provider(self._config)
-            self._translator = VietnameseTranslator(self._config)
+            self._translator = get_shared_vietnamese_translator(self._config)
             self._set_progress(8)
             if not self._pages:
                 raise RuntimeError("Chưa có trang tài liệu để export.")
@@ -725,7 +795,7 @@ class DocumentReviewExportWorker(QThread):
         wav_path = self._temp_dir / f"document-cue-{index:05d}.wav"
         if _tts_disabled(self._config):
             duration = max(0.25, cue.end_seconds - cue.start_seconds)
-            _make_silence(duration, wav_path)
+            self._make_silence(duration, wav_path)
             return ExportCue(
                 start_seconds=max(0.0, cue.start_seconds),
                 original=original,
@@ -737,7 +807,7 @@ class DocumentReviewExportWorker(QThread):
             with measure_stage("document_export", "tts", cue=index):
                 self._tts_provider.synthesize(translated, tts_path, voice=self._config.tts_voice)
         with measure_stage("document_export", "postprocess", cue=index):
-            _to_wav(_trim_leading_silence(tts_path), wav_path)
+            self._to_wav(self._trim_leading_silence(tts_path), wav_path)
             duration = _probe_duration_seconds(wav_path)
         return ExportCue(
             start_seconds=max(0.0, cue.start_seconds),
@@ -759,14 +829,14 @@ class DocumentReviewExportWorker(QThread):
             gap = max(0.0, cue.start_seconds - cursor)
             if gap >= 0.02:
                 silence_path = self._temp_dir / f"document-silence-{index:05d}.wav"
-                _make_silence(gap, silence_path)
+                self._make_silence(gap, silence_path)
                 parts.append(silence_path)
             parts.append(cue.audio_path)
             duration = _duration_seconds(cue.audio_path) or cue.duration_seconds or 0.25
             cursor = max(cue.start_seconds, cursor) + duration
 
         if not parts:
-            _make_silence(1.0, output_path)
+            self._make_silence(1.0, output_path)
             return
 
         concat_file = self._temp_dir / "document-audio-concat.txt"
@@ -774,7 +844,7 @@ class DocumentReviewExportWorker(QThread):
             "".join(concat_file_line(path) for path in parts),
             encoding="utf-8",
         )
-        run_ffmpeg(
+        self._run_ffmpeg(
             [
                 "-f",
                 "concat",
@@ -810,7 +880,7 @@ class DocumentReviewExportWorker(QThread):
             lines.append(f"duration {duration:.3f}\n")
         lines.append(concat_file_line(image_paths[-1]))
         concat_file.write_text("".join(lines), encoding="utf-8")
-        run_ffmpeg(
+        self._run_ffmpeg(
             [
                 "-f",
                 "concat",
@@ -848,7 +918,7 @@ class DocumentReviewExportWorker(QThread):
 
     def _mux_document_video(self, video_path: Path, audio_path: Path) -> None:
         quality = _video_quality_settings(self._config.export_video_quality)
-        run_ffmpeg(
+        self._run_ffmpeg(
             [
                 "-i",
                 str(video_path),
@@ -871,6 +941,66 @@ class DocumentReviewExportWorker(QThread):
             ]
         )
 
+    def _make_silence(self, duration_seconds: float, output_path: Path) -> None:
+        self._run_ffmpeg(
+            [
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=channel_layout=stereo:sample_rate=44100",
+                "-t",
+                f"{max(0.0, duration_seconds):.3f}",
+                "-c:a",
+                "pcm_s16le",
+                "-y",
+                output_path,
+            ]
+        )
+
+    def _to_wav(self, input_path: Path, output_path: Path) -> None:
+        self._run_ffmpeg(
+            [
+                "-i",
+                input_path,
+                "-ar",
+                44100,
+                "-ac",
+                2,
+                "-c:a",
+                "pcm_s16le",
+                "-y",
+                output_path,
+            ]
+        )
+
+    def _trim_leading_silence(self, audio_path: Path) -> Path:
+        trimmed_path = audio_path.with_name(f"{audio_path.stem}-trimmed{audio_path.suffix}")
+        try:
+            self._run_ffmpeg(
+                [
+                    "-i",
+                    audio_path,
+                    "-af",
+                    "silenceremove=start_periods=1:start_duration=0.02:start_threshold=-45dB",
+                    "-y",
+                    trimmed_path,
+                ],
+                check=False,
+            )
+        except Exception:
+            return audio_path
+        if trimmed_path.exists() and trimmed_path.stat().st_size > 0:
+            return trimmed_path
+        return audio_path
+
+    def _run_ffmpeg(self, args: list[object], **kwargs) -> None:
+        if self._stop_requested:
+            raise RuntimeError("Export cancelled")
+        run_ffmpeg_cancelable(args, cancel_callback=self._is_stop_requested, **kwargs)
+
+    def _is_stop_requested(self) -> bool:
+        return self._stop_requested
+
 
 def _ffmpeg_escape(path: Path) -> str:
     return concat_escape(path)
@@ -892,7 +1022,7 @@ def _video_quality_settings(value: str) -> VideoQualitySettings:
         width=1920,
         height=1080,
         audio_bitrate="256k",
-        copy_source_video=True,
+        copy_source_video=False,
     )
 
 
@@ -1028,14 +1158,19 @@ def _tts_disabled(config: AppConfig) -> bool:
     return normalize_tts_provider(config.tts_provider) == "none"
 
 
+def _export_reference_audio_required(config: AppConfig) -> bool:
+    return bool(_tts_disabled(config) or config.dubbing_auto_voice_gender or config.dubbing_auto_match_audio)
+
+
 def _export_worker_count() -> int:
     configured = os.getenv("AI_PLAYER_EXPORT_WORKERS", "").strip()
     if configured:
         try:
-            return max(1, min(8, int(configured)))
+            return max(1, min(16, int(configured)))
         except ValueError:
             pass
-    return max(1, min(4, (os.cpu_count() or 2) // 2))
+    cpu_count = os.cpu_count() or 2
+    return max(1, min(8, max(4, cpu_count // 2)))
 
 
 def _effective_whisper_device(value: str) -> str:
