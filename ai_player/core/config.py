@@ -95,6 +95,10 @@ def _env_bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class AppConfig:
     gui_language: str = os.getenv("AI_PLAYER_GUI_LANGUAGE", "vi")
+    runtime_warmup_enabled: bool = _env_bool("AI_PLAYER_PREWARM_RUNTIME", True)
+    runtime_warmup_whisper: bool = _env_bool("AI_PLAYER_PREWARM_WHISPER", True)
+    runtime_warmup_translation: bool = _env_bool("AI_PLAYER_PREWARM_TRANSLATION", True)
+    runtime_warmup_tts: bool = _env_bool("AI_PLAYER_PREWARM_TTS", True)
     video_aspect_ratio: str = os.getenv("AI_PLAYER_VIDEO_ASPECT_RATIO", "16:9")
     playback_video_quality: str = os.getenv("AI_PLAYER_PLAYBACK_VIDEO_QUALITY", "720p")
     audio_source: str = os.getenv("AI_PLAYER_AUDIO_SOURCE", "original")
@@ -207,6 +211,10 @@ def _app_config_env_values() -> dict[str, object]:
     )
     return {
         "gui_language": os.getenv("AI_PLAYER_GUI_LANGUAGE", "vi"),
+        "runtime_warmup_enabled": _env_bool("AI_PLAYER_PREWARM_RUNTIME", True),
+        "runtime_warmup_whisper": _env_bool("AI_PLAYER_PREWARM_WHISPER", True),
+        "runtime_warmup_translation": _env_bool("AI_PLAYER_PREWARM_TRANSLATION", True),
+        "runtime_warmup_tts": _env_bool("AI_PLAYER_PREWARM_TTS", True),
         "video_aspect_ratio": os.getenv("AI_PLAYER_VIDEO_ASPECT_RATIO", "16:9"),
         "playback_video_quality": os.getenv("AI_PLAYER_PLAYBACK_VIDEO_QUALITY", "720p"),
         "audio_source": os.getenv("AI_PLAYER_AUDIO_SOURCE", "original"),

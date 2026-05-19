@@ -217,6 +217,10 @@ def normalize_tts_provider(value: object) -> str:
     return "vieneu"
 
 
+def tts_output_suffix(provider: object) -> str:
+    return "mp3" if normalize_tts_provider(provider) == "edge" else "wav"
+
+
 def normalize_vieneu_mode(value: object) -> str:
     raw = str(value or "turbo").strip().lower().replace("-", "_")
     aliases = {
