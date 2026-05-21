@@ -2,8 +2,6 @@
 
 AI Player là ứng dụng Windows dùng PySide6 để xem video, đọc tài liệu và tạo bản lồng tiếng gần thời gian thực bằng ASR, dịch máy, OCR và TTS. Mặc định dự án ưu tiên workflow offline: Faster Whisper cho nhận dạng giọng nói, NLLB cho dịch, VieNeu-TTS cho giọng đọc tiếng Việt và Tesseract cho OCR phụ đề cứng.
 
-> Trạng thái hiện tại: `v0.1.0` là baseline phục hồi từ wheel artifact. Source, tài liệu, CI và smoke tests đã được khôi phục để dự án chạy được, nhưng model offline và build artifact không được commit kèm repo.
-
 ## Tính Năng Chính
 
 - Mở video cục bộ, URL media trực tiếp hoặc trang video được `yt-dlp` hỗ trợ.
