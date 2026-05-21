@@ -22,6 +22,8 @@ _LOGGER = logging.getLogger(__name__)
 _DURATION_FALLBACK_WARNING_EMITTED = False
 _MATCH_OUTPUT_SAMPLE_RATE = 44100
 _MATCH_OUTPUT_CHANNELS = 2
+_NATURAL_TEMPO_MIN = 0.92
+_NATURAL_TEMPO_MAX = 1.12
 
 
 @dataclass(frozen=True)
@@ -127,8 +129,9 @@ def _build_audio_match_plan(
         tts_duration = audio_duration_seconds(tts_path)
         if tts_duration > 0.05 and target_duration_seconds > 0.05:
             auto_tempo = tts_duration / target_duration_seconds
-            tempo *= max(config.dubbing_speed_min, min(config.dubbing_speed_max, auto_tempo))
-    tempo = max(0.5, min(2.0, tempo))
+            auto_min, auto_max = _safe_auto_tempo_bounds(config)
+            tempo *= max(auto_min, min(auto_max, auto_tempo))
+    tempo = _clamp_natural_tempo(tempo)
     filters.extend(_atempo_filters(tempo))
 
     reference_volume = mean_volume_db(reference_path) if config.dubbing_auto_match_audio else None
@@ -152,6 +155,22 @@ def _build_audio_match_plan(
         reference_volume_db=reference_volume,
         tts_volume_db=tts_volume,
     )
+
+
+def _safe_auto_tempo_bounds(config: AppConfig) -> tuple[float, float]:
+    lower = max(_NATURAL_TEMPO_MIN, min(1.0, float(config.dubbing_speed_min)))
+    upper = min(_NATURAL_TEMPO_MAX, max(1.0, float(config.dubbing_speed_max)))
+    if lower > upper:
+        return (_NATURAL_TEMPO_MIN, _NATURAL_TEMPO_MAX)
+    return (lower, upper)
+
+
+def _clamp_natural_tempo(value: float) -> float:
+    if not math.isfinite(value):
+        return 1.0
+    if value <= 0:
+        return _NATURAL_TEMPO_MIN
+    return max(_NATURAL_TEMPO_MIN, min(_NATURAL_TEMPO_MAX, value))
 
 
 def extract_audio_range(

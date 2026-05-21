@@ -9,7 +9,7 @@ from ai_player.services import audio_matcher
 from ai_player.services.audio_matcher import match_tts_to_reference
 
 
-def test_audio_match_plan_clamps_auto_tempo_and_gain(monkeypatch, tmp_path) -> None:
+def test_audio_match_plan_clamps_auto_tempo_to_natural_range_and_gain(monkeypatch, tmp_path) -> None:
     reference_path = tmp_path / "reference.wav"
     tts_path = tmp_path / "tts.wav"
     monkeypatch.setattr(audio_matcher, "audio_duration_seconds", lambda _path: 2.0)
@@ -40,10 +40,10 @@ def test_audio_match_plan_clamps_auto_tempo_and_gain(monkeypatch, tmp_path) -> N
         config=config,
     )
 
-    assert plan.tempo == pytest.approx(1.485)
+    assert plan.tempo == pytest.approx(1.12)
     assert plan.gain_db == 8.0
     assert plan.filters == (
-        "atempo=1.4850",
+        "atempo=1.1200",
         "aformat=sample_rates=44100:channel_layouts=stereo",
         "volume=8.00dB",
     )
@@ -132,6 +132,20 @@ def test_match_tts_to_reference_formats_audio_before_volume(monkeypatch, tmp_pat
 
     assert result == output_path
     filters = captured["args"][captured["args"].index("-af") + 1]
-    assert filters == "atempo=2.0000,aformat=sample_rates=44100:channel_layouts=stereo,volume=8.00dB"
+    assert filters == "atempo=1.1200,aformat=sample_rates=44100:channel_layouts=stereo,volume=8.00dB"
     assert captured["args"][captured["args"].index("-ar") + 1] == "44100"
     assert captured["args"][captured["args"].index("-ac") + 1] == "2"
+
+
+def test_audio_match_plan_limits_manual_speed_even_when_auto_match_is_off(monkeypatch, tmp_path) -> None:
+    config = AppConfig(dubbing_auto_match_audio=False, dubbing_speed_percent=80)
+
+    plan = audio_matcher._build_audio_match_plan(
+        reference_path=tmp_path / "reference.wav",
+        tts_path=tmp_path / "tts.wav",
+        target_duration_seconds=1.0,
+        config=config,
+    )
+
+    assert plan.tempo == pytest.approx(1.12)
+    assert plan.filters == ("atempo=1.1200",)

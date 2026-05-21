@@ -42,12 +42,19 @@ from ai_player.services.capture_sources import (
     capture_system_audio,
     capture_system_microphone_audio,
 )
-from ai_player.services.ffmpeg import ProcessCancelled, ffplay_executable, run_ffmpeg_cancelable
+from ai_player.services.ffmpeg import (
+    ProcessCancelled,
+    ffplay_executable,
+    run_ffmpeg_cancelable,
+)
+from ai_player.services.ffmpeg import (
+    make_silence as ffmpeg_make_silence,
+)
 from ai_player.services.speaker_voice_selector import VoiceGenderSelector, select_voice_for_reference
 from ai_player.services.subtitle_ocr import recognize_hard_subtitles
 from ai_player.services.transcript_cleanup import TranscriptCleaner
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
-from ai_player.services.tts import create_tts_provider, normalize_tts_provider
+from ai_player.services.tts import create_tts_provider, is_non_speech_tts_text, normalize_tts_provider
 from ai_player.services.whisper_runtime import (
     SharedWhisperModel,
     get_shared_whisper_model,
@@ -306,6 +313,17 @@ class DubbingWorker(QThread):
                     entry.end if entry.end is not None else entry.start + self._config.segment_seconds,
                 )
             return
+        entry_end = entry.end if entry.end is not None else entry.start + self._config.segment_seconds
+        duration = max(0.25, entry_end - entry.start)
+        if is_non_speech_tts_text(translated):
+            self._queue_silent_audio(
+                entry.start,
+                duration,
+                tts_path.with_name(f"{tts_path.stem}-silence.wav"),
+                original,
+                translated,
+            )
+            return
         self.status_changed.emit(f"\u0110ang t\u1ea1o gi\u1ecdng Vi\u1ec7t t\u1ea1i {_format_hhmmss(entry.start)}...")
         self._tts_provider.synthesize(translated, tts_path, voice=self._config.tts_voice)
         final_path = tts_path if self._skip_tts_postprocess() else self._trim_leading_silence(tts_path)
@@ -541,6 +559,16 @@ class DubbingWorker(QThread):
                 self.segment_ready.emit(original, translated)
                 self._remember_scheduled_text(original, absolute_start)
                 continue
+            if is_non_speech_tts_text(translated):
+                self._queue_silent_audio(
+                    absolute_start,
+                    speech_duration,
+                    self._temp_dir / f"vi-{segment_ms}-{index}-silence.wav",
+                    original,
+                    translated,
+                )
+                self._remember_scheduled_text(original, absolute_start)
+                continue
 
             if needs_reference_audio:
                 with measure_stage("dubbing", "reference", start=f"{absolute_start:.3f}"):
@@ -628,6 +656,16 @@ class DubbingWorker(QThread):
             translated = self._translator.translate(original, self._selected_whisper_language())
             if _tts_disabled(self._config):
                 self.segment_ready.emit(original, translated)
+                self._remember_scheduled_text(original, absolute_start)
+                continue
+            if is_non_speech_tts_text(translated):
+                self._queue_silent_audio(
+                    absolute_start,
+                    duration,
+                    self._temp_dir / f"vi-subtitle-{segment_ms}-{index}-silence.wav",
+                    original,
+                    translated,
+                )
                 self._remember_scheduled_text(original, absolute_start)
                 continue
             self.status_changed.emit(
@@ -839,6 +877,17 @@ class DubbingWorker(QThread):
             )
             self._pending_audio.append((scheduled_start, source_start, audio_path, original, translated))
             self._pending_audio.sort(key=lambda item: item[0])
+
+    def _queue_silent_audio(
+        self,
+        source_start_seconds: float,
+        duration_seconds: float,
+        audio_path: Path,
+        original: str,
+        translated: str,
+    ) -> None:
+        ffmpeg_make_silence(duration_seconds, audio_path)
+        self._queue_pending_audio(source_start_seconds, duration_seconds, audio_path, original, translated)
 
     def _overlap_playback_enabled(self) -> bool:
         if self._config.audio_source == "document_editor":

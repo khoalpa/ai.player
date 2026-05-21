@@ -163,13 +163,13 @@ class AppConfig:
     dubbing_lookahead_segments: int = 2
     dubbing_min_ready_ahead_seconds: float = DEFAULT_DUBBING_BUFFER_SECONDS
     dubbing_voice_volume: int = DEFAULT_DUBBING_VOICE_VOLUME
-    dubbing_speed_percent: int = 5
+    dubbing_speed_percent: int = 0
     dubbing_auto_match_audio: bool = True
     dubbing_overlap_policy: str = "smart"
     dubbing_auto_voice_gender: bool = True
     dubbing_auto_voice_gender_mode: str = "balanced"
-    dubbing_speed_min: float = 0.9
-    dubbing_speed_max: float = 1.22
+    dubbing_speed_min: float = 0.92
+    dubbing_speed_max: float = 1.12
     dubbing_volume_gain_min_db: float = -8.0
     dubbing_volume_gain_max_db: float = 6.0
     original_audio_volume: int = DEFAULT_ORIGINAL_VOLUME

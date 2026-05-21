@@ -139,6 +139,30 @@ def test_source_export_voice_selector_runs_before_parallel_cue_build(monkeypatch
     assert [cue.original for cue in cues] == ["first", "second"]
 
 
+def test_source_export_replaces_non_speech_target_with_silence(tmp_path) -> None:
+    config = AppConfig(tts_provider="vieneu")
+    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    worker._temp_dir = tmp_path
+    worker._tts_provider = SimpleNamespace(
+        synthesize=lambda *_args, **_kwargs: pytest.fail("filler sounds should not be sent to TTS")
+    )
+    worker._make_silence = lambda _duration, output_path: Path(output_path).write_bytes(b"silence")
+
+    cue = worker._build_source_export_cue(
+        0,
+        "uh",
+        "ừm",
+        1.0,
+        0.5,
+        tmp_path / "reference.wav",
+        "Doan",
+        "wav",
+    )
+
+    assert cue.audio_path.read_bytes() == b"silence"
+    assert cue.duration_seconds == 0.5
+
+
 def test_source_export_skips_reference_extract_when_unused(monkeypatch, tmp_path) -> None:
     config = AppConfig(
         dubbing_auto_match_audio=False,

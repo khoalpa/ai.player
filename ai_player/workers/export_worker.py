@@ -67,7 +67,7 @@ from ai_player.services.ffmpeg import (
 from ai_player.services.speaker_voice_selector import VoiceGenderSelector
 from ai_player.services.transcript_cleanup import TranscriptCleaner
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
-from ai_player.services.tts import create_tts_provider, normalize_tts_provider
+from ai_player.services.tts import create_tts_provider, is_non_speech_tts_text, normalize_tts_provider
 from ai_player.services.whisper_runtime import (
     SharedWhisperModel,
     get_shared_whisper_model,
@@ -308,7 +308,7 @@ class DubbingExportWorker(QThread):
         assert self._temp_dir is not None
         tts_path = self._temp_dir / f"transcript-cue-{index:05d}.{tts_suffix}"
         wav_path = self._temp_dir / f"transcript-cue-{index:05d}.wav"
-        if _tts_disabled(self._config):
+        if _tts_disabled(self._config) or is_non_speech_tts_text(translated):
             duration = max(0.25, (entry.end or entry.start + self._config.segment_seconds) - entry.start)
             self._make_silence(duration, wav_path)
             return ExportCue(
@@ -459,6 +459,15 @@ class DubbingExportWorker(QThread):
                 original=original,
                 translated=translated,
                 audio_path=reference_path,
+                duration_seconds=duration_seconds,
+            )
+        if is_non_speech_tts_text(translated):
+            self._make_silence(duration_seconds, matched_path)
+            return ExportCue(
+                start_seconds=start_seconds,
+                original=original,
+                translated=translated,
+                audio_path=matched_path,
                 duration_seconds=duration_seconds,
             )
         with self._tts_lock:
@@ -872,7 +881,7 @@ class DocumentReviewExportWorker(QThread):
         assert self._temp_dir is not None
         tts_path = self._temp_dir / f"document-cue-{index:05d}.{tts_suffix}"
         wav_path = self._temp_dir / f"document-cue-{index:05d}.wav"
-        if _tts_disabled(self._config):
+        if _tts_disabled(self._config) or is_non_speech_tts_text(translated):
             duration = max(0.25, cue.end_seconds - cue.start_seconds)
             self._make_silence(duration, wav_path)
             return ExportCue(

@@ -8,6 +8,7 @@ import inspect
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -177,6 +178,70 @@ def normalize_tts_provider(value: object) -> str:
 
 def tts_output_suffix(provider: object) -> str:
     return "mp3" if normalize_tts_provider(provider) == "edge" else "wav"
+
+
+_NON_SPEECH_TTS_TOKENS = {
+    "a",
+    "aa",
+    "aaa",
+    "ah",
+    "aha",
+    "aw",
+    "e",
+    "eh",
+    "er",
+    "err",
+    "ha",
+    "hah",
+    "haha",
+    "hahaha",
+    "haiz",
+    "hm",
+    "hmm",
+    "hmmm",
+    "huh",
+    "m",
+    "mh",
+    "mhm",
+    "mm",
+    "mmh",
+    "mmm",
+    "mmmm",
+    "o",
+    "oh",
+    "oo",
+    "ooh",
+    "u",
+    "uh",
+    "uhh",
+    "uhm",
+    "um",
+    "umm",
+}
+
+
+def is_non_speech_tts_text(value: object) -> bool:
+    text = _clean_text(value)
+    if not text:
+        return True
+
+    normalized = unicodedata.normalize("NFD", text.lower())
+    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+    normalized = normalized.replace("đ", "d")
+    tokens = re.findall(r"[a-z0-9]+", normalized)
+    if not tokens:
+        return True
+    if len(tokens) > 4 or any(any(ch.isdigit() for ch in token) for token in tokens):
+        return False
+    return all(token in _NON_SPEECH_TTS_TOKENS or _looks_like_drawn_out_vocalization(token) for token in tokens)
+
+
+def _looks_like_drawn_out_vocalization(token: str) -> bool:
+    if len(token) < 2 or len(token) > 10:
+        return False
+    if len(set(token)) == 1 and token[0] in {"a", "e", "h", "m", "o", "u"}:
+        return True
+    return bool(re.fullmatch(r"h*m+h*", token) or re.fullmatch(r"[auo]+h*", token))
 
 
 def normalize_vieneu_mode(value: object) -> str:
@@ -1130,4 +1195,3 @@ def _vieneu_voices(config: AppConfig | None) -> list[VoiceOption]:
                 return voices
 
     return STANDARD_VIENEU_VOICES if mode == "standard" else TURBO_VIENEU_VOICES
-

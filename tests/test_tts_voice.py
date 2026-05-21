@@ -39,6 +39,16 @@ def test_tts_cache_text_normalizes_unicode_and_format_chars() -> None:
     assert tts._cache_text("Cafe\u0301\u200b") == "Caf\u00e9"
 
 
+@pytest.mark.parametrize("value", ["Ah...", "ừm", "hmmm", "mm mm", "..."])
+def test_non_speech_tts_text_detects_filler_sounds(value: str) -> None:
+    assert tts.is_non_speech_tts_text(value)
+
+
+@pytest.mark.parametrize("value", ["xin chào", "có", "AI Player"])
+def test_non_speech_tts_text_keeps_spoken_words(value: str) -> None:
+    assert not tts.is_non_speech_tts_text(value)
+
+
 def test_cached_tts_provider_reuses_cached_audio(monkeypatch, tmp_path) -> None:
     calls: list[str] = []
     cache_path = tmp_path / "cache.wav"

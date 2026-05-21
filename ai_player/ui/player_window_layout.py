@@ -532,9 +532,9 @@ class PlayerLayoutMixin:
         self._dubbing_buffer_value = self._value_label(f"{int(self._config.dubbing_min_ready_ahead_seconds)} s")
         self._dubbing_buffer_slider.valueChanged.connect(lambda value: self._dubbing_buffer_value.setText(f"{value} s"))
         self._dub_speed_slider = self._value_slider(
-            minimum=-100,
-            maximum=100,
-            step=10,
+            minimum=-20,
+            maximum=20,
+            step=5,
             value=self._config.dubbing_speed_percent,
         )
         self._dub_speed_value = self._value_label(f"{self._config.dubbing_speed_percent:+d} %")
@@ -598,7 +598,7 @@ class PlayerLayoutMixin:
             formatter=lambda value: f"{value} s",
         )
         self._speed_min_slider, self._speed_min_value = self._labeled_slider(
-            minimum=50,
+            minimum=80,
             maximum=100,
             step=5,
             value=int(self._config.dubbing_speed_min * 100),
@@ -606,7 +606,7 @@ class PlayerLayoutMixin:
         )
         self._speed_max_slider, self._speed_max_value = self._labeled_slider(
             minimum=100,
-            maximum=200,
+            maximum=125,
             step=5,
             value=int(self._config.dubbing_speed_max * 100),
             formatter=lambda value: f"{value} %",
