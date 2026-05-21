@@ -2,6 +2,17 @@
 
 AI Player là ứng dụng Windows dùng PySide6 để xem video, đọc tài liệu và tạo bản lồng tiếng gần thời gian thực bằng ASR, dịch máy, OCR và TTS. Mặc định dự án ưu tiên workflow offline: Faster Whisper cho nhận dạng giọng nói, NLLB cho dịch, VieNeu-TTS cho giọng đọc tiếng Việt và Tesseract cho OCR phụ đề cứng.
 
+## Donation
+
+Nếu AI Player hữu ích với bạn, bạn có thể ủng hộ tác giả qua VietQR/MB Bank:
+
+- Chủ tài khoản: `LE PHAM ANH KHOA`
+- Số tài khoản: `0914030780`
+- Ngân hàng: `MB Bank`
+- Nội dung gợi ý: `Donation AI Player`
+
+<img src="docs/assets/donation-mbb-0914030780.jpg" alt="VietQR donation for AI Player - MB Bank 0914030780" width="320">
+
 ## Tính Năng Chính
 
 - Mở video cục bộ, URL media trực tiếp hoặc trang video được `yt-dlp` hỗ trợ.
