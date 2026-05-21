@@ -159,13 +159,13 @@ class PlayerLayoutMixin:
         self._aspect_combo = self._option_combo(
             _dropdown_options("video_aspects", self._config.gui_language), self._config.video_aspect_ratio
         )
-        self._aspect_combo.setFixedWidth(76)
+        self._aspect_combo.setFixedWidth(80)
         self._aspect_combo.currentIndexChanged.connect(self._video_aspect_changed)
         self._playback_quality_combo = self._option_combo(
             _dropdown_options("playback_video_qualities", self._config.gui_language),
             self._config.playback_video_quality,
         )
-        self._playback_quality_combo.setFixedWidth(86)
+        self._playback_quality_combo.setFixedWidth(96)
         self._playback_quality_combo.currentIndexChanged.connect(self._playback_quality_changed)
         self._video_url_full_cache_check = QCheckBox(self._tr("video_url_full_cache"))
         self._video_url_full_cache_check.setProperty("i18n_key", "video_url_full_cache")
@@ -224,7 +224,7 @@ class PlayerLayoutMixin:
         self._subtitle_mode_combo.addItem(self._tr("source"), "source")
         self._subtitle_mode_combo.addItem(self._tr("target"), "target")
         self._subtitle_mode_combo.setCurrentIndex(0)
-        self._subtitle_mode_combo.setFixedWidth(78)
+        self._subtitle_mode_combo.setFixedWidth(80)
         self._subtitle_mode_combo.currentIndexChanged.connect(self._subtitle_mode_changed)
         self._subtitle_size_combo = QComboBox()
         self._subtitle_size_combo.addItem(self._tr("small"), 18)
@@ -232,7 +232,7 @@ class PlayerLayoutMixin:
         self._subtitle_size_combo.addItem(self._tr("large"), 32)
         self._subtitle_size_combo.addItem(self._tr("very_large"), 40)
         self._subtitle_size_combo.setCurrentIndex(0)
-        self._subtitle_size_combo.setFixedWidth(74)
+        self._subtitle_size_combo.setFixedWidth(80)
         self._subtitle_size_combo.currentIndexChanged.connect(self._subtitle_size_changed)
         self._subtitle_color_combo = QComboBox()
         self._subtitle_color_combo.addItem(self._tr("black"), "#000000")
@@ -242,8 +242,21 @@ class PlayerLayoutMixin:
         self._subtitle_color_combo.addItem(self._tr("green"), "#7ee787")
         self._subtitle_color_combo.addItem(self._tr("pink"), "#ff8bd1")
         self._subtitle_color_combo.setCurrentIndex(0)
-        self._subtitle_color_combo.setFixedWidth(74)
+        self._subtitle_color_combo.setFixedWidth(80)
         self._subtitle_color_combo.currentIndexChanged.connect(self._subtitle_size_changed)
+        self._subtitle_background_combo = QComboBox()
+        self._subtitle_background_combo.addItem(self._tr("transparent"), "rgba(0, 0, 0, 0)")
+        self._subtitle_background_combo.addItem(self._tr("black"), "rgba(0, 0, 0, 160)")
+        self._subtitle_background_combo.addItem(self._tr("white"), "rgba(255, 255, 255, 190)")
+        self._subtitle_background_combo.addItem(self._tr("yellow"), "rgba(255, 213, 74, 180)")
+        self._subtitle_background_combo.addItem(self._tr("blue"), "rgba(102, 217, 255, 170)")
+        self._subtitle_background_combo.addItem(self._tr("green"), "rgba(126, 231, 135, 170)")
+        self._subtitle_background_combo.addItem(self._tr("pink"), "rgba(255, 139, 209, 170)")
+        self._subtitle_background_combo.setCurrentIndex(0)
+        self._subtitle_background_combo.setFixedWidth(112)
+        self._subtitle_background_combo.setToolTip(self._tr("subtitle_background_tooltip"))
+        self._subtitle_background_combo.setProperty("i18n_tooltip_key", "subtitle_background_tooltip")
+        self._subtitle_background_combo.currentIndexChanged.connect(self._subtitle_size_changed)
 
         self._position_slider = QSlider(Qt.Horizontal)
         self._position_slider.setRange(0, 1000)
@@ -317,6 +330,7 @@ class PlayerLayoutMixin:
         playback_layout.addWidget(self._subtitle_mode_combo)
         playback_layout.addWidget(self._subtitle_size_combo)
         playback_layout.addWidget(self._subtitle_color_combo)
+        playback_layout.addWidget(self._subtitle_background_combo)
         playback_layout.addStretch(1)
         playback_layout.addWidget(self._audio_slider_control("dub_audio", self._dub_volume_slider))
         controls_layout.addLayout(timeline_layout)
@@ -930,6 +944,7 @@ class PlayerLayoutMixin:
         self._sync_auto_voice_controls_enabled()
         self._sync_source_filter_controls()
         self._sync_transcript_cleanup_controls()
+        self._apply_control_tooltips()
         self._performance_preset_combo.currentIndexChanged.connect(self._apply_selected_performance_preset)
         self._connect_settings_autosave()
 
@@ -953,3 +968,89 @@ class PlayerLayoutMixin:
         container.setLayout(root)
         self.setCentralWidget(container)
         self.setStatusBar(QStatusBar(self))
+
+    def _apply_control_tooltips(self) -> None:
+        tooltips = (
+            ("_ui_language_combo", "language"),
+            ("_aspect_combo", "video_aspect_tooltip"),
+            ("_playback_quality_combo", "playback_quality_tooltip"),
+            ("_subtitle_mode_combo", "subtitle_mode_tooltip"),
+            ("_subtitle_size_combo", "subtitle_size_tooltip"),
+            ("_subtitle_color_combo", "subtitle_color_tooltip"),
+            ("_subtitle_background_combo", "subtitle_background_tooltip"),
+            ("_position_slider", "playback_position_tooltip"),
+            ("_volume_slider", "original_audio_volume_tooltip"),
+            ("_dub_volume_slider", "dub_audio_volume_tooltip"),
+            ("_audio_source_combo", "audio_source_tooltip"),
+            ("_transcript_path_edit", "transcript_file_tooltip"),
+            ("_transcript_file_button", "choose_transcript_title"),
+            ("_source_language_combo", "source_language"),
+            ("_target_language_combo", "target_language"),
+            ("_asr_provider_combo", "asr_provider"),
+            ("_asr_model_combo", "asr_model"),
+            ("_ocr_provider_combo", "ocr_provider"),
+            ("_ocr_model_combo", "ocr_model"),
+            ("_translator_combo", "translator"),
+            ("_nllb_model_combo", "translation_model"),
+            ("_performance_preset_combo", "preset"),
+            ("_export_video_quality_combo", "export_video_quality"),
+            ("_translation_device_combo", "translator_device"),
+            ("_preserve_terms_check", "keep_terms"),
+            ("_whisper_offline_check", "whisper_offline"),
+            ("_translation_offline_check", "translator_offline"),
+            ("_vieneu_offline_check", "vieneu_offline"),
+            ("_translation_max_tokens_slider", "translation_max_tokens"),
+            ("_translation_beams_slider", "translation_beams"),
+            ("_tts_provider_combo", "tts"),
+            ("_vieneu_mode_combo", "mode"),
+            ("_vieneu_model_combo", "model"),
+            ("_tts_voice_combo", "voice_default"),
+            ("_tts_male_voice_combo", "male_voice"),
+            ("_tts_female_voice_combo", "female_voice"),
+            ("_auto_voice_gender_check", "auto_gender"),
+            ("_auto_voice_gender_mode_combo", "voice_gender_mode_tooltip"),
+            ("_auto_match_audio_check", "auto_match"),
+            ("_dubbing_buffer_slider", "buffer"),
+            ("_dub_speed_slider", "speed"),
+            ("_video_delay_slider", "video_delay"),
+            ("_source_filter_check", "source_filter_tooltip"),
+            ("_source_filter_mode_combo", "source_filter_mode_tooltip"),
+            ("_source_filter_model_combo", "source_filter_model"),
+            ("_video_url_full_cache_check", "video_url_full_cache_tooltip"),
+            ("_whisper_device_combo", "whisper_device"),
+            ("_whisper_compute_combo", "whisper_compute"),
+            ("_whisper_beam_slider", "whisper_beam"),
+            ("_whisper_vad_check", "whisper_vad_filter"),
+            ("_segment_seconds_slider", "segment_length"),
+            ("_prebuffer_segments_slider", "prebuffer_segments"),
+            ("_lookahead_segments_slider", "lookahead_segments"),
+            ("_overlap_policy_combo", "overlap_policy"),
+            ("_start_delay_slider", "start_delay"),
+            ("_speed_min_slider", "speed_min"),
+            ("_speed_max_slider", "speed_max"),
+            ("_volume_gain_min_slider", "gain_min"),
+            ("_volume_gain_max_slider", "gain_max"),
+            ("_vieneu_runtime_combo", "vieneu_runtime"),
+            ("_vieneu_device_combo", "vieneu_device"),
+            ("_vieneu_backend_combo", "vieneu_backend"),
+            ("_vieneu_temperature_slider", "vieneu_temperature"),
+            ("_vieneu_max_chars_slider", "tts_max_chars"),
+            ("_capture_backend_combo", "capture_backend"),
+            ("_capture_system_device_combo", "system_audio"),
+            ("_capture_microphone_device_combo", "microphone"),
+            ("_transcript_cleanup_mode_combo", "transcript_cleanup"),
+            ("_transcript_cleanup_provider_combo", "cleanup_provider"),
+            ("_transcript_cleanup_model_combo", "cleanup_model_tooltip"),
+            ("_transcript_cleanup_api_base_edit", "cleanup_api_base_placeholder"),
+            ("_transcript_cleanup_api_key_edit", "cleanup_api_key_placeholder"),
+            ("_transcript_view_combo", "show_transcript"),
+            ("_transcript_type_combo", "transcript_type"),
+            ("_export_transcript_button", "export_transcript"),
+            ("_document_view", "document_placeholder"),
+            ("_transcript", "transcript_placeholder"),
+            ("_offline_models_log", "offline_models_log_placeholder"),
+        )
+        for widget_name, key in tooltips:
+            widget = getattr(self, widget_name, None)
+            if widget is not None:
+                self._set_control_tooltip(widget, key)

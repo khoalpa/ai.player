@@ -6,7 +6,7 @@ import struct
 import wave
 from pathlib import Path
 
-from ai_player.core.config import AppConfig
+from ai_player.core.config import INTERNAL_VIENEU_STANDARD_GGUF, AppConfig
 from ai_player.services import audio_matcher
 from ai_player.services import speaker_voice_selector as selector
 from ai_player.services.audio_matcher import AudioProfile
@@ -39,6 +39,8 @@ def test_balanced_selector_uses_gendered_voice(monkeypatch, tmp_path) -> None:
         tts_voice="Doan",
         tts_male_voice="Binh",
         tts_female_voice="Doan",
+        vieneu_tts_mode="standard",
+        vieneu_tts_model_name=INTERNAL_VIENEU_STANDARD_GGUF,
     )
 
     decision = selector.VoiceGenderSelector(config).select_voice(tmp_path / "ref.wav", provider="vieneu", config=config)
@@ -55,6 +57,8 @@ def test_stable_selector_waits_for_repeated_gender(monkeypatch, tmp_path) -> Non
         tts_voice="Binh",
         tts_male_voice="Binh",
         tts_female_voice="Doan",
+        vieneu_tts_mode="standard",
+        vieneu_tts_model_name=INTERNAL_VIENEU_STANDARD_GGUF,
     )
     voice_selector = selector.VoiceGenderSelector(config)
 
@@ -76,6 +80,8 @@ def test_ai_mode_falls_back_to_pitch_profile(monkeypatch, tmp_path) -> None:
         tts_voice="Binh",
         tts_male_voice="Binh",
         tts_female_voice="Doan",
+        vieneu_tts_mode="standard",
+        vieneu_tts_model_name=INTERNAL_VIENEU_STANDARD_GGUF,
     )
 
     decision = selector.VoiceGenderSelector(config).select_voice(Path("ref.wav"), provider="vieneu", config=config)
@@ -112,6 +118,8 @@ def test_real_audio_selector_uses_pitch_gender_when_ffprobe_has_no_duration(monk
         tts_voice="Doan",
         tts_male_voice="Binh",
         tts_female_voice="Doan",
+        vieneu_tts_mode="standard",
+        vieneu_tts_model_name=INTERNAL_VIENEU_STANDARD_GGUF,
     )
 
     male = selector.VoiceGenderSelector(config).select_voice(male_reference, provider="vieneu", config=config)
@@ -139,6 +147,8 @@ def test_real_audio_selector_keeps_default_voice_for_ambiguous_pitch(monkeypatch
         tts_voice="Binh",
         tts_male_voice="Binh",
         tts_female_voice="Doan",
+        vieneu_tts_mode="standard",
+        vieneu_tts_model_name=INTERNAL_VIENEU_STANDARD_GGUF,
     )
 
     decision = selector.VoiceGenderSelector(config).select_voice(reference, provider="vieneu", config=config)
@@ -156,6 +166,8 @@ def test_selector_logs_voice_decision(monkeypatch, tmp_path, caplog) -> None:
         tts_voice="Doan",
         tts_male_voice="Binh",
         tts_female_voice="Doan",
+        vieneu_tts_mode="standard",
+        vieneu_tts_model_name=INTERNAL_VIENEU_STANDARD_GGUF,
     )
 
     with caplog.at_level(logging.INFO, logger=selector.__name__):

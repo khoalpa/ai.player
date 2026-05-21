@@ -623,6 +623,7 @@ class PlayerSettingsMixin:
         if hasattr(self, "_document_view"):
             placeholder_key = "document_editor_placeholder" if self._document_editor_active else "document_placeholder"
             self._document_view.setPlaceholderText(self._tr(placeholder_key))
+            self._set_control_tooltip(self._document_view, placeholder_key)
         if hasattr(self, "_transcript"):
             self._transcript.setPlaceholderText(self._tr("transcript_placeholder"))
         if hasattr(self, "_transcript_path_edit"):
@@ -691,6 +692,17 @@ class PlayerSettingsMixin:
                 ("#ff8bd1", "pink"),
             ):
                 self._set_combo_item_text(self._subtitle_color_combo, value, self._tr(key))
+        if hasattr(self, "_subtitle_background_combo"):
+            for value, key in (
+                ("rgba(0, 0, 0, 0)", "transparent"),
+                ("rgba(0, 0, 0, 160)", "black"),
+                ("rgba(255, 255, 255, 190)", "white"),
+                ("rgba(255, 213, 74, 180)", "yellow"),
+                ("rgba(102, 217, 255, 170)", "blue"),
+                ("rgba(126, 231, 135, 170)", "green"),
+                ("rgba(255, 139, 209, 170)", "pink"),
+            ):
+                self._set_combo_item_text(self._subtitle_background_combo, value, self._tr(key))
         if hasattr(self, "_source_filter_mode_combo"):
             for value, key in (
                 ("fast", "source_filter_mode_fast"),

@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
+from importlib.util import find_spec
 from pathlib import Path
 
 from ai_player.core.config import PROJECT_ROOT
@@ -14,7 +16,23 @@ class DemucsSeparationError(RuntimeError):
 
 def demucs_available() -> bool:
     executable = demucs_executable()
-    return Path(executable).is_file() or shutil.which(executable) is not None
+    return (
+        bool(_demucs_python())
+        or Path(executable).is_file()
+        or shutil.which(executable) is not None
+    )
+
+
+def demucs_command() -> list[str]:
+    configured = os.getenv("AI_PLAYER_DEMUCS_PATH", "").strip()
+    if configured:
+        return [configured]
+    if getattr(sys, "frozen", False):
+        return [demucs_executable()]
+    python = _demucs_python()
+    if python:
+        return [python, "-m", "ai_player.services.demucs_runner"]
+    return [demucs_executable()]
 
 
 def demucs_executable() -> str:
@@ -29,6 +47,40 @@ def demucs_executable() -> str:
     return shutil.which("demucs") or "demucs"
 
 
+def _demucs_python() -> str:
+    if getattr(sys, "frozen", False):
+        return ""
+    configured = os.getenv("AI_PLAYER_DEMUCS_PYTHON", "").strip()
+    candidates = [
+        Path(configured) if configured else None,
+        PROJECT_ROOT / ".venv" / "Scripts" / "python.exe",
+    ]
+    candidates.append(Path(sys.executable))
+    for candidate in candidates:
+        if candidate and candidate.is_file() and _python_has_demucs(str(candidate)):
+            return str(candidate)
+    return ""
+
+
+def _python_has_demucs(python: str) -> bool:
+    try:
+        if Path(python).resolve() == Path(sys.executable).resolve() and not getattr(sys, "frozen", False):
+            return find_spec("demucs") is not None
+    except OSError:
+        pass
+    try:
+        completed = subprocess.run(
+            [python, "-c", "import demucs"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except Exception:
+        return False
+    return completed.returncode == 0
+
+
 def separate_vocals(input_path: Path, output_dir: Path, *, model: str = "htdemucs") -> Path:
     """Run Demucs and return the generated no-vocals path when available."""
 
@@ -37,7 +89,7 @@ def separate_vocals(input_path: Path, output_dir: Path, *, model: str = "htdemuc
     output_dir.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [
-            demucs_executable(),
+            *demucs_command(),
             "-n",
             model,
             "--two-stems",

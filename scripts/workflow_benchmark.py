@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -41,12 +42,14 @@ def main() -> int:
     config = AppConfig.from_env()
     timings: dict[str, float] = {}
     details: dict[str, object] = {}
+    asr_device = ""
 
     if args.audio and not args.skip_asr:
         audio_path = Path(args.audio)
         if not audio_path.exists():
             raise FileNotFoundError(audio_path)
         device = effective_whisper_device(config.whisper_device)
+        asr_device = device
         compute_type = effective_whisper_compute_type(config.whisper_compute_type, device)
         model = get_shared_whisper_model(
             config.whisper_model,
@@ -93,6 +96,7 @@ def main() -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result, indent=2))
+    _exit_cleanly_after_cuda_asr(asr_device)
     return 0
 
 
@@ -100,6 +104,14 @@ def _prefer_utf8_stdout() -> None:
     reconfigure = getattr(sys.stdout, "reconfigure", None)
     if callable(reconfigure):
         reconfigure(encoding="utf-8", errors="replace")
+
+
+def _exit_cleanly_after_cuda_asr(device: str) -> None:
+    if str(device or "").strip().lower() != "cuda":
+        return
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
 
 
 if __name__ == "__main__":

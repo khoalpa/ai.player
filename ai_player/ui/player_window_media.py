@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import json
 import subprocess
 import tempfile
 import time
@@ -23,6 +24,8 @@ from ai_player.ui.player_window_utils import (
 )
 from ai_player.workers.dubbing_worker import _load_transcript_entries
 from ai_player.workers.player_window_workers import PlaybackCompatibilityWorker, SourceAudioFilterWorker
+
+_QT_COMPAT_VIDEO_CACHE: dict[tuple[str, int, int], bool] = {}
 
 
 class PlayerMediaMixin:
@@ -225,6 +228,77 @@ class PlayerMediaMixin:
         return codec in {"av1"}
 
     @staticmethod
+    def _is_qt_compatible_local_video(source_path: str) -> bool:
+        source = QUrl(source_path)
+        if source.scheme() in {"http", "https", "rtsp", "rtmp", "mms"}:
+            return False
+        path = Path(source_path)
+        if not path.exists() or path.suffix.lower() not in {".mp4", ".m4v", ".mov"}:
+            return False
+        cache_key = PlayerMediaMixin._local_video_cache_key(path)
+        if cache_key is not None and cache_key in _QT_COMPAT_VIDEO_CACHE:
+            return _QT_COMPAT_VIDEO_CACHE[cache_key]
+        compatible = PlayerMediaMixin._probe_qt_compatible_local_video(source_path)
+        if cache_key is not None:
+            _QT_COMPAT_VIDEO_CACHE[cache_key] = compatible
+        return compatible
+
+    @staticmethod
+    def _probe_qt_compatible_local_video(source_path: str) -> bool:
+        ffprobe = ffprobe_executable()
+        if not ffprobe:
+            return False
+        try:
+            result = subprocess.run(
+                [
+                    ffprobe,
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "stream=codec_type,codec_name,pix_fmt",
+                    "-of",
+                    "json",
+                    source_path,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            if result.returncode != 0:
+                return False
+            data = json.loads(result.stdout or "{}")
+        except Exception:
+            return False
+        streams = data.get("streams") if isinstance(data, dict) else None
+        if not isinstance(streams, list):
+            return False
+        video_streams = [
+            stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "video"
+        ]
+        audio_streams = [
+            stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "audio"
+        ]
+        if not video_streams:
+            return False
+        video = video_streams[0]
+        video_codec = str(video.get("codec_name") or "").lower()
+        pixel_format = str(video.get("pix_fmt") or "").lower()
+        if video_codec != "h264" or pixel_format not in {"", "yuv420p"}:
+            return False
+        return all(str(stream.get("codec_name") or "").lower() in {"aac", "mp3", "alac"} for stream in audio_streams)
+
+    @staticmethod
+    def _local_video_cache_key(path: Path) -> tuple[str, int, int] | None:
+        try:
+            stat = path.stat()
+            resolved = path.resolve()
+        except OSError:
+            return None
+        return (str(resolved), int(stat.st_mtime_ns), int(stat.st_size))
+
+    @staticmethod
     def _needs_qt_playback_compat(source_path: str) -> bool:
         source = QUrl(source_path)
         if source.scheme() in {"http", "https", "rtsp", "rtmp", "mms"}:
@@ -232,7 +306,9 @@ class PlayerMediaMixin:
         path = Path(source_path)
         if not path.exists():
             return False
-        return _is_ytdlp_source_cache(path) or PlayerMediaMixin._is_qt_unsafe_local_video(source_path)
+        if _is_ytdlp_source_cache(path):
+            return not PlayerMediaMixin._is_qt_compatible_local_video(source_path)
+        return PlayerMediaMixin._is_qt_unsafe_local_video(source_path)
 
     @staticmethod
     def _source_filter_output_path(source_path: str, mode: str = "auto", model: str = "htdemucs") -> Path:
@@ -493,13 +569,21 @@ class PlayerMediaMixin:
                 return str(value)
         return "#ffffff"
 
+    def _subtitle_background_color(self) -> str:
+        if hasattr(self, "_subtitle_background_combo"):
+            value = self._subtitle_background_combo.currentData()
+            if value:
+                return str(value)
+        return "rgba(0, 0, 0, 0)"
+
     def _apply_subtitle_overlay_style(self) -> None:
         if not hasattr(self, "_subtitle_overlay"):
             return
         font_size = self._subtitle_font_size()
         color = self._subtitle_color()
+        background_color = self._subtitle_background_color()
         self._subtitle_overlay.setStyleSheet(
-            "background-color: rgba(0, 0, 0, 0);"
+            f"background-color: {background_color};"
             "border: none;"
             "outline: none;"
             f"color: {color};"

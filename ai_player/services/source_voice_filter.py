@@ -8,8 +8,12 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ai_player.services.demucs_separation import DemucsSeparationError, demucs_available, demucs_executable
-from ai_player.services.ffmpeg import resolve_media_command
+from ai_player.services.demucs_separation import (
+    DemucsSeparationError,
+    demucs_available,
+    demucs_command,
+)
+from ai_player.services.ffmpeg import ffprobe_executable, resolve_media_command
 
 ProcessRunner = Callable[[list[str]], None]
 
@@ -23,6 +27,7 @@ SOURCE_VOICE_FILTER_DEMUCS_MODELS = {
     "mdx_extra",
 }
 SOURCE_VOICE_FILTER_DEFAULT_MODEL = SOURCE_VOICE_FILTER_DEMUCS_MODEL
+_VIDEO_COPY_CACHE: dict[tuple[str, int, int], bool] = {}
 
 
 class SourceVoiceFilterError(RuntimeError):
@@ -80,8 +85,8 @@ def source_voice_filter_signature(mode: str, backend: str | None = None, model: 
     if actual_backend in {"ai", "fast"}:
         normalized = actual_backend
     if normalized == "ai":
-        return f"ai-{selected_model}-h264-720p-v1"
-    return "fast-ffmpeg-center-h264-720p-v4"
+        return f"ai-{selected_model}-h264-720p-copy-safe-v2"
+    return "fast-ffmpeg-center-h264-720p-copy-safe-v5"
 
 
 def source_voice_filter_cached_output_valid(
@@ -182,7 +187,7 @@ def apply_source_voice_filter(
 def resolve_source_voice_filter_command(command: Sequence[object]) -> list[str]:
     resolved_command = resolve_media_command(command)
     if resolved_command and Path(resolved_command[0]).name.lower() in {"demucs", "demucs.exe"}:
-        resolved_command[0] = demucs_executable()
+        resolved_command = [*demucs_command(), *resolved_command[1:]]
     return resolved_command
 
 
@@ -202,7 +207,7 @@ def _create_fast_filtered_video(source_path: Path, output_path: Path, runner: Pr
             "0:v?",
             "-map",
             "0:a:0",
-            *_h264_playback_args(),
+            *_video_output_args(source_path),
             "-af",
             audio_filter,
             "-c:a",
@@ -229,6 +234,26 @@ def _create_demucs_filtered_video(
 
     with tempfile.TemporaryDirectory(prefix=f"{output_path.stem}-demucs-", dir=str(output_path.parent)) as temp_name:
         temp_dir = Path(temp_name)
+        demucs_input = temp_dir / "source-audio.wav"
+        runner(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(source_path),
+                "-vn",
+                "-ac",
+                "2",
+                "-ar",
+                "44100",
+                "-c:a",
+                "pcm_s16le",
+                "-y",
+                str(demucs_input),
+            ]
+        )
         runner(
             [
                 "demucs",
@@ -238,10 +263,10 @@ def _create_demucs_filtered_video(
                 "vocals",
                 "-o",
                 str(temp_dir),
-                str(source_path),
+                str(demucs_input),
             ]
         )
-        no_vocals = temp_dir / selected_model / source_path.stem / "no_vocals.wav"
+        no_vocals = temp_dir / selected_model / demucs_input.stem / "no_vocals.wav"
         if not no_vocals.exists():
             raise DemucsSeparationError(f"Demucs did not create expected file: {no_vocals}")
         runner(
@@ -258,7 +283,7 @@ def _create_demucs_filtered_video(
                 "0:v?",
                 "-map",
                 "1:a:0",
-                *_h264_playback_args(),
+                *_video_output_args(source_path),
                 "-af",
                 "aformat=channel_layouts=stereo,alimiter=limit=0.95",
                 "-c:a",
@@ -290,6 +315,73 @@ def _h264_playback_args() -> list[str]:
         "-vf",
         "scale=-2:min(720\\,ih)",
     ]
+
+
+def _video_output_args(source_path: Path) -> list[str]:
+    if _can_copy_video_stream(source_path):
+        return ["-c:v", "copy"]
+    return _h264_playback_args()
+
+
+def _can_copy_video_stream(source_path: Path) -> bool:
+    cache_key = _video_stream_cache_key(source_path)
+    if cache_key is not None and cache_key in _VIDEO_COPY_CACHE:
+        return _VIDEO_COPY_CACHE[cache_key]
+    can_copy = _probe_can_copy_video_stream(source_path)
+    if cache_key is not None:
+        _VIDEO_COPY_CACHE[cache_key] = can_copy
+    return can_copy
+
+
+def _probe_can_copy_video_stream(source_path: Path) -> bool:
+    try:
+        completed = subprocess.run(
+            [
+                ffprobe_executable(),
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name,pix_fmt,width,height",
+                "-of",
+                "json",
+                str(source_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if completed.returncode != 0:
+            return False
+        data = json.loads(completed.stdout or "{}")
+    except Exception:
+        return False
+    streams = data.get("streams") if isinstance(data, dict) else None
+    if not isinstance(streams, list) or not streams:
+        return False
+    stream = streams[0]
+    if not isinstance(stream, dict):
+        return False
+    codec = str(stream.get("codec_name") or "").lower()
+    pixel_format = str(stream.get("pix_fmt") or "").lower()
+    try:
+        width = int(stream.get("width") or 0)
+        height = int(stream.get("height") or 0)
+    except Exception:
+        return False
+    return codec == "h264" and pixel_format == "yuv420p" and width > 0 and height > 0 and height <= 720
+
+
+def _video_stream_cache_key(source_path: Path) -> tuple[str, int, int] | None:
+    try:
+        stat = source_path.stat()
+        resolved = source_path.resolve()
+    except OSError:
+        return None
+    return (str(resolved), int(stat.st_mtime_ns), int(stat.st_size))
 
 
 def _run_process(command: list[str]) -> None:

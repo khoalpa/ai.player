@@ -11,7 +11,11 @@ import pytest
 
 from ai_player.services import source_voice_filter as filter_service
 from ai_player.workers import player_window_workers
-from ai_player.workers.player_window_workers import SourceAudioFilterWorker, _format_process_exception
+from ai_player.workers.player_window_workers import (
+    SourceAudioFilterWorker,
+    _format_process_exception,
+    _process_executable_name,
+)
 
 FFMPEG = shutil.which("ffmpeg")
 requires_ffmpeg = pytest.mark.skipif(FFMPEG is None, reason="ffmpeg is not available")
@@ -40,6 +44,24 @@ def test_fast_source_voice_filter_uses_ffmpeg(tmp_path) -> None:
     assert output.exists()
     assert [command[0] for command in commands] == ["ffmpeg"]
     assert any("pan=stereo" in part for part in commands[0])
+
+
+def test_fast_source_voice_filter_copies_safe_h264_video(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(filter_service, "_can_copy_video_stream", lambda _path: True)
+    source = tmp_path / "demo.mp4"
+    output = tmp_path / "filtered.mp4"
+    source.write_bytes(b"source")
+    commands: list[list[str]] = []
+
+    def runner(command: list[str]) -> None:
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"filtered")
+
+    filter_service.apply_source_voice_filter(source, output, mode="fast", process_runner=runner)
+
+    command = commands[0]
+    assert command[command.index("-c:v") + 1] == "copy"
+    assert "-vf" not in command
 
 
 def test_old_auto_source_voice_filter_alias_uses_fast(tmp_path, monkeypatch) -> None:
@@ -75,7 +97,7 @@ def test_ai_source_voice_filter_does_not_fall_back_to_fast(tmp_path, monkeypatch
     with pytest.raises(RuntimeError, match="demucs exploded"):
         filter_service.apply_source_voice_filter(source, output, mode="ai", process_runner=runner)
 
-    assert [command[0] for command in commands] == ["demucs"]
+    assert [command[0] for command in commands] == ["ffmpeg", "demucs"]
 
 
 def test_old_auto_mode_reuses_fast_cache(tmp_path, monkeypatch) -> None:
@@ -105,6 +127,39 @@ def test_old_auto_ai_cache_is_not_reused_for_fast_mode(tmp_path, monkeypatch) ->
 
 def test_ai_source_voice_filter_runs_demucs_then_muxes_no_vocals(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(filter_service, "demucs_available", lambda: True)
+    monkeypatch.setattr(filter_service, "_can_copy_video_stream", lambda _path: False)
+    source = tmp_path / "demo.mp4"
+    output = tmp_path / "filtered.mp4"
+    source.write_bytes(b"source")
+    commands: list[list[str]] = []
+
+    def runner(command: list[str]) -> None:
+        commands.append(command)
+        if command[0] == "ffmpeg" and "pcm_s16le" in command:
+            Path(command[-1]).write_bytes(b"wav")
+        if command[0] == "demucs":
+            output_root = Path(command[command.index("-o") + 1])
+            demucs_input = Path(command[-1])
+            no_vocals = (
+                output_root / filter_service.SOURCE_VOICE_FILTER_DEMUCS_MODEL / demucs_input.stem / "no_vocals.wav"
+            )
+            no_vocals.parent.mkdir(parents=True, exist_ok=True)
+            no_vocals.write_bytes(b"no vocals")
+        if command[0] == "ffmpeg" and "pcm_s16le" not in command:
+            Path(command[-1]).write_bytes(b"filtered")
+
+    result = filter_service.apply_source_voice_filter(source, output, mode="ai", process_runner=runner)
+
+    assert result.backend == "ai"
+    assert [command[0] for command in commands] == ["ffmpeg", "demucs", "ffmpeg"]
+    assert str(source) in commands[0]
+    assert commands[1][-1].endswith("source-audio.wav")
+    assert "1:a:0" in commands[2]
+
+
+def test_ai_source_voice_filter_copies_safe_h264_video(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(filter_service, "demucs_available", lambda: True)
+    monkeypatch.setattr(filter_service, "_can_copy_video_stream", lambda _path: True)
     source = tmp_path / "demo.mp4"
     output = tmp_path / "filtered.mp4"
     source.write_bytes(b"source")
@@ -114,24 +169,48 @@ def test_ai_source_voice_filter_runs_demucs_then_muxes_no_vocals(tmp_path, monke
         commands.append(command)
         if command[0] == "demucs":
             output_root = Path(command[command.index("-o") + 1])
-            no_vocals = output_root / filter_service.SOURCE_VOICE_FILTER_DEMUCS_MODEL / source.stem / "no_vocals.wav"
+            demucs_input = Path(command[-1])
+            no_vocals = (
+                output_root / filter_service.SOURCE_VOICE_FILTER_DEMUCS_MODEL / demucs_input.stem / "no_vocals.wav"
+            )
             no_vocals.parent.mkdir(parents=True, exist_ok=True)
             no_vocals.write_bytes(b"no vocals")
         if command[0] == "ffmpeg":
             Path(command[-1]).write_bytes(b"filtered")
 
-    result = filter_service.apply_source_voice_filter(source, output, mode="ai", process_runner=runner)
+    filter_service.apply_source_voice_filter(source, output, mode="ai", process_runner=runner)
 
-    assert result.backend == "ai"
-    assert [command[0] for command in commands] == ["demucs", "ffmpeg"]
-    assert str(source) in commands[0]
-    assert "1:a:0" in commands[1]
+    mux_command = commands[2]
+    assert mux_command[mux_command.index("-c:v") + 1] == "copy"
+    assert "-vf" not in mux_command
 
 
-def test_source_voice_filter_resolves_demucs_executable(monkeypatch, tmp_path) -> None:
+def test_video_copy_probe_is_cached_until_file_changes(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "demo.mp4"
+    source.write_bytes(b"first")
+    filter_service._VIDEO_COPY_CACHE.clear()
+    calls = {"count": 0}
+
+    def fake_probe(_path: Path) -> bool:
+        calls["count"] += 1
+        return True
+
+    monkeypatch.setattr(filter_service, "_probe_can_copy_video_stream", fake_probe)
+
+    assert filter_service._can_copy_video_stream(source)
+    assert filter_service._can_copy_video_stream(source)
+    assert calls["count"] == 1
+
+    source.write_bytes(b"second-version")
+
+    assert filter_service._can_copy_video_stream(source)
+    assert calls["count"] == 2
+
+
+def test_source_voice_filter_resolves_demucs_command(monkeypatch, tmp_path) -> None:
     demucs_path = tmp_path / "demucs.exe"
     demucs_path.write_bytes(b"")
-    monkeypatch.setattr(filter_service, "demucs_executable", lambda: str(demucs_path))
+    monkeypatch.setattr(filter_service, "demucs_command", lambda: [str(demucs_path)])
 
     command = filter_service.resolve_source_voice_filter_command(["demucs", "-n", "htdemucs"])
 
@@ -211,6 +290,22 @@ def test_source_filter_process_error_includes_stderr() -> None:
 
     assert "ffmpeg failed with exit code 2" in message
     assert "bad codec more detail" in message
+
+
+def test_source_filter_process_error_keeps_tail_of_long_stderr() -> None:
+    progress = "0%| progress noise " * 80
+    error = subprocess.CalledProcessError(1, ["demucs"], stderr=f"{progress}\nRuntimeError: real failure")
+
+    message = _format_process_exception(error, max_length=160)
+
+    assert message.startswith("demucs failed with exit code 1")
+    assert "RuntimeError: real failure" in message
+
+
+def test_source_filter_process_error_names_demucs_wrapper() -> None:
+    command = ["python", "-m", "ai_player.services.demucs_runner", "-n", "htdemucs"]
+
+    assert _process_executable_name(command) == "demucs"
 
 
 def _write_center_and_side_test_wav(path: Path, sample_rate: int = 44_100) -> None:

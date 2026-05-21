@@ -56,6 +56,7 @@ $launcher = Join-Path $PortableRoot "Run AI Player.bat"
 @'
 @echo off
 set "APP_ROOT=%~dp0"
+if exist "%APP_ROOT%tools\ffmpeg\bin" set "PATH=%APP_ROOT%tools\ffmpeg\bin;%PATH%"
 if exist "%APP_ROOT%tools\ffmpeg" set "PATH=%APP_ROOT%tools\ffmpeg;%PATH%"
 start "" "%APP_ROOT%AI Player\AI Player.exe"
 '@ | Set-Content -LiteralPath $launcher -Encoding ASCII

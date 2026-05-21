@@ -33,7 +33,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 CONFIG_DIR = DATA_DIR / "config"
 RUNTIME_DIR = DATA_DIR / "tmp"
 PRESERVED_ENGLISH_TERMS_FILE = CONFIG_DIR / "preserved_english_terms.txt"
-DEFAULT_DUBBING_BUFFER_SECONDS = 16.0
+DEFAULT_DUBBING_BUFFER_SECONDS = 10.0
 DEFAULT_ORIGINAL_VOLUME = 0
 DEFAULT_DUBBING_VOICE_VOLUME = 100
 DEFAULT_PERFORMANCE_PRESET = "balanced"
@@ -161,9 +161,9 @@ class AppConfig:
         "AI_PLAYER_PRESERVED_ENGLISH_TERMS_FILE",
         str(preserved_english_terms_file_path()),
     )
-    translation_max_tokens: int = _env_int("AI_PLAYER_TRANSLATION_MAX_TOKENS", 160)
+    translation_max_tokens: int = _env_int("AI_PLAYER_TRANSLATION_MAX_TOKENS", 152)
     translation_num_beams: int = _env_int("AI_PLAYER_TRANSLATION_BEAMS", 2)
-    segment_seconds: int = _env_int("AI_PLAYER_SEGMENT_SECONDS", 8)
+    segment_seconds: int = _env_int("AI_PLAYER_SEGMENT_SECONDS", 6)
     dubbing_start_delay_seconds: float = _env_float("AI_PLAYER_DUBBING_START_DELAY_SECONDS", 0.0)
     dubbing_prebuffer_segments: int = _env_int("AI_PLAYER_DUBBING_PREBUFFER_SEGMENTS", 1)
     dubbing_lookahead_segments: int = _env_int("AI_PLAYER_DUBBING_LOOKAHEAD_SEGMENTS", 2)
@@ -172,25 +172,25 @@ class AppConfig:
         DEFAULT_DUBBING_BUFFER_SECONDS,
     )
     dubbing_voice_volume: int = _env_int("AI_PLAYER_DUBBING_VOICE_VOLUME", DEFAULT_DUBBING_VOICE_VOLUME)
-    dubbing_speed_percent: int = _env_int("AI_PLAYER_DUBBING_SPEED_PERCENT", 10)
-    dubbing_auto_match_audio: bool = os.getenv("AI_PLAYER_DUBBING_AUTO_MATCH_AUDIO", "0") == "1"
+    dubbing_speed_percent: int = _env_int("AI_PLAYER_DUBBING_SPEED_PERCENT", 5)
+    dubbing_auto_match_audio: bool = os.getenv("AI_PLAYER_DUBBING_AUTO_MATCH_AUDIO", "1") == "1"
     dubbing_overlap_policy: str = os.getenv("AI_PLAYER_DUBBING_OVERLAP_POLICY", "smart")
-    dubbing_auto_voice_gender: bool = os.getenv("AI_PLAYER_DUBBING_AUTO_VOICE_GENDER", "0") == "1"
+    dubbing_auto_voice_gender: bool = os.getenv("AI_PLAYER_DUBBING_AUTO_VOICE_GENDER", "1") == "1"
     dubbing_auto_voice_gender_mode: str = os.getenv("AI_PLAYER_DUBBING_AUTO_VOICE_GENDER_MODE", "balanced")
     dubbing_speed_min: float = _env_float("AI_PLAYER_DUBBING_SPEED_MIN", 0.9)
-    dubbing_speed_max: float = _env_float("AI_PLAYER_DUBBING_SPEED_MAX", 1.35)
-    dubbing_volume_gain_min_db: float = _env_float("AI_PLAYER_DUBBING_VOLUME_GAIN_MIN_DB", -10.0)
-    dubbing_volume_gain_max_db: float = _env_float("AI_PLAYER_DUBBING_VOLUME_GAIN_MAX_DB", 8.0)
+    dubbing_speed_max: float = _env_float("AI_PLAYER_DUBBING_SPEED_MAX", 1.22)
+    dubbing_volume_gain_min_db: float = _env_float("AI_PLAYER_DUBBING_VOLUME_GAIN_MIN_DB", -8.0)
+    dubbing_volume_gain_max_db: float = _env_float("AI_PLAYER_DUBBING_VOLUME_GAIN_MAX_DB", 6.0)
     original_audio_volume: int = _env_int("AI_PLAYER_ORIGINAL_AUDIO_VOLUME", DEFAULT_ORIGINAL_VOLUME)
     original_audio_voice_filter: bool = os.getenv("AI_PLAYER_ORIGINAL_AUDIO_VOICE_FILTER", "1") == "1"
     original_audio_voice_filter_mode: str = os.getenv("AI_PLAYER_ORIGINAL_AUDIO_VOICE_FILTER_MODE", "fast")
     original_audio_voice_filter_model: str = os.getenv("AI_PLAYER_ORIGINAL_AUDIO_VOICE_FILTER_MODEL", "htdemucs")
-    original_audio_playback_delay_seconds: int = _env_int("AI_PLAYER_ORIGINAL_AUDIO_PLAYBACK_DELAY_SECONDS", 10)
+    original_audio_playback_delay_seconds: int = _env_int("AI_PLAYER_ORIGINAL_AUDIO_PLAYBACK_DELAY_SECONDS", 6)
     dubbing_enabled_by_default: bool = os.getenv("AI_PLAYER_DUBBING_ENABLED_BY_DEFAULT", "0") == "1"
     tts_provider: str = os.getenv("AI_PLAYER_TTS_PROVIDER", "vieneu")
-    tts_voice: str = os.getenv("AI_PLAYER_TTS_VOICE", "Doan")
-    tts_male_voice: str = os.getenv("AI_PLAYER_TTS_MALE_VOICE", "Binh")
-    tts_female_voice: str = os.getenv("AI_PLAYER_TTS_FEMALE_VOICE", "Doan")
+    tts_voice: str = os.getenv("AI_PLAYER_TTS_VOICE", "Bích Ngọc")
+    tts_male_voice: str = os.getenv("AI_PLAYER_TTS_MALE_VOICE", "Phạm Tuyên")
+    tts_female_voice: str = os.getenv("AI_PLAYER_TTS_FEMALE_VOICE", "Bích Ngọc")
     vieneu_tts_path: str = INTERNAL_VIENEU_TTS_PATH
     vieneu_tts_runtime: str = os.getenv("AI_PLAYER_VIENEU_TTS_RUNTIME", "subprocess")
     vieneu_tts_python: str = os.getenv(
@@ -198,11 +198,11 @@ class AppConfig:
         sys.executable,
     )
     vieneu_tts_core: str = os.getenv("AI_PLAYER_VIENEU_TTS_CORE", "local")
-    vieneu_tts_mode: str = os.getenv("AI_PLAYER_VIENEU_TTS_MODE", "standard")
+    vieneu_tts_mode: str = os.getenv("AI_PLAYER_VIENEU_TTS_MODE", "turbo")
     vieneu_tts_api_base: str = os.getenv("AI_PLAYER_VIENEU_TTS_API_BASE", "")
     vieneu_tts_model_name: str = os.getenv(
         "AI_PLAYER_VIENEU_TTS_MODEL_NAME",
-        INTERNAL_VIENEU_STANDARD_GGUF,
+        INTERNAL_VIENEU_TURBO_GGUF,
     )
     vieneu_tts_decoder_path: str = os.getenv(
         "AI_PLAYER_VIENEU_TTS_DECODER_PATH",
@@ -219,8 +219,8 @@ class AppConfig:
     vieneu_tts_offline: bool = os.getenv("AI_PLAYER_VIENEU_TTS_OFFLINE", "1") == "1"
     vieneu_tts_device: str = os.getenv("AI_PLAYER_VIENEU_TTS_DEVICE", "auto")
     vieneu_tts_backend: str = os.getenv("AI_PLAYER_VIENEU_TTS_BACKEND", "auto")
-    vieneu_tts_temperature: float = _env_float("AI_PLAYER_VIENEU_TTS_TEMPERATURE", 0.6)
-    vieneu_tts_max_chars_chunk: int = _env_int("AI_PLAYER_VIENEU_TTS_MAX_CHARS_CHUNK", 160)
+    vieneu_tts_temperature: float = _env_float("AI_PLAYER_VIENEU_TTS_TEMPERATURE", 0.55)
+    vieneu_tts_max_chars_chunk: int = _env_int("AI_PLAYER_VIENEU_TTS_MAX_CHARS_CHUNK", 140)
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -295,9 +295,9 @@ def _app_config_env_values() -> dict[str, object]:
             "AI_PLAYER_PRESERVED_ENGLISH_TERMS_FILE",
             str(preserved_english_terms_file_path()),
         ),
-        "translation_max_tokens": _env_int("AI_PLAYER_TRANSLATION_MAX_TOKENS", 160),
+        "translation_max_tokens": _env_int("AI_PLAYER_TRANSLATION_MAX_TOKENS", 152),
         "translation_num_beams": _env_int("AI_PLAYER_TRANSLATION_BEAMS", 2),
-        "segment_seconds": _env_int("AI_PLAYER_SEGMENT_SECONDS", 8),
+        "segment_seconds": _env_int("AI_PLAYER_SEGMENT_SECONDS", 6),
         "dubbing_start_delay_seconds": _env_float("AI_PLAYER_DUBBING_START_DELAY_SECONDS", 0.0),
         "dubbing_prebuffer_segments": _env_int("AI_PLAYER_DUBBING_PREBUFFER_SEGMENTS", 1),
         "dubbing_lookahead_segments": _env_int("AI_PLAYER_DUBBING_LOOKAHEAD_SEGMENTS", 2),
@@ -306,32 +306,32 @@ def _app_config_env_values() -> dict[str, object]:
             DEFAULT_DUBBING_BUFFER_SECONDS,
         ),
         "dubbing_voice_volume": _env_int("AI_PLAYER_DUBBING_VOICE_VOLUME", DEFAULT_DUBBING_VOICE_VOLUME),
-        "dubbing_speed_percent": _env_int("AI_PLAYER_DUBBING_SPEED_PERCENT", 10),
-        "dubbing_auto_match_audio": _env_bool("AI_PLAYER_DUBBING_AUTO_MATCH_AUDIO", False),
+        "dubbing_speed_percent": _env_int("AI_PLAYER_DUBBING_SPEED_PERCENT", 5),
+        "dubbing_auto_match_audio": _env_bool("AI_PLAYER_DUBBING_AUTO_MATCH_AUDIO", True),
         "dubbing_overlap_policy": os.getenv("AI_PLAYER_DUBBING_OVERLAP_POLICY", "smart"),
-        "dubbing_auto_voice_gender": _env_bool("AI_PLAYER_DUBBING_AUTO_VOICE_GENDER", False),
+        "dubbing_auto_voice_gender": _env_bool("AI_PLAYER_DUBBING_AUTO_VOICE_GENDER", True),
         "dubbing_auto_voice_gender_mode": os.getenv("AI_PLAYER_DUBBING_AUTO_VOICE_GENDER_MODE", "balanced"),
         "dubbing_speed_min": _env_float("AI_PLAYER_DUBBING_SPEED_MIN", 0.9),
-        "dubbing_speed_max": _env_float("AI_PLAYER_DUBBING_SPEED_MAX", 1.35),
-        "dubbing_volume_gain_min_db": _env_float("AI_PLAYER_DUBBING_VOLUME_GAIN_MIN_DB", -10.0),
-        "dubbing_volume_gain_max_db": _env_float("AI_PLAYER_DUBBING_VOLUME_GAIN_MAX_DB", 8.0),
+        "dubbing_speed_max": _env_float("AI_PLAYER_DUBBING_SPEED_MAX", 1.22),
+        "dubbing_volume_gain_min_db": _env_float("AI_PLAYER_DUBBING_VOLUME_GAIN_MIN_DB", -8.0),
+        "dubbing_volume_gain_max_db": _env_float("AI_PLAYER_DUBBING_VOLUME_GAIN_MAX_DB", 6.0),
         "original_audio_volume": _env_int("AI_PLAYER_ORIGINAL_AUDIO_VOLUME", DEFAULT_ORIGINAL_VOLUME),
         "original_audio_voice_filter": _env_bool("AI_PLAYER_ORIGINAL_AUDIO_VOICE_FILTER", True),
         "original_audio_voice_filter_mode": os.getenv("AI_PLAYER_ORIGINAL_AUDIO_VOICE_FILTER_MODE", "fast"),
         "original_audio_voice_filter_model": os.getenv("AI_PLAYER_ORIGINAL_AUDIO_VOICE_FILTER_MODEL", "htdemucs"),
-        "original_audio_playback_delay_seconds": _env_int("AI_PLAYER_ORIGINAL_AUDIO_PLAYBACK_DELAY_SECONDS", 10),
+        "original_audio_playback_delay_seconds": _env_int("AI_PLAYER_ORIGINAL_AUDIO_PLAYBACK_DELAY_SECONDS", 6),
         "dubbing_enabled_by_default": _env_bool("AI_PLAYER_DUBBING_ENABLED_BY_DEFAULT", False),
         "tts_provider": os.getenv("AI_PLAYER_TTS_PROVIDER", "vieneu"),
-        "tts_voice": os.getenv("AI_PLAYER_TTS_VOICE", "Doan"),
-        "tts_male_voice": os.getenv("AI_PLAYER_TTS_MALE_VOICE", "Binh"),
-        "tts_female_voice": os.getenv("AI_PLAYER_TTS_FEMALE_VOICE", "Doan"),
+        "tts_voice": os.getenv("AI_PLAYER_TTS_VOICE", "Bích Ngọc"),
+        "tts_male_voice": os.getenv("AI_PLAYER_TTS_MALE_VOICE", "Phạm Tuyên"),
+        "tts_female_voice": os.getenv("AI_PLAYER_TTS_FEMALE_VOICE", "Bích Ngọc"),
         "vieneu_tts_path": INTERNAL_VIENEU_TTS_PATH,
         "vieneu_tts_runtime": os.getenv("AI_PLAYER_VIENEU_TTS_RUNTIME", "subprocess"),
         "vieneu_tts_python": os.getenv("AI_PLAYER_VIENEU_TTS_PYTHON", sys.executable),
         "vieneu_tts_core": os.getenv("AI_PLAYER_VIENEU_TTS_CORE", "local"),
-        "vieneu_tts_mode": os.getenv("AI_PLAYER_VIENEU_TTS_MODE", "standard"),
+        "vieneu_tts_mode": os.getenv("AI_PLAYER_VIENEU_TTS_MODE", "turbo"),
         "vieneu_tts_api_base": os.getenv("AI_PLAYER_VIENEU_TTS_API_BASE", ""),
-        "vieneu_tts_model_name": os.getenv("AI_PLAYER_VIENEU_TTS_MODEL_NAME", INTERNAL_VIENEU_STANDARD_GGUF),
+        "vieneu_tts_model_name": os.getenv("AI_PLAYER_VIENEU_TTS_MODEL_NAME", INTERNAL_VIENEU_TURBO_GGUF),
         "vieneu_tts_decoder_path": os.getenv("AI_PLAYER_VIENEU_TTS_DECODER_PATH", ""),
         "vieneu_tts_encoder_path": os.getenv("AI_PLAYER_VIENEU_TTS_ENCODER_PATH", ""),
         "vieneu_tts_standard_codec_path": os.getenv(
@@ -341,6 +341,6 @@ def _app_config_env_values() -> dict[str, object]:
         "vieneu_tts_offline": _env_bool("AI_PLAYER_VIENEU_TTS_OFFLINE", True),
         "vieneu_tts_device": os.getenv("AI_PLAYER_VIENEU_TTS_DEVICE", "auto"),
         "vieneu_tts_backend": os.getenv("AI_PLAYER_VIENEU_TTS_BACKEND", "auto"),
-        "vieneu_tts_temperature": _env_float("AI_PLAYER_VIENEU_TTS_TEMPERATURE", 0.6),
-        "vieneu_tts_max_chars_chunk": _env_int("AI_PLAYER_VIENEU_TTS_MAX_CHARS_CHUNK", 160),
+        "vieneu_tts_temperature": _env_float("AI_PLAYER_VIENEU_TTS_TEMPERATURE", 0.55),
+        "vieneu_tts_max_chars_chunk": _env_int("AI_PLAYER_VIENEU_TTS_MAX_CHARS_CHUNK", 140),
     }

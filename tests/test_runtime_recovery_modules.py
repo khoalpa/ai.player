@@ -61,12 +61,43 @@ def test_audio_pcm_conversion_shape() -> None:
 
 def test_demucs_unavailable_path(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(demucs_separation.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(demucs_separation, "_demucs_python", lambda: "")
 
     try:
         demucs_separation.separate_vocals(Path("input.wav"), tmp_path)
     except demucs_separation.DemucsSeparationError:
         return
     raise AssertionError("expected DemucsSeparationError")
+
+
+def test_demucs_command_ignores_python_without_demucs(monkeypatch, tmp_path) -> None:
+    python = tmp_path / "python.exe"
+    python.write_bytes(b"")
+    monkeypatch.setenv("AI_PLAYER_DEMUCS_PYTHON", str(python))
+    monkeypatch.setattr(demucs_separation, "_python_has_demucs", lambda _python: False)
+    monkeypatch.setattr(demucs_separation, "demucs_executable", lambda: "external-demucs")
+
+    assert demucs_separation.demucs_command() == ["external-demucs"]
+
+
+def test_demucs_python_does_not_use_frozen_app_executable(monkeypatch, tmp_path) -> None:
+    app_exe = tmp_path / "AI Player.exe"
+    app_exe.write_bytes(b"")
+    monkeypatch.setattr(demucs_separation.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(demucs_separation.sys, "executable", str(app_exe))
+    monkeypatch.setattr(demucs_separation, "PROJECT_ROOT", tmp_path)
+
+    assert demucs_separation._demucs_python() == ""
+
+
+def test_demucs_command_uses_executable_when_frozen(monkeypatch, tmp_path) -> None:
+    external_python = tmp_path / "python.exe"
+    external_python.write_bytes(b"")
+    monkeypatch.setenv("AI_PLAYER_DEMUCS_PYTHON", str(external_python))
+    monkeypatch.setattr(demucs_separation.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(demucs_separation, "demucs_executable", lambda: "demucs.exe")
+
+    assert demucs_separation.demucs_command() == ["demucs.exe"]
 
 
 def test_runtime_caches_clear_without_error() -> None:

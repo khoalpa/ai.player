@@ -156,7 +156,9 @@ def _startup_wait_seconds(settings: dict[str, object]) -> float:
     segment_seconds = _number(settings.get("segment_seconds"), 8)
     prebuffer_segments = _number(settings.get("dubbing_prebuffer_segments"), 1)
     minimum_ready = _number(settings.get("dubbing_min_ready_ahead_seconds"), 0)
-    return max(minimum_ready, start_delay + segment_seconds * prebuffer_segments)
+    segment_ready = max(0.5, segment_seconds * max(1, prebuffer_segments))
+    effective_ready = min(max(0.0, minimum_ready), segment_ready)
+    return max(effective_ready, start_delay + segment_ready)
 
 
 def _quality_band(score: int) -> str:

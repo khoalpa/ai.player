@@ -279,12 +279,12 @@ def _terminate_process(process: subprocess.Popen, timeout_seconds: float = 2.0) 
 def _format_process_exception(exc: Exception, max_length: int = 500) -> str:
     if isinstance(exc, subprocess.CalledProcessError):
         executable = _process_executable_name(exc.cmd)
-        detail = (exc.stderr or exc.output or "").strip()
+        prefix = f"{executable} failed with exit code {exc.returncode}"
+        detail = _compact_process_detail(exc.stderr or exc.output or "", max_length=max_length - len(prefix) - 2)
         if detail:
-            detail = " ".join(detail.split())
-            message = f"{executable} failed with exit code {exc.returncode}: {detail}"
+            message = f"{prefix}: {detail}"
         else:
-            message = f"{executable} failed with exit code {exc.returncode}"
+            message = prefix
     else:
         message = str(exc).strip() or exc.__class__.__name__
         message = " ".join(message.split())
@@ -293,7 +293,23 @@ def _format_process_exception(exc: Exception, max_length: int = 500) -> str:
     return message
 
 
+def _compact_process_detail(detail: object, *, max_length: int = 500) -> str:
+    text = str(detail or "").replace("\r", "\n")
+    lines = [" ".join(line.split()) for line in text.splitlines()]
+    lines = [line for line in lines if line]
+    if not lines:
+        return ""
+    message = " ".join(lines)
+    if len(message) <= max_length:
+        return message
+    tail_budget = max(80, max_length - 20)
+    return f"...{message[-tail_budget:]}"
+
+
 def _process_executable_name(command: object) -> str:
     if isinstance(command, (list, tuple)) and command:
+        command_parts = [str(part) for part in command]
+        if "ai_player.services.demucs_runner" in command_parts:
+            return "demucs"
         return str(command[0])
     return str(command or "process")

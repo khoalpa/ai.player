@@ -33,9 +33,18 @@ class PlayerUiMixin:
         key = text if text in UI_TEXT.get("vi", {}) else UI_TEXT_ALIASES.get(text) or UI_TEXT_ALIASES.get(label)
         if key:
             button.setProperty("i18n_key", key)
+            self._set_control_tooltip(button, key)
         button.setMinimumHeight(32)
         button.setCursor(Qt.PointingHandCursor)
         return button
+
+    def _set_control_tooltip(self, widget: QWidget, key: str) -> None:
+        tooltip = self._i18n_text(key)
+        widget.setToolTip(tooltip)
+        widget.setProperty("i18n_tooltip_key", key)
+        if isinstance(widget, QComboBox) and widget.isEditable() and widget.lineEdit() is not None:
+            widget.lineEdit().setToolTip(tooltip)
+            widget.lineEdit().setProperty("i18n_tooltip_key", key)
 
     @staticmethod
     def _compact_combo(combo: QComboBox) -> None:
