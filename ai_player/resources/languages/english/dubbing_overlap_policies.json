@@ -1,0 +1,16 @@
+{
+  "options": [
+    {
+      "value": "smart",
+      "label": "Smart"
+    },
+    {
+      "value": "strict_start",
+      "label": "Strict start"
+    },
+    {
+      "value": "avoid_overlap",
+      "label": "Avoid overlap"
+    }
+  ]
+}

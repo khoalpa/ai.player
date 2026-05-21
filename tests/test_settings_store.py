@@ -70,3 +70,29 @@ def test_load_app_config_coerces_numeric_values(tmp_path, monkeypatch) -> None:
 
     assert config.translation_max_tokens == 42
     assert config.dubbing_speed_min == 0.85
+
+
+def test_load_app_config_migrates_removed_translation_provider_and_models(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(
+        json.dumps(
+            {
+                "translator_provider": "auto",
+                "local_translation_model": r"D:\project\ai.player\models\translation\marian\en-vi",
+                "transcript_cleanup_model": r"D:\project\ai.player\models\transcript_cleanup\Qwen2.5-7B-Instruct",
+                "original_audio_voice_filter_mode": "auto",
+            }
+        ),
+        encoding="utf-8",
+    )
+    cleanup_model = tmp_path / "Qwen2.5-3B-Instruct"
+    cleanup_model.mkdir()
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+    monkeypatch.setattr(settings_store, "LOCAL_TRANSCRIPT_CLEANUP_MODEL_PATH", cleanup_model)
+
+    config = settings_store.load_app_config(AppConfig())
+
+    assert config.translator_provider == "nllb_ct2"
+    assert config.local_translation_model == settings_store.LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH
+    assert config.transcript_cleanup_model == str(cleanup_model)
+    assert config.original_audio_voice_filter_mode == "fast"

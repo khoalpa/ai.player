@@ -3,13 +3,23 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QLineEdit,
+    QMenu,
+    QMessageBox,
+    QVBoxLayout,
+)
 
 from ai_player.core.config import AppConfig
 from ai_player.ui.export_progress_dialog import ExportProgressDialog
 from ai_player.ui.player_window_utils import repair_mojibake as _repair_mojibake
 from ai_player.ui.player_window_utils import safe_native_dubbing_config as _safe_native_dubbing_config
-from ai_player.workers.export_worker import DocumentReviewExportWorker, DubbingExportWorker
+from ai_player.workers.export_worker import DocumentReviewExportWorker, DubbingExportWorker, ExportRange
 
 
 class PlayerExportMixin:
@@ -65,6 +75,11 @@ class PlayerExportMixin:
             return
         if not Path(path).suffix:
             path += suffix
+        export_range = ExportRange()
+        if export_kind == "video":
+            export_range = self._choose_export_range()
+            if export_range is None:
+                return
 
         self._pause_active_source()
         self._stop_dubbing()
@@ -75,6 +90,7 @@ class PlayerExportMixin:
             path,
             export_kind,
             export_config,
+            export_range,
             self,
         )
         self._start_export_worker(worker)
@@ -131,6 +147,7 @@ class PlayerExportMixin:
         worker.progress_changed.connect(self._export_progress_changed)
         worker.progress_percent.connect(self._export_progress_percent_changed)
         worker.export_finished.connect(self._export_finished)
+        worker.partial_finished.connect(self._export_partial_finished)
         worker.failed.connect(self._export_failed)
         worker.finished.connect(lambda worker=worker: self._export_worker_finished(worker))
         worker.start()
@@ -140,6 +157,7 @@ class PlayerExportMixin:
             self._export_dialog.close()
         self._export_dialog = ExportProgressDialog(title, output_path, config, self)
         self._export_dialog.rejected.connect(self._cancel_export)
+        self._export_dialog.keep_partial_requested.connect(self._keep_partial_export)
         self._export_dialog.show()
         self._export_dialog.raise_()
 
@@ -162,12 +180,26 @@ class PlayerExportMixin:
         if self._export_dialog is not None:
             self._export_dialog.update_status(self._tr("status_cancel_export_requested"))
 
+    def _keep_partial_export(self) -> None:
+        worker = self._export_worker
+        if worker is None:
+            return
+        worker.stop(keep_partial=True)
+        self.statusBar().showMessage(self._tr("status_keep_partial_export_requested"))
+
     def _export_finished(self, output_path: str) -> None:
         self._export_terminal = True
         self._export_button.setEnabled(True)
         if self._export_dialog is not None:
             self._export_dialog.mark_finished(output_path)
         self.statusBar().showMessage(f"{self._tr('status_export_done_prefix')} {output_path}")
+
+    def _export_partial_finished(self, output_path: str) -> None:
+        self._export_terminal = True
+        self._export_button.setEnabled(True)
+        if self._export_dialog is not None:
+            self._export_dialog.mark_partial_finished(output_path)
+        self.statusBar().showMessage(f"{self._tr('status_export_partial_done_prefix')} {output_path}")
 
     def _export_failed(self, message: str) -> None:
         self._export_terminal = True
@@ -185,3 +217,89 @@ class PlayerExportMixin:
         if self._export_worker is worker:
             self._export_worker = None
         worker.deleteLater()
+
+    def _choose_export_range(self) -> ExportRange | None:
+        duration_seconds = max(0.0, self._player.get_length_ms() / 1000.0)
+        dialog = _ExportRangeDialog(self._tr, duration_seconds, self)
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        return dialog.export_range()
+
+
+class _ExportRangeDialog(QDialog):
+    def __init__(self, tr, duration_seconds: float, parent=None) -> None:
+        super().__init__(parent)
+        self._tr = tr
+        self._duration_seconds = duration_seconds
+        self.setWindowTitle(self._tr("export_range_title"))
+        self.resize(360, 160)
+
+        layout = QVBoxLayout(self)
+        self._full_check = QCheckBox(self._tr("export_range_full"), self)
+        self._full_check.setChecked(True)
+        layout.addWidget(self._full_check)
+
+        form = QFormLayout()
+        self._start_edit = QLineEdit("00:00:00", self)
+        self._end_edit = QLineEdit(_format_time(duration_seconds) if duration_seconds > 0 else "", self)
+        form.addRow(self._tr("export_range_start"), self._start_edit)
+        form.addRow(self._tr("export_range_end"), self._end_edit)
+        layout.addLayout(form)
+
+        self._buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        self._buttons.accepted.connect(self._accept_if_valid)
+        self._buttons.rejected.connect(self.reject)
+        layout.addWidget(self._buttons)
+
+        self._full_check.toggled.connect(self._sync_enabled)
+        self._sync_enabled(True)
+
+    def export_range(self) -> ExportRange:
+        if self._full_check.isChecked():
+            return ExportRange()
+        return ExportRange(_parse_time(self._start_edit.text()), _parse_time(self._end_edit.text()))
+
+    def _sync_enabled(self, full: bool) -> None:
+        self._start_edit.setEnabled(not full)
+        self._end_edit.setEnabled(not full)
+
+    def _accept_if_valid(self) -> None:
+        if self._full_check.isChecked():
+            self.accept()
+            return
+        try:
+            start = _parse_time(self._start_edit.text())
+            end = _parse_time(self._end_edit.text())
+        except ValueError:
+            QMessageBox.warning(self, self.windowTitle(), self._tr("export_range_invalid"))
+            return
+        if start < 0 or end <= start or (self._duration_seconds > 0 and end > self._duration_seconds + 0.5):
+            QMessageBox.warning(self, self.windowTitle(), self._tr("export_range_invalid"))
+            return
+        self.accept()
+
+
+def _parse_time(value: str) -> float:
+    text = value.strip()
+    if not text:
+        raise ValueError("empty time")
+    parts = text.split(":")
+    try:
+        if len(parts) == 1:
+            return max(0.0, float(parts[0]))
+        if len(parts) == 2:
+            minutes, seconds = parts
+            return max(0.0, int(minutes) * 60 + float(seconds))
+        if len(parts) == 3:
+            hours, minutes, seconds = parts
+            return max(0.0, int(hours) * 3600 + int(minutes) * 60 + float(seconds))
+    except ValueError as exc:
+        raise ValueError("invalid time") from exc
+    raise ValueError("invalid time")
+
+
+def _format_time(seconds_value: float) -> str:
+    total_seconds = max(0, int(round(seconds_value)))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"

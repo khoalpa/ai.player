@@ -81,6 +81,32 @@ def test_warm_runtime_components_reports_progress_when_dependencies_are_stubbed(
     assert calls
 
 
+def test_warm_runtime_components_warms_transcript_cleanup(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeCleaner:
+        def __init__(self, _config: AppConfig) -> None:
+            pass
+
+        def clean(self, text: str, source_language: str | None = None) -> str:
+            calls.append(text)
+            return text
+
+    monkeypatch.setattr(runtime_warmup, "TranscriptCleaner", FakeCleaner)
+    config = AppConfig(
+        runtime_warmup_enabled=True,
+        runtime_warmup_whisper=False,
+        runtime_warmup_translation=False,
+        runtime_warmup_tts=False,
+        transcript_cleanup_mode="light",
+    )
+
+    timings = runtime_warmup.warm_runtime_components(config)
+
+    assert "transcript_cleanup_seconds" in timings
+    assert calls
+
+
 def test_cuda_runtime_files_available_finds_nested_dll(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(gpu, "configure_cuda_dll_paths", lambda: None)
     monkeypatch.setattr(gpu.shutil, "which", lambda _name: None)

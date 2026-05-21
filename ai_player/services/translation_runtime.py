@@ -4,7 +4,7 @@ import threading
 from dataclasses import dataclass
 
 from ai_player.core.config import AppConfig
-from ai_player.services.translation import PassthroughTranslator, VietnameseTranslator, normalize_translator_provider
+from ai_player.services.translation import PassthroughTranslator, VietnameseTranslator, effective_translator_provider
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,7 @@ _TRANSLATOR_CACHE: dict[TranslationRuntimeKey, SharedVietnameseTranslator] = {}
 
 
 def get_shared_vietnamese_translator(config: AppConfig):
-    if normalize_translator_provider(config.translator_provider) == "none":
+    if effective_translator_provider(config) == "none":
         return PassthroughTranslator()
     key = translation_runtime_key(config)
     with _TRANSLATOR_CACHE_LOCK:
@@ -57,7 +57,7 @@ def clear_shared_vietnamese_translators() -> None:
 
 def translation_runtime_key(config: AppConfig) -> TranslationRuntimeKey:
     return TranslationRuntimeKey(
-        provider=normalize_translator_provider(config.translator_provider),
+        provider=effective_translator_provider(config),
         model=str(config.local_translation_model),
         device=str(config.local_translation_device),
         offline=bool(config.local_translation_offline),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -26,6 +27,7 @@ def _time_call(callback):
 
 
 def main() -> int:
+    _prefer_utf8_stdout()
     parser = argparse.ArgumentParser(description="Small ASR/translation/TTS benchmark for AI Player.")
     parser.add_argument("--audio", default="", help="Optional audio/video file for ASR timing.")
     parser.add_argument("--text", default="Hello, this is an AI Player benchmark.", help="Text to translate and speak.")
@@ -92,6 +94,12 @@ def main() -> int:
     output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result, indent=2))
     return 0
+
+
+def _prefer_utf8_stdout() -> None:
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(encoding="utf-8", errors="replace")
 
 
 if __name__ == "__main__":

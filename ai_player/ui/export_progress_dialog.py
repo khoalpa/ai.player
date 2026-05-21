@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QProgressBar, QTextEdit, QVBoxLayout
 
 from ai_player.core.config import AppConfig
@@ -11,6 +11,8 @@ from ai_player.ui.player_window_utils import repair_mojibake as _repair_mojibake
 
 
 class ExportProgressDialog(QDialog):
+    keep_partial_requested = Signal()
+
     def __init__(self, title: str, output_path: str, config: AppConfig, parent=None) -> None:
         super().__init__(parent)
         self._language = config.gui_language
@@ -66,6 +68,8 @@ class ExportProgressDialog(QDialog):
 
         self._buttons = QDialogButtonBox(QDialogButtonBox.Cancel, self)
         self._done = False
+        self._keep_button = self._buttons.addButton(self._tr("export_stop_keep"), QDialogButtonBox.ActionRole)
+        self._keep_button.clicked.connect(self._handle_keep_partial)
         self._buttons.rejected.connect(self._handle_rejected)
         layout.addWidget(self._buttons)
 
@@ -94,6 +98,7 @@ class ExportProgressDialog(QDialog):
         self._status.setText(f"{self._tr('export_finished_prefix')} {output_path}")
         self._log.append(f"[{self._format_elapsed()}] {self._tr('export_log_finished')}: {output_path}")
         self._set_done_button(self._tr("done"))
+        self._set_keep_button_visible(False)
         self._refresh_time(done=True)
 
     def mark_failed(self, message: str) -> None:
@@ -103,6 +108,7 @@ class ExportProgressDialog(QDialog):
         self._status.setText(f"{self._tr('export_failed_prefix')} {clean}")
         self._log.append(f"[{self._format_elapsed()}] {self._tr('export_log_error')}: {clean}")
         self._set_done_button(self._tr("close"))
+        self._set_keep_button_visible(False)
         self._refresh_time(done=True)
 
     def mark_cancelled(self, message: str) -> None:
@@ -112,6 +118,16 @@ class ExportProgressDialog(QDialog):
         self._status.setText(clean)
         self._log.append(f"[{self._format_elapsed()}] {clean}")
         self._set_done_button(self._tr("close"))
+        self._set_keep_button_visible(False)
+        self._refresh_time(done=True)
+
+    def mark_partial_finished(self, output_path: str) -> None:
+        self._timer.stop()
+        self._done = True
+        self._status.setText(f"{self._tr('export_partial_finished_prefix')} {output_path}")
+        self._log.append(f"[{self._format_elapsed()}] {self._tr('export_log_partial_finished')}: {output_path}")
+        self._set_done_button(self._tr("close"))
+        self._set_keep_button_visible(False)
         self._refresh_time(done=True)
 
     def _handle_rejected(self) -> None:
@@ -120,10 +136,20 @@ class ExportProgressDialog(QDialog):
         else:
             self.reject()
 
+    def _handle_keep_partial(self) -> None:
+        if self._done:
+            return
+        self._keep_button.setEnabled(False)
+        self.update_status(self._tr("status_keep_partial_export_requested"))
+        self.keep_partial_requested.emit()
+
     def _set_done_button(self, label: str) -> None:
         cancel_button = self._buttons.button(QDialogButtonBox.Cancel)
         if cancel_button is not None:
             cancel_button.setText(label)
+
+    def _set_keep_button_visible(self, visible: bool) -> None:
+        self._keep_button.setVisible(visible)
 
     def _refresh_time(self, done: bool = False) -> None:
         elapsed = max(0.0, time.monotonic() - self._started_at)

@@ -516,11 +516,7 @@ def _render_office_pages(
     if not pdf_path.exists():
         candidates = list(pdf_dir.glob("*.pdf"))
         pdf_path = candidates[0] if candidates else pdf_path
-    return (
-        _render_pdf_pages(pdf_path, output_dir, cancel_callback=cancel_callback)
-        if pdf_path.exists()
-        else []
-    )
+    return _render_pdf_pages(pdf_path, output_dir, cancel_callback=cancel_callback) if pdf_path.exists() else []
 
 
 def _office_renderer() -> str:

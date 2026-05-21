@@ -5,9 +5,13 @@ from dataclasses import replace
 from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QLineEdit, QPushButton, QSlider, QWidget
 
 from ai_player.core.config import DEFAULT_PERFORMANCE_PRESET, AppConfig
-from ai_player.core.runtime_catalog import available_language_options
+from ai_player.core.runtime_catalog import available_language_options, available_translation_provider_options
 from ai_player.core.settings_store import save_app_config
-from ai_player.services.source_voice_filter import normalize_source_voice_filter_mode
+from ai_player.services.audio_timeline import normalize_overlap_policy
+from ai_player.services.source_voice_filter import (
+    normalize_source_voice_filter_mode,
+    normalize_source_voice_filter_model,
+)
 from ai_player.services.speaker_voice_selector import normalize_voice_gender_mode
 from ai_player.services.translation import available_translation_models, is_ctranslate2_model_path
 from ai_player.services.tts import available_vieneu_models, available_voices, voice_gender
@@ -127,6 +131,21 @@ class PlayerSettingsMixin:
             return normalize_source_voice_filter_mode(self._source_filter_mode_combo.currentData())
         return normalize_source_voice_filter_mode(self._config.original_audio_voice_filter_mode)
 
+    def _selected_source_filter_model(self) -> str:
+        if hasattr(self, "_source_filter_model_combo"):
+            return normalize_source_voice_filter_model(self._source_filter_model_combo.currentData())
+        return normalize_source_voice_filter_model(self._config.original_audio_voice_filter_model)
+
+    def _sync_source_filter_controls(self, *_args) -> None:
+        if not hasattr(self, "_source_filter_check"):
+            return
+        enabled = self._source_filter_check.isChecked()
+        provider = self._selected_source_filter_mode()
+        if hasattr(self, "_source_filter_mode_combo"):
+            self._source_filter_mode_combo.setEnabled(enabled)
+        if hasattr(self, "_source_filter_model_combo"):
+            self._source_filter_model_combo.setEnabled(enabled and provider != "fast")
+
     def _selected_video_aspect_ratio(self) -> str:
         value = self._aspect_combo.currentData() if hasattr(self, "_aspect_combo") else ""
         return value if value in {"16:9", "9:16"} else "16:9"
@@ -150,6 +169,26 @@ class PlayerSettingsMixin:
     def _language_pair_changed(self, *_args) -> None:
         self._queue_save_settings()
 
+    def _selected_asr_provider(self) -> str:
+        if hasattr(self, "_asr_provider_combo"):
+            return self._asr_provider_combo.currentData() or self._config.asr_provider
+        return self._config.asr_provider
+
+    def _selected_asr_model(self) -> str:
+        if hasattr(self, "_asr_model_combo"):
+            return self._combo_value(self._asr_model_combo) or self._config.whisper_model
+        return self._config.whisper_model
+
+    def _selected_ocr_provider(self) -> str:
+        if hasattr(self, "_ocr_provider_combo"):
+            return self._ocr_provider_combo.currentData() or self._config.ocr_provider
+        return self._config.ocr_provider
+
+    def _selected_ocr_model(self) -> str:
+        if hasattr(self, "_ocr_model_combo"):
+            return self._combo_value(self._ocr_model_combo) or self._config.ocr_model
+        return self._config.ocr_model
+
     def _selected_translator_provider(self) -> str:
         provider = self._translator_combo.currentData() or "nllb"
         if provider == "none":
@@ -159,8 +198,9 @@ class PlayerSettingsMixin:
         return provider
 
     def _selected_nllb_model(self) -> str:
-        data = self._nllb_model_combo.currentData()
-        return self._config.local_translation_model if data is None else str(data)
+        value = self._combo_value(self._nllb_model_combo)
+        provider = self._translator_combo.currentData()
+        return value if value or provider == "none" else self._config.local_translation_model
 
     def _translator_changed(self, *_args) -> None:
         self._refresh_translation_models()
@@ -173,12 +213,22 @@ class PlayerSettingsMixin:
         if current is None:
             data = self._nllb_model_combo.currentData()
             current = None if data is None else str(data)
+        provider = self._translator_combo.currentData()
+        if provider == "none":
+            current = ""
+        elif provider == "nllb" and current and is_ctranslate2_model_path(current):
+            current = ""
+        elif provider == "nllb_ct2" and current and not is_ctranslate2_model_path(current):
+            current = ""
         self._nllb_model_combo.blockSignals(True)
         try:
             self._nllb_model_combo.clear()
-            for model in available_translation_models(self._translator_combo.currentData()):
+            for model in available_translation_models(provider):
                 self._nllb_model_combo.addItem(model.name, model.path)
             index = self._nllb_model_combo.findData(current)
+            if index < 0 and current:
+                self._nllb_model_combo.addItem(current, current)
+                index = self._nllb_model_combo.findData(current)
             self._nllb_model_combo.setCurrentIndex(max(0, index))
         finally:
             self._nllb_model_combo.blockSignals(False)
@@ -192,7 +242,7 @@ class PlayerSettingsMixin:
 
     def _sync_translation_model_combo_enabled(self) -> None:
         provider = self._translator_combo.currentData()
-        self._nllb_model_combo.setEnabled(provider not in {"argos", "none"} and self._nllb_model_combo.count() > 0)
+        self._nllb_model_combo.setEnabled(provider != "none" and self._nllb_model_combo.count() > 0)
 
     def _selected_performance_preset(self) -> str:
         return self._performance_preset_combo.currentData() or DEFAULT_PERFORMANCE_PRESET
@@ -222,6 +272,11 @@ class PlayerSettingsMixin:
         if hasattr(self, "_auto_voice_gender_mode_combo"):
             return normalize_voice_gender_mode(self._auto_voice_gender_mode_combo.currentData())
         return normalize_voice_gender_mode(self._config.dubbing_auto_voice_gender_mode)
+
+    def _selected_overlap_policy(self) -> str:
+        if hasattr(self, "_overlap_policy_combo"):
+            return normalize_overlap_policy(self._overlap_policy_combo.currentData())
+        return normalize_overlap_policy(self._config.dubbing_overlap_policy)
 
     def _selected_vieneu_mode(self) -> str:
         return self._vieneu_mode_combo.currentData() or self._config.vieneu_tts_mode
@@ -272,11 +327,23 @@ class PlayerSettingsMixin:
                 return str(data).strip()
         return text
 
+    def _sync_transcript_cleanup_controls(self, *_args) -> None:
+        if not hasattr(self, "_transcript_cleanup_mode_combo"):
+            return
+        enabled = self._selected_transcript_cleanup_mode() != "off"
+        provider = self._selected_transcript_cleanup_provider()
+        self._transcript_cleanup_provider_combo.setEnabled(enabled)
+        self._transcript_cleanup_model_combo.setEnabled(enabled)
+        self._transcript_cleanup_api_base_edit.setEnabled(enabled and provider in {"ollama", "openai"})
+        self._transcript_cleanup_api_key_edit.setEnabled(enabled and provider == "openai")
+
     @staticmethod
     def _combo_value(combo: QComboBox) -> str:
         text = combo.currentText().strip()
         data = combo.currentData()
-        if text and text != "Auto":
+        if combo.currentIndex() >= 0 and text == combo.itemText(combo.currentIndex()):
+            return "" if data is None else str(data).strip()
+        if text and text not in {"Auto", "Tự động"}:
             return text
         return "" if data is None else str(data).strip()
 
@@ -298,11 +365,17 @@ class PlayerSettingsMixin:
             transcript_cleanup_api_base=self._transcript_cleanup_api_base_edit.text().strip(),
             transcript_cleanup_api_key=self._transcript_cleanup_api_key_edit.text().strip(),
             transcript_path=self._transcript_path_edit.text().strip(),
+            asr_provider=self._selected_asr_provider(),
+            whisper_model=self._selected_asr_model(),
             performance_preset=self._selected_performance_preset(),
             export_video_quality=self._selected_export_video_quality(),
             whisper_device=self._selected_whisper_device(),
             whisper_offline=self._whisper_offline_check.isChecked(),
             whisper_compute_type=self._selected_whisper_compute(),
+            whisper_beam_size=int(self._whisper_beam_slider.value()),
+            whisper_vad_filter=self._whisper_vad_check.isChecked(),
+            ocr_provider=self._selected_ocr_provider(),
+            ocr_model=self._selected_ocr_model(),
             local_translation_device=self._selected_translation_device(),
             local_translation_model=self._selected_nllb_model(),
             local_translation_offline=self._translation_offline_check.isChecked(),
@@ -318,6 +391,7 @@ class PlayerSettingsMixin:
             dubbing_voice_volume=int(self._dub_volume_slider.value()),
             dubbing_speed_percent=int(self._dub_speed_slider.value()),
             dubbing_auto_match_audio=self._auto_match_audio_check.isChecked(),
+            dubbing_overlap_policy=self._selected_overlap_policy(),
             dubbing_auto_voice_gender=self._auto_voice_gender_check.isChecked(),
             dubbing_auto_voice_gender_mode=self._selected_auto_voice_gender_mode(),
             dubbing_speed_min=float(self._speed_min_slider.value() / 100),
@@ -327,6 +401,7 @@ class PlayerSettingsMixin:
             original_audio_volume=int(self._volume_slider.value()),
             original_audio_voice_filter=self._source_filter_check.isChecked(),
             original_audio_voice_filter_mode=self._selected_source_filter_mode(),
+            original_audio_voice_filter_model=self._selected_source_filter_model(),
             original_audio_playback_delay_seconds=int(self._video_delay_slider.value()),
             dubbing_enabled_by_default=self._dub_button.isChecked(),
             source_language=self._selected_source_language(),
@@ -385,8 +460,17 @@ class PlayerSettingsMixin:
         self._set_slider_value(self._vieneu_max_chars_slider, preset.get("vieneu_tts_max_chars_chunk"))
 
         self._set_combo_data(self._whisper_device_combo, preset.get("whisper_device"))
+        self._set_combo_data(self._asr_provider_combo, preset.get("asr_provider"))
+        self._set_combo_data(self._asr_model_combo, preset.get("whisper_model"))
+        self._set_combo_data(self._ocr_provider_combo, preset.get("ocr_provider"))
+        self._set_combo_data(self._ocr_model_combo, preset.get("ocr_model"))
         self._set_combo_data(self._whisper_compute_combo, preset.get("whisper_compute_type"))
+        self._set_slider_value(self._whisper_beam_slider, preset.get("whisper_beam_size"))
+        self._set_checkbox(self._whisper_vad_check, preset.get("whisper_vad_filter"))
         self._set_checkbox(self._whisper_offline_check, preset.get("whisper_offline"))
+        whisper_model = preset.get("whisper_model")
+        if whisper_model:
+            self._config = replace(self._config, whisper_model=str(whisper_model))
         self._set_slider_value(self._segment_seconds_slider, preset.get("segment_seconds"))
         self._set_slider_value(self._start_delay_slider, preset.get("dubbing_start_delay_seconds"))
         self._set_slider_value(self._prebuffer_segments_slider, preset.get("dubbing_prebuffer_segments"))
@@ -402,6 +486,7 @@ class PlayerSettingsMixin:
         self._set_checkbox(self._auto_voice_gender_check, preset.get("dubbing_auto_voice_gender"))
         self._set_combo_data(self._auto_voice_gender_mode_combo, preset.get("dubbing_auto_voice_gender_mode"))
         self._set_checkbox(self._auto_match_audio_check, preset.get("dubbing_auto_match_audio"))
+        self._set_combo_data(self._overlap_policy_combo, preset.get("dubbing_overlap_policy"))
         self._set_slider_value(self._video_delay_slider, preset.get("original_audio_playback_delay_seconds"))
         self._set_combo_data(self._source_filter_mode_combo, preset.get("original_audio_voice_filter_mode"))
         self._set_combo_data(self._export_video_quality_combo, preset.get("export_video_quality"))
@@ -428,8 +513,13 @@ class PlayerSettingsMixin:
             self._playback_quality_combo,
             self._audio_source_combo,
             self._source_filter_mode_combo,
+            self._source_filter_model_combo,
             self._source_language_combo,
             self._target_language_combo,
+            self._asr_provider_combo,
+            self._asr_model_combo,
+            self._ocr_provider_combo,
+            self._ocr_model_combo,
             self._translator_combo,
             self._nllb_model_combo,
             self._translation_device_combo,
@@ -438,6 +528,7 @@ class PlayerSettingsMixin:
             self._vieneu_model_combo,
             self._tts_voice_combo,
             self._auto_voice_gender_mode_combo,
+            self._overlap_policy_combo,
             self._tts_male_voice_combo,
             self._tts_female_voice_combo,
             self._whisper_device_combo,
@@ -459,6 +550,7 @@ class PlayerSettingsMixin:
 
         checks = (
             self._preserve_terms_check,
+            self._whisper_vad_check,
             self._whisper_offline_check,
             self._translation_offline_check,
             self._vieneu_offline_check,
@@ -476,6 +568,7 @@ class PlayerSettingsMixin:
             self._dub_volume_slider,
             self._translation_max_tokens_slider,
             self._translation_beams_slider,
+            self._whisper_beam_slider,
             self._dubbing_buffer_slider,
             self._dub_speed_slider,
             self._video_delay_slider,
@@ -520,9 +613,13 @@ class PlayerSettingsMixin:
             self._source_label.setText(self._tr("source_empty"))
         if hasattr(self, "_settings_tabs"):
             self._settings_tabs.setTabText(0, self._tr("basic_tab"))
-            self._settings_tabs.setTabText(1, self._tr("advanced_tab"))
-            self._settings_tabs.setTabText(2, self._tr("transcript_tab"))
-            self._settings_tabs.setTabText(3, self._tr("runtime_tab"))
+            self._settings_tabs.setTabText(1, self._tr("models_tab"))
+            self._settings_tabs.setTabText(2, self._tr("advanced_tab"))
+            self._settings_tabs.setTabText(3, self._tr("transcript_tab"))
+            self._settings_tabs.setTabText(4, self._tr("runtime_tab"))
+            self._settings_tabs.setTabText(5, self._tr("offline_models_tab"))
+        if hasattr(self, "_offline_models_log"):
+            self._offline_models_log.setPlaceholderText(self._tr("offline_models_log_placeholder"))
         if hasattr(self, "_document_view"):
             placeholder_key = "document_editor_placeholder" if self._document_editor_active else "document_placeholder"
             self._document_view.setPlaceholderText(self._tr(placeholder_key))
@@ -547,6 +644,7 @@ class PlayerSettingsMixin:
             (self._vieneu_device_combo, _dropdown_options("vieneu_devices", language)),
             (self._vieneu_backend_combo, _dropdown_options("vieneu_backends", language)),
             (self._capture_backend_combo, _dropdown_options("capture_backends", language)),
+            (self._overlap_policy_combo, _dropdown_options("dubbing_overlap_policies", language)),
             (self._transcript_cleanup_mode_combo, _dropdown_options("transcript_cleanup_modes", language)),
             (self._transcript_cleanup_provider_combo, _dropdown_options("transcript_cleanup_providers", language)),
             (self._transcript_view_combo, _dropdown_options("transcript_views", language)),
@@ -554,6 +652,7 @@ class PlayerSettingsMixin:
         )
         for combo, options in dropdown_combos:
             self._replace_combo_options(combo, options)
+        self._sync_transcript_cleanup_controls()
         self._replace_combo_options(
             self._source_language_combo,
             [
@@ -568,6 +667,11 @@ class PlayerSettingsMixin:
                 for option in available_language_options(include_auto=False, language_id=language)
             ],
         )
+        self._replace_combo_options(
+            self._translator_combo,
+            [(option.name, option.id) for option in available_translation_provider_options(language)],
+        )
+        self._refresh_translation_models()
         self._retranslate_inline_option_combos()
 
     def _retranslate_inline_option_combos(self) -> None:
@@ -589,11 +693,27 @@ class PlayerSettingsMixin:
                 self._set_combo_item_text(self._subtitle_color_combo, value, self._tr(key))
         if hasattr(self, "_source_filter_mode_combo"):
             for value, key in (
-                ("auto", "source_filter_mode_auto"),
                 ("fast", "source_filter_mode_fast"),
                 ("ai", "source_filter_mode_ai"),
             ):
                 self._set_combo_item_text(self._source_filter_mode_combo, value, self._tr(key))
+        if hasattr(self, "_source_filter_model_combo"):
+            self._set_combo_item_text(
+                self._source_filter_model_combo,
+                "htdemucs",
+                self._tr("source_filter_model_htdemucs"),
+            )
+            self._set_combo_item_text(
+                self._source_filter_model_combo,
+                "htdemucs_ft",
+                self._tr("source_filter_model_htdemucs_ft"),
+            )
+            self._set_combo_item_text(
+                self._source_filter_model_combo,
+                "htdemucs_6s",
+                self._tr("source_filter_model_htdemucs_6s"),
+            )
+            self._set_combo_item_text(self._source_filter_model_combo, "mdx_extra", self._tr("source_filter_model_mdx"))
         if hasattr(self, "_auto_voice_gender_mode_combo"):
             for value, key in (
                 ("stable", "voice_gender_mode_stable"),
@@ -602,6 +722,9 @@ class PlayerSettingsMixin:
                 ("ai", "voice_gender_mode_ai"),
             ):
                 self._set_combo_item_text(self._auto_voice_gender_mode_combo, value, self._tr(key))
+        for combo_name in ("_capture_system_device_combo", "_capture_microphone_device_combo"):
+            if hasattr(self, combo_name):
+                self._set_combo_item_text(getattr(self, combo_name), "", self._tr("auto"))
 
     @staticmethod
     def _set_combo_item_text(combo: QComboBox, data, text: str) -> None:
@@ -622,6 +745,9 @@ class PlayerSettingsMixin:
 
     def _translate_child_widgets(self, root: QWidget) -> None:
         for widget in root.findChildren(QWidget):
+            tooltip_key = widget.property("i18n_tooltip_key")
+            if tooltip_key:
+                widget.setToolTip(self._tr(str(tooltip_key)))
             key = widget.property("i18n_key")
             if not key:
                 text_method = getattr(widget, "text", None)
@@ -631,17 +757,16 @@ class PlayerSettingsMixin:
                     if key:
                         widget.setProperty("i18n_key", key)
             if not key:
-                if widget.toolTip():
+                if widget.toolTip() and not tooltip_key:
                     widget.setToolTip(_repair_mojibake(widget.toolTip()))
                 continue
             text = self._tr(str(key))
-            if isinstance(widget, (QPushButton, QCheckBox, QLabel)):
+            if isinstance(widget, QPushButton | QCheckBox | QLabel):
                 widget.setText(text)
             elif isinstance(widget, QLineEdit):
                 widget.setPlaceholderText(text)
-            if widget.toolTip():
-                tooltip_key = widget.property("i18n_tooltip_key")
-                widget.setToolTip(self._tr(str(tooltip_key)) if tooltip_key else _repair_mojibake(widget.toolTip()))
+            if widget.toolTip() and not tooltip_key:
+                widget.setToolTip(_repair_mojibake(widget.toolTip()))
         self._repair_combo_item_fonts()
 
     def _repair_combo_item_fonts(self) -> None:
@@ -656,6 +781,9 @@ class PlayerSettingsMixin:
         if value is None:
             return
         index = combo.findData(value)
+        if index < 0 and combo.isEditable():
+            combo.addItem(str(value), str(value))
+            index = combo.findData(value)
         if index >= 0:
             combo.setCurrentIndex(index)
 

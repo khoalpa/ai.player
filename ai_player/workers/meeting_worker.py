@@ -20,8 +20,14 @@ from ai_player.services.ffmpeg import ffmpeg_executable, ffplay_executable
 from ai_player.services.transcript_cleanup import TranscriptCleaner
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
 from ai_player.services.tts import create_tts_provider, normalize_tts_provider
-from ai_player.services.whisper_runtime import SharedWhisperModel, get_shared_whisper_model
-from ai_player.services.whisper_runtime import effective_whisper_compute_type as shared_whisper_compute_type
+from ai_player.services.whisper_runtime import (
+    SharedWhisperModel,
+    get_shared_whisper_model,
+    whisper_transcribe_kwargs,
+)
+from ai_player.services.whisper_runtime import (
+    effective_whisper_compute_type as shared_whisper_compute_type,
+)
 from ai_player.workers.dubbing_worker import _effective_whisper_device
 
 
@@ -196,25 +202,16 @@ class MeetingWorker(QThread):
     def _transcribe_segments(self, audio_path: Path):
         if self._model is None:
             self._model = self._load_model()
+        kwargs = whisper_transcribe_kwargs(self._config, self._selected_whisper_language())
         try:
-            return self._model.transcribe(
-                str(audio_path),
-                beam_size=1,
-                vad_filter=True,
-                language=self._selected_whisper_language(),
-            )
+            return self._model.transcribe(str(audio_path), **kwargs)
         except Exception:
             if self._whisper_device == "cpu":
                 raise
             self._whisper_device = "cpu"
             self._whisper_compute_type = "int8"
             self._model = self._load_model()
-            return self._model.transcribe(
-                str(audio_path),
-                beam_size=1,
-                vad_filter=True,
-                language=self._selected_whisper_language(),
-            )
+            return self._model.transcribe(str(audio_path), **kwargs)
 
     def _process_chunk(
         self,

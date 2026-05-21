@@ -18,7 +18,6 @@ dependencies = [
   "Pillow>=10.0",
   "faster-whisper>=1.0",
   "ctranslate2>=4.4",
-  "argostranslate>=1.9",
   "edge-tts>=6.1",
   "sentencepiece>=0.2",
   "torch>=2.2",
@@ -54,7 +53,7 @@ audio-separation = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["ai_player*"]
+include = ["ai_player*", "yt_dlp_plugins*"]
 
 [tool.setuptools.package-data]
 ai_player = [

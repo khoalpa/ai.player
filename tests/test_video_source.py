@@ -22,7 +22,31 @@ def test_supported_video_url(url: str, expected: bool) -> None:
     assert video_source.is_supported_video_url(url) is expected
 
 
-@pytest.mark.parametrize(("url", "expected"), [("https://youtu.be/demo", True), ("https://youtu.be/demo.mp4", False)])
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://youtu.be/demo", True),
+        ("https://youtu.be/demo.mp4", False),
+        ("https://buomtv.com/watch/demo", True),
+        ("https://phim.buomtv.cc/watch/demo", True),
+        ("https://buomtv.io/videos/demo.mp4", False),
+        ("https://missav.ws/demo", True),
+        ("https://supjav.com/demo", True),
+        ("https://javmost.cx/demo", True),
+        ("https://javgg.net/demo", True),
+        ("https://www.r18.com/videos/demo", True),
+        ("https://www.javlibrary.com/en/?v=demo", True),
+        ("https://javhd.com/demo", True),
+        ("https://chaturbate.eu/demo/", True),
+        ("https://en.chaturbate.com/demo/", True),
+        ("https://de.bongacams.net/demo", True),
+        ("https://stripchat.com/demo", True),
+        ("https://www.cam4.com/demo", True),
+        ("https://www.camsoda.com/demo", True),
+        ("https://www.livejasmin.com/en/demo", True),
+        ("https://www.cam4.com/demo.mp4", False),
+    ],
+)
 def test_should_resolve_with_ytdlp(url: str, expected: bool) -> None:
     assert video_source._should_resolve_with_ytdlp(url) is expected
 
@@ -33,6 +57,20 @@ def test_should_resolve_with_ytdlp(url: str, expected: bool) -> None:
         ("https://www.youtube.com/watch?v=x", "youtube"),
         ("https://vm.tiktok.com/x", "tiktok"),
         ("https://x.com/demo/status/1", "x-twitter"),
+        ("https://phim.buomtv.cc/watch/demo", "buomtv"),
+        ("https://missav.ws/demo", "missav"),
+        ("https://supjav.com/demo", "supjav"),
+        ("https://javmost.cx/demo", "javmost"),
+        ("https://javgg.net/demo", "javgg"),
+        ("https://www.r18.com/videos/demo", "r18"),
+        ("https://www.javlibrary.com/en/?v=demo", "javlibrary"),
+        ("https://javhd.com/demo", "javhd"),
+        ("https://chaturbate.global/demo/", "chaturbate"),
+        ("https://de.bongacams.net/demo", "bongacams"),
+        ("https://stripchat.com/demo", "stripchat"),
+        ("https://www.cam4.com/demo", "cam4"),
+        ("https://www.camsoda.com/demo", "camsoda"),
+        ("https://www.livejasmin.com/en/demo", "livejasmin"),
         ("https://example-host.test/watch", "example-host-test"),
     ],
 )
@@ -85,6 +123,95 @@ def test_resolve_page_url_without_full_cache_returns_stream_url(monkeypatch) -> 
     assert captured_options["skip_download"] is True
     assert "outtmpl" not in captured_options
     assert "progress_hooks" not in captured_options
+
+
+def test_buomtv_url_without_full_cache_uses_pwa_stream(monkeypatch) -> None:
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class FakeSession:
+        def __init__(self):
+            self.posts = []
+            self.gets = []
+
+        def post(self, url, data, headers, timeout):
+            self.posts.append((url, data, headers, timeout))
+            return FakeResponse({"status": {"code": 200}, "response": {"token": "demo token"}})
+
+        def get(self, url, headers, timeout):
+            self.gets.append((url, headers, timeout))
+            return FakeResponse(
+                {
+                    "status": {"code": 200},
+                    "response": {
+                        "video_title": "Demo BuomTV",
+                        "video_main_tag": "Free",
+                        "video_urls": {
+                            "240": "/mediapwa2/long/token/240/106746.m3u8?sign=low",
+                            "480": "/mediapwa2/long/token/480/106746.m3u8?sign=high",
+                        },
+                    },
+                }
+            )
+
+    fake_session = FakeSession()
+    monkeypatch.setitem(sys.modules, "requests", SimpleNamespace(Session=lambda: fake_session))
+
+    source = video_source.resolve_video_source(
+        "https://buomtv.life/movie/SSIS-245/106746",
+        playback_quality="720p",
+        full_cache=False,
+    )
+
+    assert source.provider == "buomtv"
+    assert source.title == "Demo BuomTV"
+    assert source.playback_url == "https://api.buomtv.life/mediapwa2/long/token/480/106746.m3u8?sign=high"
+    assert "pwa/register/pwatoken" in fake_session.posts[0][0]
+    assert "pwa/video/info/106746" in fake_session.gets[0][0]
+    assert "token=demo%20token" in fake_session.gets[0][0]
+
+
+def test_buomtv_url_wraps_http_errors(monkeypatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self):
+            raise RuntimeError("500 Server Error")
+
+        def json(self):
+            return {}
+
+    class FakeSession:
+        def post(self, url, data, headers, timeout):
+            return FakeResponse()
+
+    monkeypatch.setitem(sys.modules, "requests", SimpleNamespace(Session=FakeSession))
+
+    with pytest.raises(video_source.VideoSourceError, match="BuomTV token API loi HTTP"):
+        video_source.resolve_video_source("https://buomtv.life/movie/SSIS-245/106746", full_cache=False)
+
+
+def test_buomtv_url_wraps_invalid_json(monkeypatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            raise ValueError("invalid json")
+
+    class FakeSession:
+        def post(self, url, data, headers, timeout):
+            return FakeResponse()
+
+    monkeypatch.setitem(sys.modules, "requests", SimpleNamespace(Session=FakeSession))
+
+    with pytest.raises(video_source.VideoSourceError, match="BuomTV token API khong tra JSON hop le"):
+        video_source.resolve_video_source("https://buomtv.life/movie/SSIS-245/106746", full_cache=False)
 
 
 def test_cleanup_cache_root_removes_old_files(tmp_path) -> None:

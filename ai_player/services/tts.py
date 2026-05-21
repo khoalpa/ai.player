@@ -75,6 +75,7 @@ _VIENEU_ENGINE_CACHE: dict[tuple[str, ...], Any] = {}
 _VIENEU_SERVER_CACHE_LOCK = threading.Lock()
 _VIENEU_SERVER_CACHE: dict[tuple[str, ...], VieNeuServerClient] = {}
 _TTS_CACHE_LOCK = threading.Lock()
+_TTS_CACHE_KEY_LOCKS: dict[Path, threading.Lock] = {}
 
 
 def available_tts_providers() -> list[VoiceOption]:
@@ -339,18 +340,18 @@ class CachedTTSProvider(BaseTTSProvider):
             return
 
         cache_path = _tts_cache_path(self._provider, self._config, text, voice or self._config.tts_voice, output_path)
-        with _TTS_CACHE_LOCK:
+        cache_lock = _tts_cache_lock_for(cache_path)
+        with cache_lock:
             if cache_path.exists() and cache_path.stat().st_size > 0:
                 shutil.copyfile(cache_path, output_path)
                 return
 
-        self._inner.synthesize(text, output_path, voice=voice)
-        if not output_path.exists() or output_path.stat().st_size <= 0:
-            return
+            self._inner.synthesize(text, output_path, voice=voice)
+            if not output_path.exists() or output_path.stat().st_size <= 0:
+                return
 
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_cache_path = cache_path.with_name(f"{cache_path.name}.tmp")
-        with _TTS_CACHE_LOCK:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_cache_path = cache_path.with_name(f"{cache_path.name}.tmp")
             if cache_path.exists() and cache_path.stat().st_size > 0:
                 return
             shutil.copyfile(output_path, temp_cache_path)
@@ -862,8 +863,9 @@ def _get_vieneu_engine(config: AppConfig):
             from vieneu import Vieneu
         except ImportError as exc:
             raise TTSError(
-                "Không import được VieNeu-TTS nội bộ. Chạy scripts\\setup_vieneu_tts.ps1 "
-                "để cài dependency cho module ai_player\\vieneu_tts."
+                "Không import được VieNeu-TTS nội bộ. Chạy "
+                ".\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt "
+                "để cài dependency, rồi chạy scripts\\download_vieneu_tts_models.ps1 nếu thiếu model."
             ) from exc
 
         kwargs = _build_vieneu_engine_kwargs(
@@ -1126,12 +1128,22 @@ def _tts_cache_enabled() -> bool:
     return str(os.getenv("AI_PLAYER_TTS_CACHE", "1")).strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _tts_cache_lock_for(cache_path: Path) -> threading.Lock:
+    normalized_path = cache_path.absolute()
+    with _TTS_CACHE_LOCK:
+        lock = _TTS_CACHE_KEY_LOCKS.get(normalized_path)
+        if lock is None:
+            lock = threading.Lock()
+            _TTS_CACHE_KEY_LOCKS[normalized_path] = lock
+        return lock
+
+
 def _tts_cache_path(provider: str, config: AppConfig, text: str, voice: str, output_path: Path) -> Path:
     suffix = output_path.suffix.lower() or f".{tts_output_suffix(provider)}"
     payload = {
         "version": 1,
         "provider": normalize_tts_provider(provider),
-        "text": _clean_text(text),
+        "text": _cache_text(text),
         "voice": str(voice or ""),
         "vieneu_core": str(config.vieneu_tts_core),
         "vieneu_mode": str(config.vieneu_tts_mode),
@@ -1146,6 +1158,12 @@ def _tts_cache_path(provider: str, config: AppConfig, text: str, voice: str, out
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")).hexdigest()
     return RUNTIME_DIR / "tts-cache" / f"{digest}{suffix}"
+
+
+def _cache_text(value: object) -> str:
+    text = _clean_text(value)
+    text = unicodedata.normalize("NFC", text)
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
 
 
 def _strip_accents(value: object) -> str:

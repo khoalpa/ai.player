@@ -87,7 +87,9 @@ class PlayerMeetingMixin:
         text = _repair_mojibake(result.transcript_text.strip())
         self._set_transcript_text(text)
         self._document_view.setPlainText(text)
-        self._source_label.setText(f"Meeting: {result.started_at.strftime('%Y%m%d-%H%M%S')}")
+        self._source_label.setText(
+            self._tr("meeting_result_label").format(started_at=result.started_at.strftime("%Y%m%d-%H%M%S"))
+        )
         self.statusBar().showMessage(
             self._tr("status_meeting_exported").format(
                 transcript_path=result.transcript_path,
@@ -101,7 +103,7 @@ class PlayerMeetingMixin:
         if worker is not None:
             worker.deleteLater()
         self._reset_meeting_button()
-        QMessageBox.warning(self, "Meeting", _repair_mojibake(message))
+        QMessageBox.warning(self, self._tr("meeting_dialog_title"), _repair_mojibake(message))
         self.statusBar().showMessage(self._tr("status_meeting_failed"))
 
     def _reset_meeting_button(self) -> None:

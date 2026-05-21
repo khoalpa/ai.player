@@ -19,6 +19,7 @@ Use this checklist before sharing a build.
 ## AI Pipeline Smoke Test
 
 - Run one short ASR pass when a Whisper model exists.
+- Run `.\.venv\Scripts\python.exe .\scripts\asr_regression.py --max-wer 0.35` when the local Vietnamese sample set is present.
 - Run one translation with the selected translator.
 - Run one TTS voice test with the selected provider.
 - Start dubbing briefly, then stop/reset and confirm the app remains responsive.

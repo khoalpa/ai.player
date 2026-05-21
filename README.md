@@ -71,6 +71,51 @@ Hoặc double-click:
 open_app.bat
 ```
 
+## Nguồn và định dạng đã hỗ trợ
+
+Tệp video cục bộ:
+
+- `.mp4`
+- `.mkv`
+- `.avi`
+- `.mov`
+- `.webm`
+
+URL media trực tiếp:
+
+- `.mp4`
+- `.mkv`
+- `.mov`
+- `.webm`
+- `.avi`
+- `.m4v`
+- `.m3u8`
+- `.mpd`
+
+Trang web video được hỗ trợ qua `yt-dlp`:
+
+- YouTube: `youtube.com`, `m.youtube.com`, `music.youtube.com`, `youtu.be`
+- TikTok: `tiktok.com`, `vm.tiktok.com`, `vt.tiktok.com`
+- Facebook: `facebook.com`, `m.facebook.com`, `web.facebook.com`, `fb.watch`
+- Instagram và Threads: `instagram.com`, `threads.net`
+- X/Twitter: `x.com`, `twitter.com`
+- Vimeo: `vimeo.com`
+- Dailymotion: `dailymotion.com`, `dai.ly`
+- Telegram: `t.me`, `telegram.me`
+- BuomTV: `buomtv.*`, `*.buomtv.*`
+- JAV/adult video: `missav.ai`, `missav.com`, `missav.ws`, `supjav.com`, `javmost.com`, `javmost.cx`, `javgg.net`, `javgg.to`, `r18.com`, `javlibrary.com`, `javhd.com`
+- Live/cam: `chaturbate.com`, `chaturbate.eu`, `chaturbate.global`, `stripchat.com`, `bongacams*.com`, `bongacams*.net`, `livejasmin.com`, `cam4.com`, `camsoda.com`
+
+Tệp tài liệu:
+
+- PowerPoint: `.pptx`
+- Word: `.docx`
+- PDF: `.pdf`
+- Text/Markdown/RTF: `.txt`, `.text`, `.md`, `.rtf`
+- Dữ liệu text: `.csv`, `.json`
+
+URL hợp lệ có thể dùng giao thức `http`, `https`, `rtsp`, `rtmp` hoặc `mms`. Các định dạng Office cũ `.doc` và `.ppt` nên được lưu lại thành `.docx` hoặc `.pptx` trước khi mở.
+
 ## Mở tài liệu
 
 Bấm `Mở tài liệu` để chọn PowerPoint, Word, PDF hoặc text/data file. App sẽ hiển thị trang/slide gốc trong khung video, trích nội dung thành transcript tạm tại `data\config\current_document_transcript.srt`, tự chuyển `Nguồn` sang `Transcript`, rồi dùng pipeline dịch/TTS hiện có để đọc từng trang hoặc slide.
@@ -91,7 +136,7 @@ Các định dạng Office cũ `.doc` và `.ppt` nên được lưu lại thành
 
 ## Xuất bản xem lại chất lượng cao
 
-Sau khi mở video hoặc tài liệu, chọn preset `Chất lượng GPU` hoặc `Xuất bản / Review` nếu cần, rồi bấm `Export` -> `Xuất bản xem lại chất lượng cao (.mp4)`.
+Sau khi mở video hoặc tài liệu, chọn preset `Chất lượng / Xuất bản` nếu cần, rồi bấm `Export` -> `Xuất bản xem lại chất lượng cao (.mp4)`.
 
 - Với video, app xử lý toàn bộ file từ đầu: tách audio, nhận diện lời thoại, dịch, tạo giọng đích, căn theo timeline và mux lại thành MP4.
 - Với tài liệu, app dùng transcript đã trích từ trang/slide, tạo giọng đọc cho toàn bộ nội dung, dựng video 1080p từ ảnh trang/slide gốc và ghép audio AAC bitrate cao để xem lại.
@@ -130,7 +175,14 @@ $env:AI_PLAYER_AUDIO_SOURCE="original"      # original, system, microphone, tran
 $env:AI_PLAYER_TRANSCRIPT_PATH="D:\path\subtitles.srt"
 $env:AI_PLAYER_WHISPER_MODEL="models\asr\faster-whisper-base"
 $env:AI_PLAYER_WHISPER_DEVICE="auto"        # auto, cpu, cuda
+$env:AI_PLAYER_WHISPER_BEAM_SIZE="1"        # 1 nhanh, 5+ uu tien chinh xac
+$env:AI_PLAYER_WHISPER_VAD_FILTER="1"       # loc doan khong co giong noi
 $env:AI_PLAYER_TRANSLATION_DEVICE="auto"    # auto, cpu, cuda
+$env:AI_PLAYER_OCR_MODEL="models\ocr\tessdata_best"
+$env:AI_PLAYER_OCR_PSM="6"
+$env:AI_PLAYER_OCR_MIN_CONFIDENCE="35"
+$env:AI_PLAYER_OCR_CROP_TOP_RATIO="0.58"
+$env:AI_PLAYER_OCR_CROP_HEIGHT_RATIO="0.38"
 $env:AI_PLAYER_SEGMENT_SECONDS="8"
 $env:AI_PLAYER_DUBBING_MIN_READY_AHEAD_SECONDS="10"
 $env:AI_PLAYER_DUBBING_ENABLED_BY_DEFAULT="1"
@@ -152,6 +204,12 @@ Nếu dùng Edge TTS:
 ```powershell
 $env:AI_PLAYER_TTS_PROVIDER="edge"
 $env:AI_PLAYER_TTS_VOICE="vi-VN-HoaiMyNeural"
+```
+
+Tải OCR language pack chất lượng cao hơn:
+
+```powershell
+.\scripts\download_tessdata_models.ps1 -Quality best
 ```
 
 ## Ghi chú

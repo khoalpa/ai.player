@@ -5,7 +5,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 
 class VideoSourceError(RuntimeError):
@@ -46,6 +46,24 @@ YTDLP_PAGE_HOSTS = {
     "dai.ly",
     "t.me",
     "telegram.me",
+}
+
+ADULT_VIDEO_PAGE_HOSTS = {
+    "cam4.com": "cam4",
+    "camsoda.com": "camsoda",
+    "javgg.net": "javgg",
+    "javgg.to": "javgg",
+    "javhd.com": "javhd",
+    "javlibrary.com": "javlibrary",
+    "javmost.com": "javmost",
+    "javmost.cx": "javmost",
+    "livejasmin.com": "livejasmin",
+    "missav.ai": "missav",
+    "missav.com": "missav",
+    "missav.ws": "missav",
+    "r18.com": "r18",
+    "stripchat.com": "stripchat",
+    "supjav.com": "supjav",
 }
 
 DIRECT_MEDIA_EXTENSIONS = {
@@ -92,7 +110,7 @@ def _should_resolve_with_ytdlp(value: str) -> bool:
         return False
     if _looks_like_direct_media_url(parsed.path):
         return False
-    return host in YTDLP_PAGE_HOSTS
+    return host in YTDLP_PAGE_HOSTS or _is_adult_video_page_host(host)
 
 
 def _looks_like_direct_media_url(path: str) -> bool:
@@ -106,6 +124,10 @@ def _resolve_page_url(
     progress_callback=None,
     cancel_callback=None,
 ) -> VideoSource:
+    provider = _provider_name(url)
+    if provider == "buomtv":
+        return _resolve_buomtv_url(url, playback_quality, full_cache, progress_callback, cancel_callback)
+
     try:
         import yt_dlp
     except ImportError as exc:
@@ -297,11 +319,286 @@ def _provider_name(value: str) -> str:
         return "dailymotion"
     if host in {"t.me", "telegram.me"}:
         return "telegram"
+    adult_provider = _adult_video_provider_name(host)
+    if adult_provider:
+        return adult_provider
+    if _is_buomtv_host(host):
+        return "buomtv"
     return re.sub(r"[^a-z0-9]+", "-", host.split(":")[0]).strip("-") or "url"
 
 
 def _url_host(parsed) -> str:
     return str(parsed.hostname or "").lower().removeprefix("www.")
+
+
+def _is_buomtv_host(host: str) -> bool:
+    return host.startswith("buomtv.") or ".buomtv." in host
+
+
+def _is_adult_video_page_host(host: str) -> bool:
+    return _is_buomtv_host(host) or bool(_adult_video_provider_name(host))
+
+
+def _adult_video_provider_name(host: str) -> str:
+    if _is_chaturbate_host(host):
+        return "chaturbate"
+    if _is_bongacams_host(host):
+        return "bongacams"
+    for domain, provider in ADULT_VIDEO_PAGE_HOSTS.items():
+        if _host_matches(host, domain):
+            return provider
+    return ""
+
+
+def _is_chaturbate_host(host: str) -> bool:
+    return any(_host_matches(host, domain) for domain in {"chaturbate.com", "chaturbate.eu", "chaturbate.global"})
+
+
+def _is_bongacams_host(host: str) -> bool:
+    return bool(re.fullmatch(r"(?:.+\.)?bongacams\d*\.(?:com|net)", host))
+
+
+def _host_matches(host: str, domain: str) -> bool:
+    return host == domain or host.endswith(f".{domain}")
+
+
+def _resolve_buomtv_url(
+    url: str,
+    playback_quality: str,
+    full_cache: bool,
+    progress_callback=None,
+    cancel_callback=None,
+) -> VideoSource:
+    provider = "buomtv"
+    quality = _normalize_playback_quality(playback_quality)
+
+    def check_cancelled() -> None:
+        if cancel_callback is not None and cancel_callback():
+            raise VideoSourceCancelled("Da huy mo URL.")
+
+    check_cancelled()
+    video_info = _fetch_buomtv_video_info(url)
+    title = str(video_info.get("video_title") or url)
+    stream_path = _select_buomtv_stream_url(
+        video_info.get("video_urls") or {},
+        quality,
+        str(video_info.get("video_main_tag") or ""),
+    )
+    if not stream_path:
+        raise VideoSourceError("Khong tim thay URL phat tu BuomTV.")
+    stream_url = _absolute_buomtv_url(url, stream_path)
+
+    if not full_cache:
+        return VideoSource(input_url=url, playback_url=stream_url, title=title, provider=provider, is_resolved=True)
+
+    try:
+        import yt_dlp
+    except ImportError as exc:
+        raise VideoSourceError(
+            "Thieu yt-dlp de cache link BuomTV. Chay: "
+            ".\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt"
+        ) from exc
+
+    cache_dir = _source_cache_dir(provider, quality)
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "status": "starting",
+                "provider": provider,
+                "quality": quality,
+                "cache_dir": str(cache_dir),
+                "url": url,
+            }
+        )
+
+    def progress_hook(data: dict) -> None:
+        check_cancelled()
+        if progress_callback is None:
+            return
+        progress_callback(
+            {
+                "status": str(data.get("status") or ""),
+                "downloaded_bytes": data.get("downloaded_bytes"),
+                "total_bytes": data.get("total_bytes") or data.get("total_bytes_estimate"),
+                "speed": data.get("speed"),
+                "eta": data.get("eta"),
+                "filename": data.get("filename") or data.get("tmpfilename") or "",
+                "provider": provider,
+                "quality": quality,
+                "cache_dir": str(cache_dir),
+                "url": url,
+            }
+        )
+
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": False,
+        "noplaylist": True,
+        "socket_timeout": 30,
+        "retries": 3,
+        "fragment_retries": 3,
+        "format": _format_selector(quality),
+        "windowsfilenames": True,
+        "merge_output_format": "mp4",
+        "outtmpl": str(cache_dir / "%(extractor_key)s-%(id)s-%(format_id)s-%(height)sp.%(ext)s"),
+        "continuedl": True,
+        "overwrites": False,
+        "progress_hooks": [progress_hook],
+        "http_headers": _buomtv_headers(url),
+    }
+
+    try:
+        check_cancelled()
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(stream_url, download=True)
+        check_cancelled()
+    except VideoSourceCancelled:
+        raise
+    except Exception as exc:
+        raise VideoSourceError(f"Khong tai duoc video tu BuomTV: {exc}") from exc
+
+    local_path = _downloaded_file_path(info, cache_dir)
+    if not local_path:
+        raise VideoSourceError("Khong tim thay file video BuomTV da tai.")
+
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "status": "cached",
+                "provider": provider,
+                "quality": quality,
+                "cache_dir": str(cache_dir),
+                "filename": local_path,
+                "url": url,
+            }
+        )
+
+    return VideoSource(input_url=url, playback_url=local_path, title=title, provider=provider, is_resolved=True)
+
+
+def _fetch_buomtv_video_info(url: str) -> dict:
+    try:
+        import requests
+    except ImportError as exc:
+        raise VideoSourceError("Thieu requests de mo link BuomTV.") from exc
+
+    parsed = urlparse(url.strip())
+    video_type, video_id = _parse_buomtv_video_path(parsed.path)
+    api_base = _buomtv_api_base(parsed)
+    headers = _buomtv_headers(url)
+    session = requests.Session()
+
+    try:
+        token_response = session.post(
+            f"{api_base}/pwa/register/pwatoken?version=old-web&lang=vi",
+            data={"lang": "vi"},
+            headers=headers,
+            timeout=30,
+        )
+    except Exception as exc:
+        raise VideoSourceError(f"Khong goi duoc API token BuomTV: {exc}") from exc
+    token_payload = _buomtv_response_json(token_response, "token")
+    token = str((token_payload.get("response") or {}).get("token") or "")
+    if not token:
+        raise VideoSourceError("Khong lay duoc token BuomTV.")
+
+    info_url = (
+        f"{api_base}/pwa/video/info/{quote(video_id)}"
+        f"?token={quote(token)}&video_type={video_type}&platform=web&lang=vi"
+    )
+    try:
+        info_response = session.get(info_url, headers=headers, timeout=30)
+    except Exception as exc:
+        raise VideoSourceError(f"Khong goi duoc API video BuomTV: {exc}") from exc
+    payload = _buomtv_response_json(info_response, "video")
+    status = payload.get("status") or {}
+    if status.get("code") != 200:
+        message = str(status.get("message") or "loi khong xac dinh")
+        raise VideoSourceError(f"BuomTV tra loi loi: {message}")
+    response = payload.get("response") or {}
+    return response if isinstance(response, dict) else {}
+
+
+def _buomtv_response_json(response, context: str) -> dict:
+    try:
+        if hasattr(response, "raise_for_status"):
+            response.raise_for_status()
+    except Exception as exc:
+        raise VideoSourceError(f"BuomTV {context} API loi HTTP: {exc}") from exc
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise VideoSourceError(f"BuomTV {context} API khong tra JSON hop le.") from exc
+    if not isinstance(payload, dict):
+        raise VideoSourceError(f"BuomTV {context} API tra du lieu khong hop le.")
+    return payload
+
+
+def _parse_buomtv_video_path(path: str) -> tuple[str, str]:
+    parts = [part for part in path.split("/") if part]
+    if parts and parts[0] in {"th", "en", "cn"}:
+        parts = parts[1:]
+    if len(parts) >= 3 and parts[0] == "movie":
+        return "long", parts[2]
+    if len(parts) >= 2 and parts[0] == "video":
+        return "short", parts[1]
+    if len(parts) >= 2 and parts[0] == "anime":
+        return "anime", parts[1]
+    raise VideoSourceError("URL BuomTV khong dung dinh dang video.")
+
+
+def _select_buomtv_stream_url(video_urls: dict, playback_quality: str, video_main_tag: str = "") -> str:
+    if video_main_tag.strip().lower() == "vip" and video_urls.get("intro"):
+        return str(video_urls.get("intro") or "")
+
+    numeric_streams = sorted(
+        (int(height), str(stream_url))
+        for height, stream_url in video_urls.items()
+        if str(height).isdigit() and stream_url
+    )
+    if not numeric_streams:
+        return str(video_urls.get("intro") or "")
+
+    quality = _normalize_playback_quality(playback_quality)
+    max_height_by_quality = {
+        "360p": 360,
+        "480p": 480,
+        "720p": 720,
+        "1080p": 1080,
+    }
+    max_height = max_height_by_quality.get(quality)
+    if max_height is None:
+        return numeric_streams[-1][1]
+
+    matching_streams = [(height, stream_url) for height, stream_url in numeric_streams if height <= max_height]
+    if matching_streams:
+        return matching_streams[-1][1]
+    return numeric_streams[0][1]
+
+
+def _absolute_buomtv_url(page_url: str, stream_path: str) -> str:
+    stream_path = str(stream_path or "").strip()
+    if stream_path.lower().startswith(("http://", "https://")):
+        return stream_path
+    return f"{_buomtv_api_base(urlparse(page_url.strip()))}/{stream_path.lstrip('/')}"
+
+
+def _buomtv_api_base(parsed) -> str:
+    scheme = parsed.scheme or "https"
+    host = _url_host(parsed)
+    return f"{scheme}://api.{host}"
+
+
+def _buomtv_headers(page_url: str) -> dict[str, str]:
+    parsed = urlparse(page_url.strip())
+    origin = f"{parsed.scheme or 'https'}://{parsed.netloc}"
+    return {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/125 Safari/537.36",
+        "Origin": origin,
+        "Referer": page_url,
+    }
 
 
 def _source_cache_dir(provider: str, playback_quality: str = "720p") -> Path:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -17,8 +19,11 @@ class TranscriptCleanupError(RuntimeError):
     pass
 
 
+LOGGER = logging.getLogger(__name__)
 _LOCAL_GGUF_CACHE: dict[str, Any] = {}
 _LOCAL_TRANSFORMERS_CACHE: dict[str, tuple[Any, Any]] = {}
+_MAX_CLEANUP_LENGTH_RATIO = 2.6
+_MAX_CLEANUP_EXTRA_CHARS = 120
 
 
 @dataclass(frozen=True)
@@ -31,6 +36,8 @@ class TranscriptCleaner:
     def __init__(self, config: AppConfig) -> None:
         self._config = config
         self._previous_text = ""
+        self.last_error: str = ""
+        self._warned_failure = False
 
     @property
     def enabled(self) -> bool:
@@ -43,16 +50,63 @@ class TranscriptCleaner:
         context = CleanupContext(source_language=source_language, previous_text=self._previous_text)
         try:
             result = _clean_with_provider(clean_text, context, self._config)
-        except Exception:
+            self.last_error = ""
+        except Exception as exc:
+            self._record_failure(exc)
             result = clean_text
-        result = _sanitize_llm_output(result) or clean_text
+        result = _safe_cleanup_output(clean_text, result)
         self._previous_text = result
         return result
+
+    def clean_many(self, texts: list[str], source_language: str | None = None) -> list[str]:
+        clean_texts = [" ".join(str(text or "").split()) for text in texts]
+        if not self.enabled:
+            return clean_texts
+        indexed = [(index, text) for index, text in enumerate(clean_texts) if text]
+        if not indexed:
+            return clean_texts
+        if len(indexed) == 1:
+            index, text = indexed[0]
+            clean_texts[index] = self.clean(text, source_language)
+            return clean_texts
+
+        context = CleanupContext(source_language=source_language, previous_text=self._previous_text)
+        try:
+            result = _clean_many_with_provider([text for _index, text in indexed], context, self._config)
+            self.last_error = ""
+        except Exception as exc:
+            self._record_failure(exc)
+            return clean_texts
+        if len(result) != len(indexed):
+            self._record_failure(TranscriptCleanupError("Cleanup batch returned an unexpected item count."))
+            return clean_texts
+        for (index, original), cleaned in zip(indexed, result, strict=False):
+            clean_texts[index] = _safe_cleanup_output(original, cleaned)
+            self._previous_text = clean_texts[index]
+        return clean_texts
+
+    def _record_failure(self, exc: Exception) -> None:
+        self.last_error = str(exc)
+        if self._warned_failure:
+            return
+        self._warned_failure = True
+        LOGGER.warning("Transcript cleanup failed; using original transcript text. Error: %s", exc)
 
 
 def _clean_with_provider(text: str, context: CleanupContext, config: AppConfig) -> str:
     provider = _cleanup_provider(config.transcript_cleanup_provider)
     prompt = _build_prompt(text, context, config)
+    return _call_cleanup_provider(prompt, provider, config)
+
+
+def _clean_many_with_provider(texts: list[str], context: CleanupContext, config: AppConfig) -> list[str]:
+    provider = _cleanup_provider(config.transcript_cleanup_provider)
+    prompt = _build_batch_prompt(texts, context, config)
+    response = _call_cleanup_provider(prompt, provider, config)
+    return _parse_cleanup_batch_output(response)
+
+
+def _call_cleanup_provider(prompt: str, provider: str, config: AppConfig) -> str:
     if provider == "openai":
         return _call_openai_compatible(prompt, config)
     if provider == "local":
@@ -66,8 +120,7 @@ def _build_prompt(text: str, context: CleanupContext, config: AppConfig) -> str:
         "Sửa rất nhẹ: chỉ sửa lỗi nhận diện giọng nói rõ ràng, dấu câu, chính tả, thuật ngữ."
         if mode == "light"
         else (
-            "Sửa mạnh hơn nhưng không thêm ý mới: phục hồi câu bị vỡ nhẹ "
-            "bằng ngữ cảnh, chuẩn hóa dấu câu và thuật ngữ."
+            "Sửa mạnh hơn nhưng không thêm ý mới: phục hồi câu bị vỡ nhẹ bằng ngữ cảnh, chuẩn hóa dấu câu và thuật ngữ."
         )
     )
     language = context.source_language or config.source_language or "auto"
@@ -86,6 +139,33 @@ def _build_prompt(text: str, context: CleanupContext, config: AppConfig) -> str:
         f"{previous_block}\n"
         f"Transcript thô: {text}\n"
         "Transcript đã sửa:"
+    )
+
+
+def _build_batch_prompt(texts: list[str], context: CleanupContext, config: AppConfig) -> str:
+    mode = _cleanup_mode(config.transcript_cleanup_mode)
+    language = context.source_language or config.source_language or "auto"
+    previous = context.previous_text.strip()
+    previous_block = f"\nNgữ cảnh trước đó: {previous}" if previous else ""
+    items = "\n".join(f"{index + 1}. {text}" for index, text in enumerate(texts))
+    strength = (
+        "Sửa rất nhẹ: chỉ sửa lỗi nhận diện giọng nói rõ ràng, dấu câu, chính tả, thuật ngữ."
+        if mode == "light"
+        else "Sửa mạnh hơn nhưng không thêm ý mới: phục hồi câu bị vỡ nhẹ, chuẩn hóa dấu câu và thuật ngữ."
+    )
+    return (
+        "Bạn là bộ sửa lỗi transcript ASR.\n"
+        f"Ngôn ngữ nguồn: {language}\n"
+        f"{strength}\n"
+        "Quy tắc bắt buộc:\n"
+        "- Chỉ trả về JSON array các chuỗi đã sửa, đúng số lượng và đúng thứ tự.\n"
+        "- Không giải thích, không markdown, không dịch sang ngôn ngữ khác.\n"
+        "- Không thêm thông tin không có trong câu gốc.\n"
+        "- Nếu câu quá nhiễu hoặc không chắc, giữ gần giống câu gốc nhất.\n"
+        f"{previous_block}\n"
+        "Transcript thô:\n"
+        f"{items}\n"
+        "JSON array:"
     )
 
 
@@ -190,6 +270,15 @@ def _call_local_transformers(prompt: str, model_path: Path, config: AppConfig) -
     tokenizer, model = cached
     import torch
 
+    if hasattr(tokenizer, "apply_chat_template"):
+        try:
+            prompt = tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        except Exception:
+            pass
     encoded = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1800)
     encoded = {name: value.to(model.device) for name, value in encoded.items()}
     with torch.no_grad():
@@ -205,11 +294,66 @@ def _call_local_transformers(prompt: str, model_path: Path, config: AppConfig) -
 
 def _sanitize_llm_output(text: str) -> str:
     value = str(text or "").strip()
+    value = re.sub(r"^```(?:json|text)?\s*", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"\s*```$", "", value)
     value = re.sub(r"^Transcript đã sửa:\s*", "", value, flags=re.IGNORECASE)
     value = re.sub(r"^Transcript da sua:\s*", "", value, flags=re.IGNORECASE)
     value = re.sub(r"^Corrected transcript:\s*", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"^(?:Giải thích|Giai thich|Explanation)\s*:\s*.*?(?:\n|$)", "", value, flags=re.IGNORECASE)
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    if len(lines) > 1:
+        label_pattern = re.compile(r"^(?:transcript|corrected|kết quả|ket qua)\s*[:：]\s*(.+)$", re.IGNORECASE)
+        for line in lines:
+            match = label_pattern.match(line)
+            if match:
+                value = match.group(1)
+                break
+        else:
+            value = lines[0]
     value = value.strip().strip('"').strip()
     return " ".join(value.split())
+
+
+def _safe_cleanup_output(original: str, candidate: str) -> str:
+    cleaned = _sanitize_llm_output(candidate)
+    if not cleaned:
+        return original
+    if _looks_unsafe_cleanup(original, cleaned):
+        return original
+    return cleaned
+
+
+def _looks_unsafe_cleanup(original: str, cleaned: str) -> bool:
+    original_text = " ".join(str(original or "").split())
+    cleaned_text = " ".join(str(cleaned or "").split())
+    if not original_text or not cleaned_text:
+        return False
+    max_length = max(len(original_text) + _MAX_CLEANUP_EXTRA_CHARS, int(len(original_text) * _MAX_CLEANUP_LENGTH_RATIO))
+    if len(cleaned_text) > max_length:
+        return True
+    lower = cleaned_text.casefold()
+    unsafe_prefixes = (
+        "giải thích:",
+        "giai thich:",
+        "explanation:",
+        "i corrected",
+        "here is",
+        "dưới đây",
+    )
+    return lower.startswith(unsafe_prefixes)
+
+
+def _parse_cleanup_batch_output(text: str) -> list[str]:
+    value = str(text or "").strip()
+    value = re.sub(r"^```(?:json)?\s*", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"\s*```$", "", value)
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise TranscriptCleanupError("Cleanup batch did not return valid JSON.") from exc
+    if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
+        raise TranscriptCleanupError("Cleanup batch JSON must be an array of strings.")
+    return [_sanitize_llm_output(item) for item in data]
 
 
 def _cleanup_mode(value: object) -> str:

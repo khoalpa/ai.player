@@ -16,8 +16,10 @@ from ai_player.core.gpu import ctranslate2_cuda_available, cuda_runtime_files_av
 from ai_player.core.offline_env import OfflineEnvironmentToken, pop_hf_offline_environment, push_hf_offline_environment
 from ai_player.core.performance import measure_stage
 from ai_player.services.audio_matcher import extract_audio_range, match_tts_to_reference
+from ai_player.services.audio_timeline import schedule_timeline_start
 from ai_player.services.document_reader import DocumentPage
 from ai_player.services.ffmpeg import (
+    ProcessCancelled,
     concat_escape,
     concat_file_line,
     probe_duration_seconds,
@@ -37,8 +39,14 @@ from ai_player.services.speaker_voice_selector import VoiceGenderSelector
 from ai_player.services.transcript_cleanup import TranscriptCleaner
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
 from ai_player.services.tts import create_tts_provider, normalize_tts_provider
-from ai_player.services.whisper_runtime import SharedWhisperModel, get_shared_whisper_model
-from ai_player.services.whisper_runtime import effective_whisper_compute_type as shared_whisper_compute_type
+from ai_player.services.whisper_runtime import (
+    SharedWhisperModel,
+    get_shared_whisper_model,
+    whisper_transcribe_kwargs,
+)
+from ai_player.services.whisper_runtime import (
+    effective_whisper_compute_type as shared_whisper_compute_type,
+)
 from ai_player.workers.dubbing_worker import _load_transcript_entries
 
 
@@ -68,11 +76,45 @@ class VideoQualitySettings:
     copy_source_video: bool = False
 
 
+@dataclass(frozen=True)
+class ExportRange:
+    start_seconds: float = 0.0
+    end_seconds: float | None = None
+
+    def __post_init__(self) -> None:
+        start = max(0.0, float(self.start_seconds or 0.0))
+        end = None if self.end_seconds is None else max(start, float(self.end_seconds))
+        object.__setattr__(self, "start_seconds", start)
+        object.__setattr__(self, "end_seconds", end)
+
+    @property
+    def active(self) -> bool:
+        return self.start_seconds > 0.0 or self.end_seconds is not None
+
+    @property
+    def duration_seconds(self) -> float | None:
+        if self.end_seconds is None:
+            return None
+        return max(0.0, self.end_seconds - self.start_seconds)
+
+    def overlaps(self, start_seconds: float, end_seconds: float) -> bool:
+        cue_start = max(0.0, float(start_seconds))
+        cue_end = max(cue_start, float(end_seconds))
+        range_end = self.end_seconds
+        if range_end is not None and cue_start >= range_end:
+            return False
+        return cue_end > self.start_seconds
+
+    def shift(self, start_seconds: float) -> float:
+        return max(0.0, float(start_seconds) - self.start_seconds)
+
+
 class DubbingExportWorker(QThread):
     progress_changed = Signal(str)
     progress_percent = Signal(int)
     segment_ready = Signal(str, str)
     export_finished = Signal(str)
+    partial_finished = Signal(str)
     failed = Signal(str)
 
     def __init__(
@@ -81,6 +123,7 @@ class DubbingExportWorker(QThread):
         output_path: str,
         export_kind: str,
         config: AppConfig,
+        export_range: ExportRange | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -88,7 +131,9 @@ class DubbingExportWorker(QThread):
         self._output_path = Path(output_path)
         self._export_kind = export_kind
         self._config = config
+        self._export_range = export_range or ExportRange()
         self._stop_requested = False
+        self._keep_partial_requested = False
         self._temp_dir: Path | None = None
         self._tts_provider = None
         self._translator = None
@@ -98,8 +143,13 @@ class DubbingExportWorker(QThread):
         self._whisper_device = _effective_whisper_device(config.whisper_device)
         self._whisper_compute_type = shared_whisper_compute_type(config.whisper_compute_type, self._whisper_device)
 
-    def stop(self) -> None:
+    def stop(self, keep_partial: bool = False) -> None:
+        if keep_partial:
+            self._keep_partial_requested = True
         self._stop_requested = True
+
+    def _should_abort(self) -> bool:
+        return self._stop_requested and not self._keep_partial_requested
 
     def _set_progress(self, value: int) -> None:
         self.progress_percent.emit(max(0, min(100, int(value))))
@@ -138,22 +188,27 @@ class DubbingExportWorker(QThread):
                 self.progress_changed.emit("\u0110ang t\u00e1ch audio ngu\u1ed3n...")
                 self._set_progress(10)
                 source_audio = self._temp_dir / "source.wav"
-                self._extract_full_audio(source_audio)
+                self._extract_source_audio(source_audio)
                 self._set_progress(18)
 
                 self.progress_changed.emit("\u0110ang nh\u1eadn di\u1ec7n v\u00e0 d\u1ecbch l\u1eddi tho\u1ea1i...")
                 self._set_progress(22)
                 cues = self._build_cues(source_audio)
-            if self._stop_requested:
+            if self._should_abort():
                 return
             if not cues:
                 raise RuntimeError("Kh\u00f4ng t\u00ecm th\u1ea5y l\u1eddi tho\u1ea1i \u0111\u1ec3 export.")
+            if self._keep_partial_requested:
+                self._finalize_partial(cues)
+                return
 
             self.progress_changed.emit("\u0110ang gh\u00e9p audio l\u1ed3ng ti\u1ebfng Vi\u1ec7t...")
             self._set_progress(76)
             dubbed_audio = self._temp_dir / "dubbed_vi.wav"
             self._build_aligned_audio(cues, dubbed_audio)
             self._set_progress(88)
+            if self._should_abort():
+                return
 
             if self._export_kind == "audio":
                 self._set_progress(92)
@@ -161,7 +216,12 @@ class DubbingExportWorker(QThread):
             elif self._export_kind == "video":
                 self.progress_changed.emit("\u0110ang xu\u1ea5t video MP4...")
                 self._set_progress(90)
-                self._mux_video(dubbed_audio)
+                try:
+                    self._mux_video(dubbed_audio, cancel_strategy="quit")
+                except ProcessCancelled:
+                    if self._keep_partial_requested and self._output_path.exists():
+                        self.partial_finished.emit(str(self._output_path))
+                    return
             else:
                 raise RuntimeError(f"Ki\u1ec3u export kh\u00f4ng h\u1ee3p l\u1ec7: {self._export_kind}")
             self._set_progress(100)
@@ -199,15 +259,27 @@ class DubbingExportWorker(QThread):
 
         entries = _load_transcript_entries(self._config.transcript_path, self._config.segment_seconds)
         tts_suffix = "wav" if normalize_tts_provider(self._config.tts_provider) == "vieneu" else "mp3"
-        items = []
-
+        raw_items = []
         for index, entry in enumerate(entries):
-            if self._stop_requested:
+            if self._should_abort():
                 break
-            original = self._transcript_cleaner.clean(entry.text.strip(), self._selected_whisper_language())
+            entry_end = entry.end or entry.start + self._config.segment_seconds
+            if not self._export_range.overlaps(entry.start, entry_end):
+                continue
+            original = " ".join(str(entry.text or "").split())
             if not original:
                 continue
-            items.append((index, entry, original))
+            raw_items.append((index, entry, original))
+        cleaned_items = _clean_transcript_many(
+            self._transcript_cleaner,
+            [item[2] for item in raw_items],
+            self._selected_whisper_language(),
+        )
+        items = [
+            (index, entry, original)
+            for (index, entry, _raw), original in zip(raw_items, cleaned_items, strict=False)
+            if original
+        ]
         if not items:
             return []
 
@@ -256,7 +328,7 @@ class DubbingExportWorker(QThread):
             duration = max(0.25, (entry.end or entry.start + self._config.segment_seconds) - entry.start)
             self._make_silence(duration, wav_path)
             return ExportCue(
-                start_seconds=max(0.0, float(entry.start)),
+                start_seconds=self._export_range.shift(float(entry.start)),
                 original=original,
                 translated=translated,
                 audio_path=wav_path,
@@ -269,27 +341,22 @@ class DubbingExportWorker(QThread):
             self._to_wav(self._trim_leading_silence(tts_path), wav_path)
             duration = _probe_duration_seconds(wav_path)
         return ExportCue(
-            start_seconds=max(0.0, float(entry.start)),
+            start_seconds=self._export_range.shift(float(entry.start)),
             original=original,
             translated=translated,
             audio_path=wav_path,
             duration_seconds=duration,
         )
 
-    def _extract_full_audio(self, output_path: Path) -> None:
-        self._run_ffmpeg(
-            [
-                "-i",
-                self._video_path,
-                "-vn",
-                "-ac",
-                "1",
-                "-ar",
-                "16000",
-                "-y",
-                str(output_path),
-            ]
-        )
+    def _extract_source_audio(self, output_path: Path) -> None:
+        args: list[object] = []
+        if self._export_range.start_seconds > 0.0:
+            args.extend(["-ss", _format_seconds_arg(self._export_range.start_seconds)])
+        args.extend(["-i", self._video_path])
+        if self._export_range.duration_seconds is not None:
+            args.extend(["-t", _format_seconds_arg(self._export_range.duration_seconds)])
+        args.extend(["-vn", "-ac", "1", "-ar", "16000", "-y", str(output_path)])
+        self._run_ffmpeg(args)
 
     def _build_cues(self, source_audio: Path) -> list[ExportCue]:
         if self._temp_dir is None:
@@ -300,18 +367,27 @@ class DubbingExportWorker(QThread):
             segments = list(segments)
         self._set_progress(34)
         tts_suffix = "wav" if normalize_tts_provider(self._config.tts_provider) == "vieneu" else "mp3"
-        items = []
-
+        raw_items = []
         for index, segment in enumerate(segments):
-            if self._stop_requested:
+            if self._should_abort():
                 break
-            original = self._transcript_cleaner.clean((segment.text or "").strip(), getattr(info, "language", None))
+            original = " ".join(str(segment.text or "").split())
             if not original:
                 continue
             start_seconds = max(0.0, float(segment.start or 0.0))
             end_seconds = max(start_seconds + 0.25, float(segment.end or start_seconds + 0.25))
             duration_seconds = max(0.25, end_seconds - start_seconds)
-            items.append((index, original, start_seconds, duration_seconds))
+            raw_items.append((index, original, start_seconds, duration_seconds))
+        cleaned_items = _clean_transcript_many(
+            self._transcript_cleaner,
+            [item[1] for item in raw_items],
+            getattr(info, "language", None),
+        )
+        items = [
+            (index, original, start_seconds, duration_seconds)
+            for (index, _raw, start_seconds, duration_seconds), original in zip(raw_items, cleaned_items, strict=False)
+            if original
+        ]
         if not items:
             return []
 
@@ -451,79 +527,50 @@ class DubbingExportWorker(QThread):
 
     def _transcribe_with_fallback(self, source_audio: Path):
         model = self._load_whisper_model()
+        kwargs = whisper_transcribe_kwargs(self._config, self._selected_whisper_language())
         try:
-            return model.transcribe(
-                str(source_audio),
-                beam_size=1,
-                vad_filter=True,
-                language=self._selected_whisper_language(),
-            )
+            return model.transcribe(str(source_audio), **kwargs)
         except Exception as exc:
             if self._whisper_device == "cpu" and self._whisper_compute_type != "int8":
                 self.progress_changed.emit("Whisper CPU không hỗ trợ compute hiện tại, chuyển sang int8...")
                 model = self._switch_whisper_to_cpu(exc)
-                return model.transcribe(
-                    str(source_audio),
-                    beam_size=1,
-                    vad_filter=True,
-                    language=self._selected_whisper_language(),
-                )
+                return model.transcribe(str(source_audio), **kwargs)
             if self._whisper_device == "cpu":
                 raise
             self.progress_changed.emit("Whisper lỗi CUDA/CUBLAS, chuyển sang CPU...")
             model = self._switch_whisper_to_cpu(exc)
-            return model.transcribe(
-                str(source_audio),
-                beam_size=1,
-                vad_filter=True,
-                language=self._selected_whisper_language(),
-            )
+            return model.transcribe(str(source_audio), **kwargs)
 
     def _build_aligned_audio(self, cues: list[ExportCue], output_path: Path) -> None:
         if self._temp_dir is None:
             return
 
-        parts: list[Path] = []
-        cursor = 0.0
+        timeline_inputs: list[tuple[Path, float]] = []
+        scheduled_until = 0.0
         for index, cue in enumerate(sorted(cues, key=lambda item: item.start_seconds)):
-            if self._stop_requested:
+            if self._should_abort():
                 return
             self._set_range_progress(76, 88, index, len(cues))
 
-            gap = max(0.0, cue.start_seconds - cursor)
-            if gap >= 0.02:
-                silence_path = self._temp_dir / f"silence-{index:05d}.wav"
-                self._make_silence(gap, silence_path)
-                parts.append(silence_path)
-
             wav_path = self._temp_dir / f"cue-{index:05d}-pcm.wav"
             self._to_wav(cue.audio_path, wav_path)
-            parts.append(wav_path)
-            duration = self._duration_seconds(wav_path) or cue.duration_seconds or 0.25
-            cursor = max(cue.start_seconds, cursor) + duration
+            duration = cue.duration_seconds or self._duration_seconds(wav_path) or 0.25
+            scheduled_start, scheduled_until = schedule_timeline_start(
+                source_start_seconds=cue.start_seconds,
+                duration_seconds=duration,
+                scheduled_until_seconds=scheduled_until,
+                policy=self._config.dubbing_overlap_policy,
+                force_avoid_overlap=self._config.audio_source == "document_editor",
+            )
+            timeline_inputs.append((wav_path, scheduled_start))
 
-        concat_file = self._temp_dir / "concat.txt"
-        concat_file.write_text(
-            "".join(concat_file_line(path) for path in parts),
-            encoding="utf-8",
-        )
+        if not timeline_inputs:
+            self._make_silence(1.0, output_path)
+            return
+
         self._run_ffmpeg(
-            [
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                str(concat_file),
-                "-c:a",
-                "pcm_s16le",
-                "-ar",
-                "44100",
-                "-ac",
-                "2",
-                "-y",
-                str(output_path),
-            ]
+            _timeline_mix_args(timeline_inputs, output_path),
+            respect_stop=not self._keep_partial_requested,
         )
 
     def _make_silence(self, duration_seconds: float, output_path: Path) -> None:
@@ -539,7 +586,8 @@ class DubbingExportWorker(QThread):
                 "pcm_s16le",
                 "-y",
                 output_path,
-            ]
+            ],
+            respect_stop=not self._keep_partial_requested,
         )
 
     def _to_wav(self, input_path: Path, output_path: Path) -> None:
@@ -555,7 +603,8 @@ class DubbingExportWorker(QThread):
                 "pcm_s16le",
                 "-y",
                 output_path,
-            ]
+            ],
+            respect_stop=not self._keep_partial_requested,
         )
 
     def _trim_leading_silence(self, audio_path: Path) -> Path:
@@ -571,6 +620,7 @@ class DubbingExportWorker(QThread):
                     trimmed_path,
                 ],
                 check=False,
+                respect_stop=not self._keep_partial_requested,
             )
         except Exception:
             return audio_path
@@ -582,18 +632,25 @@ class DubbingExportWorker(QThread):
     def _duration_seconds(path: Path) -> float:
         return _probe_duration_seconds(path)
 
-    def _mux_video(self, dubbed_audio: Path) -> None:
+    def _mux_video(
+        self,
+        dubbed_audio: Path,
+        *,
+        output_path: Path | None = None,
+        duration_seconds: float | None = None,
+        cancel_strategy: str = "terminate",
+        respect_stop: bool = True,
+    ) -> None:
         quality = _video_quality_settings(self._config.export_video_quality)
-        command = [
-            "-i",
-            self._video_path,
-            "-i",
-            str(dubbed_audio),
-            "-map",
-            "0:v:0",
-            "-map",
-            "1:a:0",
-        ]
+        target_path = output_path or self._output_path
+        command: list[object] = []
+        if self._export_range.start_seconds > 0.0:
+            command.extend(["-ss", _format_seconds_arg(self._export_range.start_seconds)])
+        command.extend(["-i", self._video_path, "-i", str(dubbed_audio)])
+        mux_duration = duration_seconds if duration_seconds is not None else self._export_range.duration_seconds
+        if mux_duration is not None:
+            command.extend(["-t", _format_seconds_arg(mux_duration)])
+        command.extend(["-map", "0:v:0", "-map", "1:a:0"])
         if quality.copy_source_video:
             command.extend(["-c:v", "copy"])
         else:
@@ -619,15 +676,34 @@ class DubbingExportWorker(QThread):
                 "+faststart",
                 "-shortest",
                 "-y",
-                str(self._output_path),
+                str(target_path),
             ]
         )
-        self._run_ffmpeg(command)
+        self._run_ffmpeg(command, cancel_strategy=cancel_strategy, respect_stop=respect_stop)
 
-    def _run_ffmpeg(self, args: list[object], **kwargs) -> None:
-        if self._stop_requested:
+    def _finalize_partial(self, cues: list[ExportCue]) -> None:
+        if self._temp_dir is None or not cues:
+            return
+        last_second = _cues_end_seconds(cues)
+        if last_second <= 0.0:
+            return
+        self.progress_changed.emit("Đang ghi phần video đã xuất...")
+        self._set_progress(90)
+        dubbed_audio = self._temp_dir / "dubbed_vi_partial.wav"
+        self._build_aligned_audio(cues, dubbed_audio)
+        if self._export_kind == "audio":
+            shutil.copyfile(dubbed_audio, self._output_path)
+        elif self._export_kind == "video":
+            self._mux_video(dubbed_audio, duration_seconds=last_second, respect_stop=False)
+        else:
+            return
+        self.partial_finished.emit(str(self._output_path))
+
+    def _run_ffmpeg(self, args: list[object], *, respect_stop: bool = True, **kwargs) -> None:
+        if respect_stop and self._stop_requested:
             raise RuntimeError("Export cancelled")
-        run_ffmpeg_cancelable(args, cancel_callback=self._is_stop_requested, **kwargs)
+        cancel_callback = self._is_stop_requested if respect_stop else (lambda: False)
+        run_ffmpeg_cancelable(args, cancel_callback=cancel_callback, **kwargs)
 
     def _is_stop_requested(self) -> bool:
         return self._stop_requested
@@ -638,6 +714,7 @@ class DocumentReviewExportWorker(QThread):
     progress_percent = Signal(int)
     segment_ready = Signal(str, str)
     export_finished = Signal(str)
+    partial_finished = Signal(str)
     failed = Signal(str)
 
     def __init__(
@@ -654,14 +731,20 @@ class DocumentReviewExportWorker(QThread):
         self._output_path = Path(output_path)
         self._config = config
         self._stop_requested = False
+        self._keep_partial_requested = False
         self._temp_dir: Path | None = None
         self._tts_provider = None
         self._translator = None
         self._transcript_cleaner = TranscriptCleaner(self._config)
         self._tts_lock = threading.Lock()
 
-    def stop(self) -> None:
+    def stop(self, keep_partial: bool = False) -> None:
+        if keep_partial:
+            self._keep_partial_requested = True
         self._stop_requested = True
+
+    def _should_abort(self) -> bool:
+        return self._stop_requested and not getattr(self, "_keep_partial_requested", False)
 
     def _set_progress(self, value: int) -> None:
         self.progress_percent.emit(max(0, min(100, int(value))))
@@ -699,7 +782,10 @@ class DocumentReviewExportWorker(QThread):
             self.progress_changed.emit("Đang dịch và tạo giọng đọc chất lượng cao...")
             self._set_progress(18)
             audio_cues = self._build_audio_cues(transcript_cues)
-            if self._stop_requested:
+            if self._should_abort():
+                return
+            if self._keep_partial_requested:
+                self._finalize_partial(audio_cues)
                 return
 
             dubbed_audio = self._temp_dir / "document-dubbed.wav"
@@ -707,6 +793,8 @@ class DocumentReviewExportWorker(QThread):
             self._set_progress(76)
             self._build_aligned_audio(audio_cues, dubbed_audio)
             self._set_progress(84)
+            if self._should_abort():
+                return
             audio_duration = _duration_seconds(dubbed_audio)
 
             self.progress_changed.emit("Đang dừng video tài liệu để xem lại...")
@@ -716,7 +804,12 @@ class DocumentReviewExportWorker(QThread):
 
             self.progress_changed.emit("Đang xuất MP4 chất lượng cao...")
             self._set_progress(92)
-            self._mux_document_video(review_video, dubbed_audio)
+            try:
+                self._mux_document_video(review_video, dubbed_audio, cancel_strategy="quit")
+            except ProcessCancelled:
+                if self._keep_partial_requested and self._output_path.exists():
+                    self.partial_finished.emit(str(self._output_path))
+                return
             self._set_progress(100)
             self.export_finished.emit(str(self._output_path))
         except Exception as exc:
@@ -743,7 +836,7 @@ class DocumentReviewExportWorker(QThread):
         tts_suffix = "wav" if normalize_tts_provider(self._config.tts_provider) == "vieneu" else "mp3"
         items = []
         for index, cue in enumerate(transcript_cues):
-            if self._stop_requested:
+            if self._should_abort():
                 break
             original = self._transcript_cleaner.clean(cue.text.strip(), self._selected_source_language())
             if not original:
@@ -776,6 +869,8 @@ class DocumentReviewExportWorker(QThread):
                 )
             total_cues = max(1, len(futures))
             for completed, future in enumerate(as_completed(futures)):
+                if self._stop_requested:
+                    break
                 cue = future.result()
                 cues.append(cue)
                 self._set_range_progress(18, 74, completed, total_cues)
@@ -820,50 +915,38 @@ class DocumentReviewExportWorker(QThread):
     def _build_aligned_audio(self, cues: list[ExportCue], output_path: Path) -> None:
         if self._temp_dir is None:
             return
-        parts: list[Path] = []
-        cursor = 0.0
+        timeline_inputs: list[tuple[Path, float]] = []
+        scheduled_until = 0.0
         for index, cue in enumerate(sorted(cues, key=lambda item: item.start_seconds)):
-            if self._stop_requested:
+            if self._should_abort():
                 return
             self._set_range_progress(76, 84, index, len(cues))
-            gap = max(0.0, cue.start_seconds - cursor)
-            if gap >= 0.02:
-                silence_path = self._temp_dir / f"document-silence-{index:05d}.wav"
-                self._make_silence(gap, silence_path)
-                parts.append(silence_path)
-            parts.append(cue.audio_path)
-            duration = _duration_seconds(cue.audio_path) or cue.duration_seconds or 0.25
-            cursor = max(cue.start_seconds, cursor) + duration
+            duration = cue.duration_seconds or _duration_seconds(cue.audio_path) or 0.25
+            scheduled_start, scheduled_until = schedule_timeline_start(
+                source_start_seconds=cue.start_seconds,
+                duration_seconds=duration,
+                scheduled_until_seconds=scheduled_until,
+                policy=self._config.dubbing_overlap_policy,
+                force_avoid_overlap=False,
+            )
+            timeline_inputs.append((cue.audio_path, scheduled_start))
 
-        if not parts:
+        if not timeline_inputs:
             self._make_silence(1.0, output_path)
             return
 
-        concat_file = self._temp_dir / "document-audio-concat.txt"
-        concat_file.write_text(
-            "".join(concat_file_line(path) for path in parts),
-            encoding="utf-8",
-        )
         self._run_ffmpeg(
-            [
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                str(concat_file),
-                "-c:a",
-                "pcm_s16le",
-                "-ar",
-                "48000",
-                "-ac",
-                "2",
-                "-y",
-                str(output_path),
-            ]
+            _timeline_mix_args(timeline_inputs, output_path, sample_rate=48000),
+            respect_stop=not self._keep_partial_requested,
         )
 
-    def _build_document_video(self, output_path: Path, audio_duration_seconds: float) -> None:
+    def _build_document_video(
+        self,
+        output_path: Path,
+        audio_duration_seconds: float,
+        *,
+        respect_stop: bool = True,
+    ) -> None:
         if self._temp_dir is None:
             return
         quality = _video_quality_settings(self._config.export_video_quality)
@@ -900,7 +983,8 @@ class DocumentReviewExportWorker(QThread):
                 str(quality.crf),
                 "-y",
                 str(output_path),
-            ]
+            ],
+            respect_stop=respect_stop,
         )
 
     def _page_image(self, page: DocumentPage, index: int) -> Path:
@@ -916,7 +1000,14 @@ class DocumentReviewExportWorker(QThread):
             self._temp_dir / f"document-page-{index:04d}.png",
         )
 
-    def _mux_document_video(self, video_path: Path, audio_path: Path) -> None:
+    def _mux_document_video(
+        self,
+        video_path: Path,
+        audio_path: Path,
+        *,
+        cancel_strategy: str = "terminate",
+        respect_stop: bool = True,
+    ) -> None:
         quality = _video_quality_settings(self._config.export_video_quality)
         self._run_ffmpeg(
             [
@@ -938,8 +1029,23 @@ class DocumentReviewExportWorker(QThread):
                 "+faststart",
                 "-y",
                 str(self._output_path),
-            ]
+            ],
+            cancel_strategy=cancel_strategy,
+            respect_stop=respect_stop,
         )
+
+    def _finalize_partial(self, cues: list[ExportCue]) -> None:
+        if self._temp_dir is None or not cues:
+            return
+        self.progress_changed.emit("Đang ghi phần video đã xuất...")
+        self._set_progress(90)
+        dubbed_audio = self._temp_dir / "document-dubbed-partial.wav"
+        self._build_aligned_audio(cues, dubbed_audio)
+        audio_duration = _duration_seconds(dubbed_audio)
+        review_video = self._temp_dir / "document-pages-partial.mp4"
+        self._build_document_video(review_video, audio_duration, respect_stop=False)
+        self._mux_document_video(review_video, dubbed_audio, respect_stop=False)
+        self.partial_finished.emit(str(self._output_path))
 
     def _make_silence(self, duration_seconds: float, output_path: Path) -> None:
         self._run_ffmpeg(
@@ -954,7 +1060,8 @@ class DocumentReviewExportWorker(QThread):
                 "pcm_s16le",
                 "-y",
                 output_path,
-            ]
+            ],
+            respect_stop=not self._keep_partial_requested,
         )
 
     def _to_wav(self, input_path: Path, output_path: Path) -> None:
@@ -970,7 +1077,8 @@ class DocumentReviewExportWorker(QThread):
                 "pcm_s16le",
                 "-y",
                 output_path,
-            ]
+            ],
+            respect_stop=not self._keep_partial_requested,
         )
 
     def _trim_leading_silence(self, audio_path: Path) -> Path:
@@ -986,6 +1094,7 @@ class DocumentReviewExportWorker(QThread):
                     trimmed_path,
                 ],
                 check=False,
+                respect_stop=not self._keep_partial_requested,
             )
         except Exception:
             return audio_path
@@ -993,10 +1102,11 @@ class DocumentReviewExportWorker(QThread):
             return trimmed_path
         return audio_path
 
-    def _run_ffmpeg(self, args: list[object], **kwargs) -> None:
-        if self._stop_requested:
+    def _run_ffmpeg(self, args: list[object], *, respect_stop: bool = True, **kwargs) -> None:
+        if respect_stop and self._stop_requested:
             raise RuntimeError("Export cancelled")
-        run_ffmpeg_cancelable(args, cancel_callback=self._is_stop_requested, **kwargs)
+        cancel_callback = self._is_stop_requested if respect_stop else (lambda: False)
+        run_ffmpeg_cancelable(args, cancel_callback=cancel_callback, **kwargs)
 
     def _is_stop_requested(self) -> bool:
         return self._stop_requested
@@ -1068,6 +1178,61 @@ def _parse_srt_time(value: str) -> float:
         return 0.0
     hours, minutes, seconds, millis = match.groups()
     return int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int((millis or "0").ljust(3, "0")[:3]) / 1000.0
+
+
+def _format_seconds_arg(value: float) -> str:
+    return f"{max(0.0, float(value)):.3f}"
+
+
+def _cues_end_seconds(cues: list[ExportCue]) -> float:
+    if not cues:
+        return 0.0
+    return max(cue.start_seconds + max(0.0, cue.duration_seconds or 0.0) for cue in cues)
+
+
+def _timeline_mix_args(
+    audio_inputs: list[tuple[Path, float]],
+    output_path: Path,
+    *,
+    sample_rate: int = 44100,
+    channels: int = 2,
+) -> list[object]:
+    args: list[object] = []
+    filter_parts: list[str] = []
+    labels: list[str] = []
+    channel_layout = "mono" if int(channels) == 1 else "stereo"
+    for index, (path, start_seconds) in enumerate(audio_inputs):
+        args.extend(["-i", path])
+        delay_ms = max(0, int(round(float(start_seconds or 0.0) * 1000)))
+        label = f"a{index}"
+        filter_parts.append(
+            f"[{index}:a]aformat=sample_rates={int(sample_rate)}:channel_layouts={channel_layout},"
+            f"adelay={delay_ms}:all=1[{label}]"
+        )
+        labels.append(f"[{label}]")
+
+    filter_parts.append(
+        "".join(labels)
+        + f"amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,"
+        "alimiter=limit=0.98[mix]"
+    )
+    args.extend(
+        [
+            "-filter_complex",
+            ";".join(filter_parts),
+            "-map",
+            "[mix]",
+            "-c:a",
+            "pcm_s16le",
+            "-ar",
+            str(int(sample_rate)),
+            "-ac",
+            str(int(channels)),
+            "-y",
+            output_path,
+        ]
+    )
+    return args
 
 
 def _make_silence(duration_seconds: float, output_path: Path) -> None:
@@ -1152,6 +1317,16 @@ def _wrap_text(text: str, font, max_width: int, draw) -> list[str]:
 
 def _clean_message(value: object) -> str:
     return str(value or "").encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+
+
+def _clean_transcript_many(cleaner, texts: list[str], source_language: str | None) -> list[str]:
+    clean_many = getattr(cleaner, "clean_many", None)
+    if callable(clean_many):
+        return list(clean_many(texts, source_language))
+    clean_one = getattr(cleaner, "clean", None)
+    if callable(clean_one):
+        return [clean_one(text, source_language) for text in texts]
+    return texts
 
 
 def _tts_disabled(config: AppConfig) -> bool:

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from ai_player.core.config import AppConfig
 from ai_player.ui import player_window_utils as utils
 
@@ -36,3 +39,37 @@ def test_safe_native_dubbing_config_keeps_cuda_when_runtime_is_ready(monkeypatch
     config = AppConfig(local_translation_device="cuda", whisper_device="cuda", vieneu_tts_device="cuda")
 
     assert utils.safe_native_dubbing_config(config) == config
+
+
+def test_gui_language_packs_have_matching_keys() -> None:
+    root = Path("ai_player/resources/languages")
+    vi = json.loads((root / "vietnamese/language.json").read_text(encoding="utf-8-sig"))["strings"]
+    en = json.loads((root / "english/language.json").read_text(encoding="utf-8-sig"))["strings"]
+
+    assert set(vi) == set(en)
+
+
+def test_dropdown_language_packs_have_matching_values() -> None:
+    root = Path("ai_player/resources/languages")
+    vi_files = {path.name for path in (root / "vietnamese").glob("*.json")}
+    en_files = {path.name for path in (root / "english").glob("*.json")}
+
+    ignored = {"language.json", "aliases.json"}
+    assert vi_files - ignored == en_files - ignored
+
+    for name in sorted(vi_files - ignored):
+        vi_values = _dropdown_values(root / "vietnamese" / name)
+        en_values = _dropdown_values(root / "english" / name)
+        assert vi_values == en_values, name
+
+
+def _dropdown_values(path: Path) -> list[str]:
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    options = data.get("options", data) if isinstance(data, dict) else data
+    values = []
+    for item in options:
+        if isinstance(item, dict):
+            values.append(str(item.get("value") or item.get("id") or item.get("code")))
+        else:
+            values.append(str(item))
+    return values

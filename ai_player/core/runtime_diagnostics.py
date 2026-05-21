@@ -104,9 +104,7 @@ MODEL_REQUIREMENTS = {
             Path(INTERNAL_VIENEU_STANDARD_GGUF).name,
             "voices.json",
             str(
-                Path(INTERNAL_VIENEU_STANDARD_CODEC).relative_to(
-                    MODEL_ROOT / "tts" / "vieneu" / "standard"
-                )
+                Path(INTERNAL_VIENEU_STANDARD_CODEC).relative_to(MODEL_ROOT / "tts" / "vieneu" / "standard")
                 / "pytorch_model.bin"
             ),
         ),

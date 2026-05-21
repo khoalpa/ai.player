@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ai_player.core.config import (
+    ASR_MODELS_PATH,
     CONFIG_DIR,
     OCR_MODELS_PATH,
     PROJECT_ROOT,
     TRANSCRIPT_CLEANUP_MODELS_PATH,
-    TRANSLATION_MODELS_PATH,
 )
 
 
@@ -79,6 +79,11 @@ DEFAULT_SOURCE_LANGUAGE_CODES = (
     "vi",
 )
 DEFAULT_TARGET_LANGUAGE_CODES = tuple(code for code in DEFAULT_SOURCE_LANGUAGE_CODES if code != "auto")
+DEFAULT_TRANSLATION_PROVIDERS = (
+    ("NLLB CTranslate2", "nllb_ct2"),
+    ("NLLB Local", "nllb"),
+    ("No translation", "none"),
+)
 LANGUAGE_PACKS_DIR = PROJECT_ROOT / "ai_player" / "resources" / "languages"
 LANGUAGE_PACK_FALLBACKS = ("vi", "en", "vietnamese", "english")
 PRESET_PATH_SETTING_KEYS = {
@@ -89,6 +94,7 @@ PRESET_PATH_SETTING_KEYS = {
     "vieneu_tts_encoder_path",
     "vieneu_tts_model_name",
     "vieneu_tts_standard_codec_path",
+    "ocr_model",
     "whisper_model",
 }
 
@@ -103,12 +109,20 @@ def available_language_options(*, include_auto: bool, language_id: str | None = 
     if not include_auto:
         codes.discard("auto")
     codes.update(_scan_tessdata_languages())
-    codes.update(_scan_marian_languages(include_auto=include_auto))
     ordered = (("auto",) if include_auto else ()) + tuple(code for code in LANGUAGE_NAMES if code != "auto")
     options = [RuntimeOption(code, LANGUAGE_NAMES.get(code, code)) for code in ordered if code in codes]
     extra = sorted(code for code in codes if code not in {option.id for option in options})
     options.extend(RuntimeOption(code, code) for code in extra)
     return options
+
+
+def available_translation_provider_options(language_id: str | None = None) -> list[RuntimeOption]:
+    options = available_dropdown_options(
+        "translation_providers",
+        defaults=DEFAULT_TRANSLATION_PROVIDERS,
+        language_id=language_id,
+    )
+    return [RuntimeOption(option.value, option.label) for option in options]
 
 
 def available_dropdown_options(
@@ -473,6 +487,43 @@ def available_local_llm_options() -> list[RuntimeOption]:
     return options
 
 
+def available_asr_providers() -> list[RuntimeOption]:
+    return [RuntimeOption("faster_whisper", "Faster Whisper")]
+
+
+def available_asr_models() -> list[RuntimeOption]:
+    options: list[RuntimeOption] = []
+    seen: set[str] = set()
+    roots = [ASR_MODELS_PATH]
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in sorted(root.iterdir(), key=lambda item: item.name.lower()):
+            if path.is_dir() and _looks_like_whisper_model(path):
+                _append_model_option(options, seen, path, path.name)
+    return options
+
+
+def available_ocr_providers() -> list[RuntimeOption]:
+    return [RuntimeOption("tesseract", "Tesseract OCR")]
+
+
+def available_ocr_models() -> list[RuntimeOption]:
+    options: list[RuntimeOption] = []
+    seen: set[str] = set()
+    for path in _tessdata_candidates():
+        if not path.exists() or not path.is_dir():
+            continue
+        traineddata = sorted(item.stem for item in path.glob("*.traineddata") if item.stem != "osd")
+        if not traineddata:
+            continue
+        languages = ", ".join(TESSDATA_TO_LANGUAGE.get(code, code) for code in traineddata[:5])
+        suffix = f" ({languages})" if languages else ""
+        name = f"{path.name}{suffix}"
+        _append_model_option(options, seen, path, name)
+    return options
+
+
 def _append_model_option(options: list[RuntimeOption], seen: set[str], path: Path, name: str) -> None:
     model_id = str(path.resolve())
     if model_id in seen:
@@ -499,6 +550,21 @@ def _looks_like_tts_model(path: Path) -> bool:
     return "vieneu" in lowered or "tts" in lowered
 
 
+def _looks_like_whisper_model(path: Path) -> bool:
+    return (path / "config.json").exists() and (
+        (path / "model.bin").exists() or any(path.glob("*.bin")) or any(path.glob("*.safetensors"))
+    )
+
+
+def _tessdata_candidates() -> list[Path]:
+    return [
+        OCR_MODELS_PATH / "tessdata",
+        OCR_MODELS_PATH / "tessdata_best",
+        Path("C:/Program Files/Tesseract-OCR/tessdata"),
+        Path("C:/Program Files (x86)/Tesseract-OCR/tessdata"),
+    ]
+
+
 def _scan_tessdata_languages() -> set[str]:
     tessdata = OCR_MODELS_PATH / "tessdata"
     if not tessdata.exists():
@@ -506,18 +572,3 @@ def _scan_tessdata_languages() -> set[str]:
     return {
         TESSDATA_TO_LANGUAGE.get(path.stem, path.stem) for path in tessdata.glob("*.traineddata") if path.stem != "osd"
     }
-
-
-def _scan_marian_languages(*, include_auto: bool) -> set[str]:
-    root = TRANSLATION_MODELS_PATH / "marian"
-    if not root.exists():
-        return set()
-    codes: set[str] = set()
-    for path in root.iterdir():
-        if not path.is_dir() or "-" not in path.name:
-            continue
-        source, target = path.name.split("-", 1)
-        if include_auto:
-            codes.add(source)
-        codes.add(target)
-    return codes

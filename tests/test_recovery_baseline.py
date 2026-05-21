@@ -18,7 +18,7 @@ def test_app_config_defaults_are_constructible(monkeypatch) -> None:
 
     assert config.gui_language
     assert config.target_language
-    assert config.performance_preset == DEFAULT_PERFORMANCE_PRESET == "max_hardware"
+    assert config.performance_preset == DEFAULT_PERFORMANCE_PRESET == "balanced"
 
 
 def test_runtime_diagnostics_collects_required_sections() -> None:

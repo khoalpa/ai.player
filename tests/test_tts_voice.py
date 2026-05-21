@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from ai_player.core.config import AppConfig
 from ai_player.services import tts
 
 
@@ -32,3 +33,26 @@ def test_normalize_vieneu_device(value: str, expected: str) -> None:
 )
 def test_voice_gender(provider: str, voice: str, expected: str) -> None:
     assert tts.voice_gender(provider, voice) == expected
+
+
+def test_tts_cache_text_normalizes_unicode_and_format_chars() -> None:
+    assert tts._cache_text("Cafe\u0301\u200b") == "Caf\u00e9"
+
+
+def test_cached_tts_provider_reuses_cached_audio(monkeypatch, tmp_path) -> None:
+    calls: list[str] = []
+    cache_path = tmp_path / "cache.wav"
+
+    class FakeProvider(tts.BaseTTSProvider):
+        def synthesize(self, text, output_path, voice=None) -> None:
+            calls.append(str(text))
+            output_path.write_bytes(b"audio")
+
+    monkeypatch.setattr(tts, "_tts_cache_path", lambda *_args, **_kwargs: cache_path)
+    provider = tts.CachedTTSProvider(FakeProvider(), AppConfig(), "vieneu")
+
+    provider.synthesize("hello", tmp_path / "first.wav", voice="Doan")
+    provider.synthesize("hello", tmp_path / "second.wav", voice="Doan")
+
+    assert calls == ["hello"]
+    assert (tmp_path / "second.wav").read_bytes() == b"audio"

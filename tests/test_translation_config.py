@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,11 +13,10 @@ from ai_player.services import translation
     ("value", "expected"),
     [
         ("off", "none"),
-        ("offline auto", "auto"),
+        ("offline auto", "nllb_ct2"),
         ("ct2", "nllb_ct2"),
-        ("opus-mt", "marian"),
-        ("argos_translate", "argos"),
-        ("anything", "nllb"),
+        ("nllb", "nllb"),
+        ("anything", "nllb_ct2"),
     ],
 )
 def test_normalize_translator_provider_aliases(value: str, expected: str) -> None:
@@ -51,3 +51,54 @@ def test_ctranslate2_model_path_detection(tmp_path) -> None:
 
     assert translation.is_ctranslate2_model_path(model)
     assert translation._resolve_ctranslate2_model_path(Path("plain-nllb")).name.endswith("ct2-int8")
+
+
+def test_effective_translator_provider_uses_ct2_for_ct2_model(tmp_path) -> None:
+    model = tmp_path / "custom-ct2"
+    model.mkdir()
+    (model / "model.bin").write_text("", encoding="utf-8")
+    (model / "shared_vocabulary.json").write_text("{}", encoding="utf-8")
+
+    config = AppConfig(translator_provider="nllb", local_translation_model=str(model))
+
+    assert translation.effective_translator_provider(config) == "nllb_ct2"
+
+
+def test_ctranslate2_translator_preserves_empty_segments(monkeypatch) -> None:
+    class FakeTokenizer:
+        src_lang = ""
+
+        def __call__(self, text, **_kwargs):
+            return SimpleNamespace(input_ids=[[text]])
+
+        def convert_ids_to_tokens(self, ids):
+            return ids
+
+        def convert_tokens_to_ids(self, tokens):
+            return tokens
+
+        def decode(self, tokens, skip_special_tokens=True):
+            return " ".join(tokens)
+
+    class FakeTranslator:
+        def __init__(self) -> None:
+            self.batches = []
+
+        def translate_batch(self, source_tokens_batch, **_kwargs):
+            self.batches.append(source_tokens_batch)
+            return [
+                SimpleNamespace(hypotheses=[["vie_Latn", "Xin", "chao"]]),
+                SimpleNamespace(hypotheses=[["vie_Latn", "The", "gioi"]]),
+            ]
+
+    translator = translation.CTranslate2NllbTranslator(AppConfig())
+    fake_translator = FakeTranslator()
+
+    def fake_load_model() -> None:
+        translator._tokenizer = FakeTokenizer()
+        translator._translator = fake_translator
+
+    monkeypatch.setattr(translator, "_load_model", fake_load_model)
+
+    assert translator.translate_many(["Hello", "  ", "World"], "en") == ["Xin chao", "", "The gioi"]
+    assert fake_translator.batches == [[["Hello"], ["World"]]]

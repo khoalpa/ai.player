@@ -20,6 +20,7 @@ class PlayerLifecycleMixin:
         stopped = self._stop_worker_attr("_source_filter_worker", wait_ms=5000) and stopped
         stopped = self._stop_worker_attr("_playback_compat_worker", wait_ms=5000) and stopped
         stopped = self._stop_worker_attr("_export_worker", wait_ms=15000) and stopped
+        stopped = self._stop_offline_model_process(wait_ms=5000) and stopped
         if not stopped:
             self.statusBar().showMessage(self._tr("status_wait_background_stop"))
             event.ignore()
@@ -32,6 +33,7 @@ class PlayerLifecycleMixin:
         super().resizeEvent(event)
         self._clamp_window_to_screen()
         self._apply_media_aspect_ratio()
+        QTimer.singleShot(0, self._apply_media_aspect_ratio)
         self._position_subtitle_overlay()
         if self._document_mode and self._document_pages:
             QTimer.singleShot(0, lambda: self._update_document_page(force=True))

@@ -1,0 +1,16 @@
+{
+  "options": [
+    {
+      "value": "smart",
+      "label": "Thong minh"
+    },
+    {
+      "value": "strict_start",
+      "label": "Bam moc nguon"
+    },
+    {
+      "value": "avoid_overlap",
+      "label": "Tranh chong tieng"
+    }
+  ]
+}

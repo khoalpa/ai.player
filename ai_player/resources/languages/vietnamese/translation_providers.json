@@ -1,0 +1,16 @@
+{
+  "options": [
+    {
+      "value": "nllb_ct2",
+      "label": "NLLB CTranslate2"
+    },
+    {
+      "value": "nllb",
+      "label": "NLLB Local"
+    },
+    {
+      "value": "none",
+      "label": "Không dịch"
+    }
+  ]
+}

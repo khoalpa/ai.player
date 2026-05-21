@@ -13,6 +13,7 @@ from ai_player.services.source_voice_filter import (
     SourceVoiceFilterCancelled,
     apply_source_voice_filter,
     read_source_voice_filter_backend,
+    resolve_source_voice_filter_command,
     source_voice_filter_cached_output_valid,
     write_source_voice_filter_metadata,
 )
@@ -118,11 +119,19 @@ class SourceAudioFilterWorker(QThread):
     failed = Signal(str, str)
     warning = Signal(str, str)
 
-    def __init__(self, source_path: str, output_path: Path, mode: str = "auto", parent=None) -> None:
+    def __init__(
+        self,
+        source_path: str,
+        output_path: Path,
+        mode: str = "auto",
+        model: str = "htdemucs",
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._source_path = source_path
         self._output_path = output_path
         self._mode = mode
+        self._model = model
         self._process: subprocess.Popen | None = None
         self._stop_requested = False
 
@@ -133,7 +142,7 @@ class SourceAudioFilterWorker(QThread):
 
     def run(self) -> None:
         try:
-            if source_voice_filter_cached_output_valid(self._output_path, self._mode):
+            if source_voice_filter_cached_output_valid(self._output_path, self._mode, self._model):
                 backend = read_source_voice_filter_backend(self._output_path) or self._mode
                 self.ready.emit(self._source_path, str(self._output_path), backend)
                 return
@@ -142,6 +151,7 @@ class SourceAudioFilterWorker(QThread):
                 Path(self._source_path),
                 self._output_path,
                 mode=self._mode,
+                model=self._model,
                 process_runner=self._run_process,
             )
             write_source_voice_filter_metadata(result)
@@ -159,8 +169,9 @@ class SourceAudioFilterWorker(QThread):
     def _run_process(self, command: list[str]) -> None:
         if self._stop_requested:
             raise SourceVoiceFilterCancelled("Voice filter stopped.")
+        resolved_command = resolve_source_voice_filter_command(command)
         self._process = subprocess.Popen(
-            command,
+            resolved_command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -172,7 +183,7 @@ class SourceAudioFilterWorker(QThread):
         if self._stop_requested:
             raise SourceVoiceFilterCancelled("Voice filter stopped.")
         if return_code != 0:
-            raise subprocess.CalledProcessError(return_code, command, output=stdout, stderr=stderr)
+            raise subprocess.CalledProcessError(return_code, resolved_command, output=stdout, stderr=stderr)
 
 
 class PlaybackCompatibilityWorker(QThread):

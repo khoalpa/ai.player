@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -13,6 +14,8 @@ FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
 FFPLAY = "ffplay"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_PROBE_DURATION_CACHE_LOCK = threading.Lock()
+_PROBE_DURATION_CACHE: dict[tuple[str, int, int], float] = {}
 
 
 class ProcessCancelled(RuntimeError):
@@ -37,18 +40,24 @@ def run_cancelable_process(
     command: Sequence[object],
     *,
     cancel_callback: Callable[[], bool],
+    cancel_strategy: str = "terminate",
     check: bool = True,
     poll_interval_seconds: float = 0.1,
     **kwargs: Any,
 ) -> subprocess.CompletedProcess:
     command_text = resolve_media_command(command)
+    if cancel_strategy == "quit" and "stdin" not in kwargs:
+        kwargs["stdin"] = subprocess.PIPE
     process = subprocess.Popen(command_text, **kwargs)
     while True:
         return_code = process.poll()
         if return_code is not None:
             break
         if cancel_callback():
-            _terminate_process(process)
+            if cancel_strategy == "quit":
+                _quit_process(process)
+            else:
+                _terminate_process(process)
             raise ProcessCancelled("Process cancelled")
         time.sleep(max(0.01, poll_interval_seconds))
     if check and return_code:
@@ -60,6 +69,7 @@ def run_ffmpeg_cancelable(
     args: list[object],
     *,
     cancel_callback: Callable[[], bool],
+    cancel_strategy: str = "terminate",
     check: bool = True,
     loglevel: str | None = "error",
     **kwargs: Any,
@@ -68,7 +78,13 @@ def run_ffmpeg_cancelable(
     if loglevel:
         command.extend(["-loglevel", loglevel])
     command.extend(args)
-    return run_cancelable_process(command, cancel_callback=cancel_callback, check=check, **kwargs)
+    return run_cancelable_process(
+        command,
+        cancel_callback=cancel_callback,
+        cancel_strategy=cancel_strategy,
+        check=check,
+        **kwargs,
+    )
 
 
 def run_ffprobe(
@@ -252,6 +268,14 @@ def extract_audio_range(
 
 
 def probe_duration_seconds(path: Path) -> float:
+    cache_key = _probe_duration_cache_key(path)
+    if cache_key is not None:
+        with _PROBE_DURATION_CACHE_LOCK:
+            cached = _PROBE_DURATION_CACHE.get(cache_key)
+            if cached is not None:
+                return cached
+
+    duration = 0.0
     for entry in ("format=duration", "stream=duration"):
         try:
             completed = run_ffprobe(
@@ -274,8 +298,20 @@ def probe_duration_seconds(path: Path) -> float:
         for line in completed.stdout.splitlines():
             value = safe_float(line)
             if value is not None and value > 0:
-                return value
-    return 0.0
+                duration = value
+                break
+        if duration > 0:
+            break
+
+    if cache_key is not None:
+        with _PROBE_DURATION_CACHE_LOCK:
+            _PROBE_DURATION_CACHE[cache_key] = duration
+    return duration
+
+
+def clear_probe_duration_cache() -> None:
+    with _PROBE_DURATION_CACHE_LOCK:
+        _PROBE_DURATION_CACHE.clear()
 
 
 def safe_float(value: object) -> float | None:
@@ -287,6 +323,15 @@ def safe_float(value: object) -> float | None:
     except Exception:
         return None
     return parsed if parsed >= 0 else None
+
+
+def _probe_duration_cache_key(path: Path) -> tuple[str, int, int] | None:
+    try:
+        stat = path.stat()
+        resolved = path.resolve()
+    except OSError:
+        return None
+    return (str(resolved), int(stat.st_mtime_ns), int(stat.st_size))
 
 
 def _terminate_process(process: subprocess.Popen, timeout_seconds: float = 2.0) -> None:
@@ -306,3 +351,15 @@ def _terminate_process(process: subprocess.Popen, timeout_seconds: float = 2.0) 
             process.kill()
         except Exception:
             pass
+
+
+def _quit_process(process: subprocess.Popen, timeout_seconds: float = 5.0) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        if process.stdin is not None:
+            process.stdin.write(b"q\n")
+            process.stdin.flush()
+        process.wait(timeout=timeout_seconds)
+    except Exception:
+        _terminate_process(process)

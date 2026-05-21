@@ -5,7 +5,8 @@ from collections.abc import Callable
 
 from ai_player.core.config import RUNTIME_DIR, AppConfig
 from ai_player.core.performance import measure_stage
-from ai_player.services.translation import normalize_translator_provider
+from ai_player.services.transcript_cleanup import TranscriptCleaner
+from ai_player.services.translation import effective_translator_provider
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
 from ai_player.services.tts import create_tts_provider, normalize_tts_provider, tts_output_suffix
 from ai_player.services.whisper_runtime import (
@@ -38,12 +39,15 @@ def warm_runtime_components(
         _emit(progress_callback, "Đang nạp sẵn Whisper...")
         timings["whisper_load_seconds"] = _time_call(lambda: _warm_whisper(config))
 
-    if getattr(config, "runtime_warmup_translation", True) and normalize_translator_provider(
-        config.translator_provider
-    ) != "none":
+    if getattr(config, "runtime_warmup_translation", True) and effective_translator_provider(config) != "none":
         check_cancelled()
         _emit(progress_callback, "Đang nạp sẵn bộ dịch...")
         timings["translation_seconds"] = _time_call(lambda: _warm_translation(config))
+
+    if getattr(config, "transcript_cleanup_mode", "off") != "off":
+        check_cancelled()
+        _emit(progress_callback, "Đang nạp sẵn bộ làm sạch lời thoại...")
+        timings["transcript_cleanup_seconds"] = _time_call(lambda: _warm_transcript_cleanup(config))
 
     if getattr(config, "runtime_warmup_tts", True) and normalize_tts_provider(config.tts_provider) != "none":
         check_cancelled()
@@ -81,6 +85,12 @@ def _warm_translation(config: AppConfig) -> None:
     translator = get_shared_vietnamese_translator(config)
     with measure_stage("warmup", "translation"):
         translator.translate("Hello, this short sentence warms the translation model.", "en")
+
+
+def _warm_transcript_cleanup(config: AppConfig) -> None:
+    cleaner = TranscriptCleaner(config)
+    with measure_stage("warmup", "transcript_cleanup"):
+        cleaner.clean("Xin chào, đây là câu kiểm tra ngắn.", config.source_language)
 
 
 def _warm_tts(config: AppConfig) -> None:

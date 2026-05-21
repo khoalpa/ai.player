@@ -42,19 +42,6 @@ WHISPER_TO_NLLB = {
 }
 
 NLLB_CT2_MODEL_PATH = TRANSLATION_MODELS_PATH / "nllb-200-distilled-600M-ct2-int8"
-MARIAN_MODEL_ROOT = TRANSLATION_MODELS_PATH / "marian"
-MARIAN_DIRECT_MODELS = {
-    "en": ("en-vi", "Helsinki-NLP/opus-mt-en-vi"),
-}
-MARIAN_TO_EN_MODELS = {
-    "ja": ("ja-en", "Helsinki-NLP/opus-mt-ja-en"),
-    "zh": ("zh-en", "Helsinki-NLP/opus-mt-zh-en"),
-    "ko": ("ko-en", "Helsinki-NLP/opus-mt-ko-en"),
-    "fr": ("fr-en", "Helsinki-NLP/opus-mt-fr-en"),
-    "de": ("de-en", "Helsinki-NLP/opus-mt-de-en"),
-    "es": ("es-en", "Helsinki-NLP/opus-mt-es-en"),
-    "ru": ("ru-en", "Helsinki-NLP/opus-mt-ru-en"),
-}
 
 
 @dataclass(frozen=True)
@@ -72,11 +59,8 @@ class NllbModelOption:
 
 def available_translators() -> list[TranslatorOption]:
     return [
-        TranslatorOption("auto", "Auto offline"),
         TranslatorOption("nllb_ct2", "NLLB CTranslate2"),
         TranslatorOption("nllb", "NLLB Local"),
-        TranslatorOption("marian", "MarianMT / OPUS-MT"),
-        TranslatorOption("argos", "Argos offline"),
         TranslatorOption("none", "Không dịch"),
     ]
 
@@ -127,23 +111,9 @@ def available_translation_models(provider: object) -> list[NllbModelOption]:
         return [
             model for model in available_nllb_models() if Path(model.path).resolve() != NLLB_CT2_MODEL_PATH.resolve()
         ]
-    if normalized == "marian":
-        pairs = {pair for pair, _repo_id in list(MARIAN_DIRECT_MODELS.values()) + list(MARIAN_TO_EN_MODELS.values())}
-        if MARIAN_MODEL_ROOT.exists():
-            pairs.update(path.name for path in MARIAN_MODEL_ROOT.iterdir() if path.is_dir() and "-" in path.name)
-        pairs = sorted(pairs)
-        return [NllbModelOption(pair, f"MarianMT / OPUS-MT {pair}", str(MARIAN_MODEL_ROOT / pair)) for pair in pairs]
-    if normalized == "argos":
-        return [NllbModelOption("argos-installed", "Gói Argos đã cài", "")]
     if normalized == "none":
         return [NllbModelOption("none", "Không dùng model", "")]
-    return [
-        NllbModelOption(
-            "auto-offline",
-            "Tự động offline (CT2 -> NLLB -> Marian -> Argos)",
-            LOCAL_TRANSLATION_MODEL_PATH,
-        )
-    ]
+    return available_translation_models("nllb_ct2")
 
 
 def is_ctranslate2_model_path(value: object) -> bool:
@@ -156,18 +126,21 @@ def is_ctranslate2_model_path(value: object) -> bool:
 
 
 def normalize_translator_provider(value: object) -> str:
-    raw = str(value or "nllb").strip().lower().replace("-", "_").replace(" ", "_")
+    raw = str(value or "nllb_ct2").strip().lower().replace("-", "_").replace(" ", "_")
     if raw in {"none", "off", "passthrough", "no_translate", "khong_dich"}:
         return "none"
-    if raw in {"auto", "offline_auto"}:
-        return "auto"
     if raw in {"nllb_ct2", "ctranslate2", "ct2", "nllb_ctranslate2"}:
         return "nllb_ct2"
-    if raw in {"marian", "marianmt", "opus", "opus_mt", "opusmt"}:
-        return "marian"
-    if raw in {"argos", "argos_translate"}:
-        return "argos"
-    return "nllb"
+    if raw in {"nllb", "local_nllb", "nllb_local"}:
+        return "nllb"
+    return "nllb_ct2"
+
+
+def effective_translator_provider(config: AppConfig) -> str:
+    provider = normalize_translator_provider(config.translator_provider)
+    if provider == "nllb" and is_ctranslate2_model_path(config.local_translation_model):
+        return "nllb_ct2"
+    return provider
 
 
 class PassthroughTranslator:
@@ -230,7 +203,7 @@ class LocalNllbTranslator:
             model_path = Path(self._config.local_translation_model)
             if not model_path.exists():
                 raise TranslationError(
-                    "Thiếu model dịch NLLB offline. Chạy scripts\\download_translation_model.ps1 "
+                    "Thiếu model dịch NLLB offline. Chạy scripts\\download_translator_models.ps1 "
                     "để tải models\\translation\\nllb-200-distilled-600M."
                 )
 
@@ -264,7 +237,7 @@ class LocalNllbTranslator:
         except Exception as exc:
             raise TranslationError(
                 "Không tải được model dịch local. Chạy "
-                "scripts\\download_translation_model.ps1 một lần, hoặc đặt "
+                "scripts\\download_translator_models.ps1 một lần, hoặc đặt "
                 "AI_PLAYER_TRANSLATION_MODEL tới thư mục model NLLB đã tải."
             ) from exc
         finally:
@@ -303,7 +276,7 @@ class CTranslate2NllbTranslator(LocalNllbTranslator):
         return self.translate_many([text], source_language)[0]
 
     def translate_many(self, texts: list[str], source_language: str | None = None) -> list[str]:
-        clean_texts = [" ".join(text.split()) for text in texts]
+        clean_texts = [" ".join(str(text or "").split()) for text in texts]
         if not clean_texts:
             return []
 
@@ -312,12 +285,16 @@ class CTranslate2NllbTranslator(LocalNllbTranslator):
         if src_lang == target_lang:
             return clean_texts
 
-        protected_texts = [_protect_english_terms(clean, self._config) for clean in clean_texts]
+        active_items = [(index, clean) for index, clean in enumerate(clean_texts) if clean]
+        if not active_items:
+            return clean_texts
+
+        protected_items = [(index, _protect_english_terms(clean, self._config)) for index, clean in active_items]
         self._load_model()
         self._tokenizer.src_lang = src_lang
         source_tokens_batch = []
         target_prefixes = []
-        for protected in protected_texts:
+        for _index, protected in protected_items:
             source_ids = self._tokenizer(protected.text, return_tensors="pt", truncation=True).input_ids[0]
             source_tokens_batch.append(self._tokenizer.convert_ids_to_tokens(source_ids))
             target_prefixes.append([target_lang])
@@ -334,8 +311,8 @@ class CTranslate2NllbTranslator(LocalNllbTranslator):
             translate_kwargs.pop("batch_type", None)
             translate_kwargs.pop("max_batch_size", None)
             results = self._translator.translate_batch(source_tokens_batch, **translate_kwargs)
-        translated_texts = []
-        for result, protected in zip(results, protected_texts, strict=False):
+        translated_texts = list(clean_texts)
+        for (index, protected), result in zip(protected_items, results, strict=False):
             output_tokens = list(result.hypotheses[0])
             if output_tokens and output_tokens[0] == target_lang:
                 output_tokens = output_tokens[1:]
@@ -343,7 +320,7 @@ class CTranslate2NllbTranslator(LocalNllbTranslator):
                 self._tokenizer.convert_tokens_to_ids(output_tokens),
                 skip_special_tokens=True,
             ).strip()
-            translated_texts.append(_restore_english_terms(translated, protected))
+            translated_texts[index] = _restore_english_terms(translated, protected)
         return translated_texts
 
     def _load_model(self) -> None:
@@ -383,147 +360,13 @@ class CTranslate2NllbTranslator(LocalNllbTranslator):
             self._translator = _create_ctranslate2_translator(ctranslate2, model_path, "cpu")
 
 
-class MarianTranslator:
-    def __init__(self, config: AppConfig) -> None:
-        self._config = config
-        self._cache: dict[str, tuple[object, object]] = {}
-
-    def translate(self, text: str, source_language: str | None = None) -> str:
-        clean = " ".join(text.split())
-        if not clean:
-            return ""
-        lang = _simple_language(source_language)
-        target_lang = _target_language_code(self._config)
-        if lang == target_lang:
-            return clean
-        if target_lang != "vi":
-            return LocalNllbTranslator(self._config).translate(clean, source_language)
-
-        protected = _protect_english_terms(clean, self._config)
-        if lang in MARIAN_DIRECT_MODELS:
-            translated = self._translate_with_pair(protected.text, MARIAN_DIRECT_MODELS[lang][0])
-        elif lang in MARIAN_TO_EN_MODELS:
-            english = self._translate_with_pair(protected.text, MARIAN_TO_EN_MODELS[lang][0])
-            translated = self._translate_with_pair(english, MARIAN_DIRECT_MODELS["en"][0])
-        else:
-            raise TranslationError(f"MarianMT chưa có model offline cho ngôn ngữ nguồn: {lang}")
-        restored = _restore_english_terms(translated, protected)
-        if _has_broken_placeholders(restored):
-            return LocalNllbTranslator(self._config).translate(clean, source_language)
-        return restored
-
-    def _translate_with_pair(self, text: str, pair_id: str) -> str:
-        tokenizer, model = self._load_pair(pair_id)
-        encoded = tokenizer(text, return_tensors="pt", truncation=True)
-        encoded = {key: value.to(model.device) for key, value in encoded.items()}
-        output = model.generate(
-            **encoded,
-            max_new_tokens=self._config.translation_max_tokens,
-            num_beams=self._config.translation_num_beams,
-        )
-        return tokenizer.batch_decode(output, skip_special_tokens=True)[0].strip()
-
-    def _load_pair(self, pair_id: str):
-        if pair_id in self._cache:
-            return self._cache[pair_id]
-        model_path = MARIAN_MODEL_ROOT / pair_id
-        if not model_path.exists():
-            raise TranslationError(
-                f"Thiếu model MarianMT offline: {model_path}. Chạy scripts\\download_translator_models.ps1."
-            )
-        optional_modules = _disable_unneeded_transformers_optional_imports()
-        try:
-            try:
-                import torch
-                from transformers import MarianMTModel, MarianTokenizer
-            except ImportError as exc:
-                raise TranslationError(
-                    "Thiếu runtime MarianMT. Hãy chạy: "
-                    ".\\.venv\\Scripts\\python.exe -m pip install transformers sentencepiece torch"
-                ) from exc
-        finally:
-            _restore_optional_imports(optional_modules)
-        with block_unneeded_transformers_optional_imports():
-            tokenizer = MarianTokenizer.from_pretrained(str(model_path), local_files_only=True)
-            model = MarianMTModel.from_pretrained(str(model_path), local_files_only=True)
-        device = self._config.local_translation_device
-        if device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        try:
-            model.to(device)
-        except Exception:
-            model.to("cpu")
-        model.eval()
-        self._cache[pair_id] = (tokenizer, model)
-        return self._cache[pair_id]
-
-
-class ArgosTranslator:
-    def __init__(self, config: AppConfig) -> None:
-        self._config = config
-
-    def translate(self, text: str, source_language: str | None = None) -> str:
-        clean = " ".join(text.split())
-        if not clean:
-            return ""
-        lang = _simple_language(source_language)
-        target_lang = _target_language_code(self._config)
-        if lang == target_lang:
-            return clean
-        protected = _protect_english_terms(clean, self._config)
-        try:
-            from argostranslate import translate
-        except ImportError as exc:
-            raise TranslationError(
-                "Thiếu Argos Translate. Hãy chạy: .\\.venv\\Scripts\\python.exe -m pip install argostranslate"
-            ) from exc
-
-        installed = translate.get_installed_languages()
-        source = _argos_language(installed, lang)
-        target = _argos_language(installed, target_lang)
-        if source is None or target is None:
-            if target_lang != "vi":
-                return LocalNllbTranslator(self._config).translate(clean, source_language)
-            raise TranslationError("Thiếu gói ngôn ngữ Argos offline. Chạy scripts\\download_translator_models.ps1.")
-        translated = source.get_translation(target).translate(protected.text)
-        restored = _restore_english_terms(translated, protected)
-        if _has_broken_placeholders(restored):
-            return LocalNllbTranslator(self._config).translate(clean, source_language)
-        return restored
-
-
-class AutoOfflineTranslator:
-    def __init__(self, config: AppConfig) -> None:
-        self._translators = [
-            CTranslate2NllbTranslator(config),
-            LocalNllbTranslator(config),
-            MarianTranslator(config),
-            ArgosTranslator(config),
-        ]
-
-    def translate(self, text: str, source_language: str | None = None) -> str:
-        last_error: Exception | None = None
-        for translator in self._translators:
-            try:
-                return translator.translate(text, source_language)
-            except Exception as exc:
-                last_error = exc
-        raise TranslationError(str(last_error or "Không có translator offline khả dụng."))
-
-
 class VietnameseTranslator:
     def __init__(self, config: AppConfig) -> None:
-        provider = normalize_translator_provider(config.translator_provider)
+        provider = effective_translator_provider(config)
         if provider == "none":
             self._translator = PassthroughTranslator()
-        elif provider == "auto":
-            self._translator = AutoOfflineTranslator(config)
         elif provider == "nllb_ct2":
             self._translator = CTranslate2NllbTranslator(config)
-        elif provider == "marian":
-            self._translator = MarianTranslator(config)
-        elif provider == "argos":
-            self._translator = ArgosTranslator(config)
         else:
             self._translator = LocalNllbTranslator(config)
         self._cache: dict[tuple[str, str | None], str] = {}
@@ -566,17 +409,11 @@ class VietnameseTranslator:
 
 
 def configured_translation_backend(config: AppConfig) -> str:
-    provider = normalize_translator_provider(config.translator_provider)
+    provider = effective_translator_provider(config)
     if provider == "none":
         return "Không dịch"
-    if provider == "auto":
-        return "Auto offline translator"
     if provider == "nllb_ct2":
         return f"NLLB CTranslate2 ({_resolve_ctranslate2_model_path(config.local_translation_model)})"
-    if provider == "marian":
-        return f"MarianMT / OPUS-MT ({MARIAN_MODEL_ROOT})"
-    if provider == "argos":
-        return "Argos offline"
     mode = "offline" if config.local_translation_offline else "download-if-needed"
     return f"Local NLLB ({config.local_translation_model}, {mode})"
 
@@ -646,27 +483,6 @@ def _term_pattern(term: str) -> re.Pattern[str]:
     if re.search(r"^[A-Za-z0-9][A-Za-z0-9 ._+-]*[A-Za-z0-9]$", term):
         return re.compile(rf"(?<![A-Za-z0-9]){escaped}(?![A-Za-z0-9])", re.IGNORECASE)
     return re.compile(escaped, re.IGNORECASE)
-
-
-def _simple_language(source_language: str | None) -> str:
-    if not source_language:
-        return "en"
-    language = str(source_language).strip().lower().split("-")[0]
-    if language in {"", "auto"}:
-        return "en"
-    return language
-
-
-def _target_language_code(config: AppConfig) -> str:
-    language = str(getattr(config, "target_language", "vi") or "vi").strip().lower().split("-")[0]
-    return language if language in WHISPER_TO_NLLB else "vi"
-
-
-def _argos_language(languages, code: str):
-    for language in languages:
-        if getattr(language, "code", None) == code:
-            return language
-    return None
 
 
 def _resolve_ctranslate2_model_path(value: object) -> Path:

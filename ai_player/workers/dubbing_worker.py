@@ -24,6 +24,11 @@ from ai_player.services.audio_matcher import (
     extract_audio_range,
     match_tts_to_reference,
 )
+from ai_player.services.audio_timeline import (
+    OVERLAP_POLICY_AVOID_OVERLAP,
+    normalize_overlap_policy,
+    schedule_timeline_start,
+)
 from ai_player.services.capture_sources import (
     capture_microphone_audio,
     capture_system_audio,
@@ -35,8 +40,14 @@ from ai_player.services.subtitle_ocr import recognize_hard_subtitles
 from ai_player.services.transcript_cleanup import TranscriptCleaner
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
 from ai_player.services.tts import create_tts_provider, normalize_tts_provider
-from ai_player.services.whisper_runtime import SharedWhisperModel, get_shared_whisper_model
-from ai_player.services.whisper_runtime import effective_whisper_compute_type as shared_whisper_compute_type
+from ai_player.services.whisper_runtime import (
+    SharedWhisperModel,
+    get_shared_whisper_model,
+    whisper_transcribe_kwargs,
+)
+from ai_player.services.whisper_runtime import (
+    effective_whisper_compute_type as shared_whisper_compute_type,
+)
 
 PendingAudio = tuple[float, float, Path, str, str]
 PLAYBACK_AUDIO_LEAD_SECONDS = 0.25
@@ -164,10 +175,7 @@ class DubbingWorker(QThread):
                         continue
                     self._launch_due_audio(current)
                     ready_ahead = self._covered_until - current
-                    if (
-                        not self._is_live_capture_source()
-                        and ready_ahead < self._config.dubbing_min_ready_ahead_seconds
-                    ):
+                    if not self._is_live_capture_source() and ready_ahead < self._required_ready_ahead_seconds():
                         self._buffering = True
                         self._request_pause("\u0110ang \u0111\u1ee3i gi\u1ecdng Vi\u1ec7t b\u1eaft k\u1ecbp...")
 
@@ -301,11 +309,7 @@ class DubbingWorker(QThread):
         self._tts_provider.synthesize(translated, tts_path, voice=self._config.tts_voice)
         final_path = tts_path if self._skip_tts_postprocess() else self._trim_leading_silence(tts_path)
         final_duration = audio_duration_seconds(final_path)
-        with self._state_lock:
-            scheduled_start = max(entry.start, self._scheduled_audio_until)
-            self._scheduled_audio_until = scheduled_start + max(0.05, final_duration)
-            self._pending_audio.append((scheduled_start, entry.start, final_path, original, translated))
-            self._pending_audio.sort(key=lambda item: item[0])
+        self._queue_pending_audio(entry.start, final_duration, final_path, original, translated)
 
     def _reset_schedule(self, start_seconds: float) -> None:
         self._stop_active_audio()
@@ -449,47 +453,42 @@ class DubbingWorker(QThread):
     def _transcribe_with_fallback(self, wav_path: Path):
         if self._model is None:
             self._model = self._load_whisper_model()
+        kwargs = whisper_transcribe_kwargs(self._config, self._selected_whisper_language())
         try:
-            return self._model.transcribe(
-                str(wav_path),
-                beam_size=1,
-                vad_filter=True,
-                language=self._selected_whisper_language(),
-            )
+            return self._model.transcribe(str(wav_path), **kwargs)
         except Exception as exc:
             if self._whisper_device == "cpu" and self._whisper_compute_type != "int8":
                 self.status_changed.emit("Whisper CPU không hỗ trợ compute hiện tại, chuyển sang int8...")
                 self._switch_whisper_to_cpu(exc)
-                return self._model.transcribe(
-                    str(wav_path),
-                    beam_size=1,
-                    vad_filter=True,
-                    language=self._selected_whisper_language(),
-                )
+                return self._model.transcribe(str(wav_path), **kwargs)
             if self._whisper_device == "cpu":
                 raise
             self.status_changed.emit("Whisper lỗi CUDA/CUBLAS, chuyển sang CPU...")
             self._switch_whisper_to_cpu(exc)
-            return self._model.transcribe(
-                str(wav_path),
-                beam_size=1,
-                vad_filter=True,
-                language=self._selected_whisper_language(),
-            )
+            return self._model.transcribe(str(wav_path), **kwargs)
 
     def _resume_if_buffer_ready(self, current_seconds: float) -> None:
         ready_ahead = self._covered_until - current_seconds
         required_segments = self._config.dubbing_prebuffer_segments
-        required_ready_ahead = self._config.dubbing_min_ready_ahead_seconds
+        required_ready_ahead = self._required_ready_ahead_seconds()
         if self._config.audio_source in {"transcript", "document_editor"}:
             required_segments = 1
-            required_ready_ahead = 0.5
         with self._state_lock:
             prepared_segments = self._prepared_segments
         if self._buffering and prepared_segments >= required_segments and ready_ahead >= required_ready_ahead:
             self._buffering = False
             self._launch_due_audio(current_seconds)
             self._request_resume("L\u1ed3ng ti\u1ebfng Vi\u1ec7t \u0111\u00e3 s\u1eb5n s\u00e0ng")
+
+    def _required_ready_ahead_seconds(self) -> float:
+        if self._config.audio_source in {"transcript", "document_editor"}:
+            return 0.5
+        configured_ready_ahead = max(0.0, float(self._config.dubbing_min_ready_ahead_seconds))
+        segment_ready_ahead = max(
+            0.5,
+            float(self._config.segment_seconds) * max(1, self._config.dubbing_prebuffer_segments),
+        )
+        return min(configured_ready_ahead, segment_ready_ahead)
 
     def _process_segment(self, start_seconds: float) -> None:
         if self._temp_dir is None:
@@ -585,10 +584,7 @@ class DubbingWorker(QThread):
                         cancel_callback=self._is_stop_requested,
                     )
             final_duration = audio_duration_seconds(final_path)
-            with self._state_lock:
-                scheduled_start = max(absolute_start, self._scheduled_audio_until)
-                self._scheduled_audio_until = scheduled_start + max(0.05, final_duration)
-                self._pending_audio.append((scheduled_start, absolute_start, final_path, original, translated))
+            self._queue_pending_audio(absolute_start, final_duration, final_path, original, translated)
             self._remember_scheduled_text(original, absolute_start)
 
         with self._state_lock:
@@ -607,6 +603,7 @@ class DubbingWorker(QThread):
             self._config.segment_seconds,
             self._temp_dir,
             self._config.source_language,
+            config=self._config,
         )
         if not subtitle_segments:
             with self._state_lock:
@@ -638,10 +635,13 @@ class DubbingWorker(QThread):
             self._tts_provider.synthesize(translated, tts_path, voice=self._config.tts_voice)
             final_path = tts_path if self._skip_tts_postprocess() else self._trim_leading_silence(tts_path)
             final_duration = audio_duration_seconds(final_path)
-            with self._state_lock:
-                scheduled_start = max(absolute_start, self._scheduled_audio_until)
-                self._scheduled_audio_until = scheduled_start + max(0.05, final_duration, duration * 0.25)
-                self._pending_audio.append((scheduled_start, absolute_start, final_path, original, translated))
+            self._queue_pending_audio(
+                absolute_start,
+                max(final_duration, duration * 0.25),
+                final_path,
+                original,
+                translated,
+            )
             self._remember_scheduled_text(original, absolute_start)
 
         with self._state_lock:
@@ -818,6 +818,32 @@ class DubbingWorker(QThread):
     def _needs_reference_audio(self) -> bool:
         return bool(self._config.dubbing_auto_voice_gender or self._config.dubbing_auto_match_audio)
 
+    def _queue_pending_audio(
+        self,
+        source_start_seconds: float,
+        duration_seconds: float,
+        audio_path: Path,
+        original: str,
+        translated: str,
+    ) -> None:
+        source_start = max(0.0, float(source_start_seconds))
+        duration = max(0.05, float(duration_seconds or 0.0))
+        with self._state_lock:
+            scheduled_start, self._scheduled_audio_until = schedule_timeline_start(
+                source_start_seconds=source_start,
+                duration_seconds=duration,
+                scheduled_until_seconds=self._scheduled_audio_until,
+                policy=self._config.dubbing_overlap_policy,
+                force_avoid_overlap=self._config.audio_source == "document_editor",
+            )
+            self._pending_audio.append((scheduled_start, source_start, audio_path, original, translated))
+            self._pending_audio.sort(key=lambda item: item[0])
+
+    def _overlap_playback_enabled(self) -> bool:
+        if self._config.audio_source == "document_editor":
+            return False
+        return normalize_overlap_policy(self._config.dubbing_overlap_policy) != OVERLAP_POLICY_AVOID_OVERLAP
+
     def _skip_tts_postprocess(self) -> bool:
         return (
             str(self._config.performance_preset or "").strip().lower() == "low_latency"
@@ -875,6 +901,7 @@ class DubbingWorker(QThread):
     def _sync_hold_needed(self, current_seconds: float) -> bool:
         return (
             self._sync_hold_supported()
+            and not self._overlap_playback_enabled()
             and self._has_active_audio()
             and self._has_due_pending_audio(current_seconds, PLAYBACK_SYNC_HOLD_TOLERANCE_SECONDS)
         )
@@ -892,12 +919,24 @@ class DubbingWorker(QThread):
             self._request_resume("Âm đích đã bắt kịp âm nguồn")
 
     def _launch_due_audio(self, current_seconds: float) -> bool:
-        if any(process.poll() is None for process in self._active_audio_processes):
+        if not self._overlap_playback_enabled() and any(
+            process.poll() is None for process in self._active_audio_processes
+        ):
             return False
 
         if self._config.audio_source in {"transcript", "document_editor"}:
             with self._state_lock:
-                ready = sorted(self._pending_audio, key=lambda item: item[0])
+                if self._overlap_playback_enabled():
+                    ready = sorted(
+                        [
+                            item
+                            for item in self._pending_audio
+                            if current_seconds >= item[0] - PLAYBACK_AUDIO_LEAD_SECONDS
+                        ],
+                        key=lambda item: item[0],
+                    )
+                else:
+                    ready = sorted(self._pending_audio, key=lambda item: item[0])[:1]
         else:
             with self._state_lock:
                 ready = sorted(
@@ -907,31 +946,33 @@ class DubbingWorker(QThread):
         if not ready:
             return False
 
-        selected = ready[0]
-        with self._state_lock:
-            if selected not in self._pending_audio:
-                return False
-            self._pending_audio.remove(selected)
-        _, display_start, audio_path, original, translated = selected
-        self.status_changed.emit("\u0110ang ph\u00e1t gi\u1ecdng ti\u1ebfng Vi\u1ec7t")
-        self.audio_started.emit(display_start)
-        self.segment_ready.emit(original, translated)
-        command = [
-            ffplay_executable(),
-            "-nodisp",
-            "-autoexit",
-            "-loglevel",
-            "quiet",
-            "-volume",
-            str(max(0, min(100, int(self._config.dubbing_voice_volume)))),
-            str(audio_path),
-        ]
-        startupinfo = None
-        if os.name == "nt":
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        self._active_audio_processes.append(subprocess.Popen(command, startupinfo=startupinfo))
-        return True
+        launched = False
+        for selected in ready:
+            with self._state_lock:
+                if selected not in self._pending_audio:
+                    continue
+                self._pending_audio.remove(selected)
+            _, display_start, audio_path, original, translated = selected
+            self.status_changed.emit("\u0110ang ph\u00e1t gi\u1ecdng ti\u1ebfng Vi\u1ec7t")
+            self.audio_started.emit(display_start)
+            self.segment_ready.emit(original, translated)
+            command = [
+                ffplay_executable(),
+                "-nodisp",
+                "-autoexit",
+                "-loglevel",
+                "quiet",
+                "-volume",
+                str(max(0, min(100, int(self._config.dubbing_voice_volume)))),
+                str(audio_path),
+            ]
+            startupinfo = None
+            if os.name == "nt":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            self._active_audio_processes.append(subprocess.Popen(command, startupinfo=startupinfo))
+            launched = True
+        return launched
 
     def _request_pause(self, message: str) -> None:
         if self._pause_requested_by_worker:

@@ -8,7 +8,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, Qt, QUrl
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, QUrl
 from PySide6.QtGui import QPixmap
 
 from ai_player.core.config import write_preserved_terms_file
@@ -28,6 +28,8 @@ from ai_player.workers.player_window_workers import PlaybackCompatibilityWorker,
 class PlayerMediaMixin:
     def _source_voice_filter_changed(self, checked: bool) -> None:
         self._queue_save_settings()
+        if hasattr(self, "_sync_source_filter_controls"):
+            self._sync_source_filter_controls()
         if self._document_mode or not self._video_path:
             return
         self._load_current_video_for_playback(preserve_state=True)
@@ -36,6 +38,8 @@ class PlayerMediaMixin:
 
     def _source_voice_filter_mode_changed(self, *_args) -> None:
         self._queue_save_settings()
+        if hasattr(self, "_sync_source_filter_controls"):
+            self._sync_source_filter_controls()
         if self._source_filter_check.isChecked() and not self._document_mode and self._video_path:
             if self._source_filter_worker is not None and self._source_filter_worker.isRunning():
                 self._source_filter_restart_pending = True
@@ -92,12 +96,15 @@ class PlayerMediaMixin:
         if self._source_filter_worker is not None and self._source_filter_worker.isRunning():
             return
         mode = self._selected_source_filter_mode()
-        output_path = self._source_filter_output_path(source_path, mode)
+        model = self._selected_source_filter_model()
+        output_path = self._source_filter_output_path(source_path, mode, model)
         self._source_filter_worker_mode = mode
+        self._source_filter_worker_model = model
         self._source_filter_worker = SourceAudioFilterWorker(
             source_path,
             output_path,
             mode,
+            model,
             self,
         )
         self._source_filter_worker.ready.connect(self._source_audio_filter_ready)
@@ -109,12 +116,19 @@ class PlayerMediaMixin:
 
     def _source_audio_filter_ready(self, source_path: str, filtered_path: str, backend: str = "") -> None:
         worker_mode = getattr(self, "_source_filter_worker_mode", self._selected_source_filter_mode())
-        expected_output = self._source_filter_output_path(source_path, worker_mode)
+        worker_model = getattr(self, "_source_filter_worker_model", self._selected_source_filter_model())
+        expected_output = self._source_filter_output_path(source_path, worker_mode, worker_model)
         if Path(filtered_path) != expected_output:
             return
-        self._source_filter_cache[self._source_filter_cache_key(source_path, worker_mode, backend)] = filtered_path
+        self._source_filter_cache[self._source_filter_cache_key(source_path, worker_mode, backend, worker_model)] = (
+            filtered_path
+        )
         if self._video_path == source_path and self._source_filter_check.isChecked() and not self._document_mode:
-            if worker_mode != self._selected_source_filter_mode():
+            filter_changed = (
+                worker_mode != self._selected_source_filter_mode()
+                or worker_model != self._selected_source_filter_model()
+            )
+            if filter_changed:
                 self._source_filter_restart_pending = True
                 return
             self._switch_player_source(filtered_path, preserve_state=True)
@@ -221,9 +235,9 @@ class PlayerMediaMixin:
         return _is_ytdlp_source_cache(path) or PlayerMediaMixin._is_qt_unsafe_local_video(source_path)
 
     @staticmethod
-    def _source_filter_output_path(source_path: str, mode: str = "auto") -> Path:
+    def _source_filter_output_path(source_path: str, mode: str = "auto", model: str = "htdemucs") -> Path:
         stat_key = PlayerMediaMixin._source_stat_key(source_path)
-        signature = source_voice_filter_signature(mode)
+        signature = source_voice_filter_signature(mode, model=model)
         digest = hashlib.sha1(
             f"{source_path}{stat_key}:source-filter:{signature}".encode("utf-8", errors="replace")
         ).hexdigest()[:16]
@@ -231,9 +245,20 @@ class PlayerMediaMixin:
         _cleanup_cache_root(root, max_bytes=10 * 1024 * 1024 * 1024)
         return root / f"{digest}.mp4"
 
-    def _source_filter_cache_key(self, source_path: str, mode: str | None = None, backend: str | None = None) -> str:
+    def _source_filter_cache_key(
+        self,
+        source_path: str,
+        mode: str | None = None,
+        backend: str | None = None,
+        model: str | None = None,
+    ) -> str:
         selected_mode = self._selected_source_filter_mode() if mode is None else mode
-        signature = source_voice_filter_signature(selected_mode, backend)
+        if model is None and hasattr(self, "_selected_source_filter_model"):
+            selected_model = self._selected_source_filter_model()
+        else:
+            selected_model = model
+        selected_model = selected_model or "htdemucs"
+        signature = source_voice_filter_signature(selected_mode, backend, selected_model)
         return f"{source_path}{self._source_stat_key(source_path)}:{signature}"
 
     @staticmethod
@@ -305,7 +330,7 @@ class PlayerMediaMixin:
         if panel and panel.layout():
             margins = panel.layout().contentsMargins()
             spacing = panel.layout().spacing()
-            controls_height = self._controls.sizeHint().height() if hasattr(self, "_controls") else 0
+            controls_height = self._media_controls_height()
             max_width = max(160, panel.width() - margins.left() - margins.right())
             max_height = max(
                 120,
@@ -661,9 +686,10 @@ class PlayerMediaMixin:
 
     def _video_fullscreen_changed(self, enabled: bool) -> None:
         self._video_fullscreen = enabled
-        self._video_fullscreen_button.setText(
-            self._tr("fullscreen_exit_short") if enabled else self._tr("fullscreen_enter")
-        )
+        tooltip_key = "exit_fullscreen" if enabled else "fullscreen_tooltip"
+        self._video_fullscreen_button.setText("")
+        self._video_fullscreen_button.setToolTip(self._tr(tooltip_key))
+        self._video_fullscreen_button.setProperty("i18n_tooltip_key", tooltip_key)
         self.statusBar().showMessage(
             self._tr("status_fullscreen_entered") if enabled else self._tr("status_fullscreen_exited")
         )
@@ -691,36 +717,48 @@ class PlayerMediaMixin:
     def _toggle_sidebar_panel(self) -> None:
         self._set_sidebar_panel_visible(self._sidebar_panel_hidden)
 
+    def _media_controls_height(self) -> int:
+        if not hasattr(self, "_controls") or self._controls.isHidden():
+            return 0
+        return self._controls.sizeHint().height()
+
     def _set_sidebar_panel_visible(self, visible: bool) -> None:
         if not hasattr(self, "_settings_scroll"):
             return
         if visible:
             self._settings_scroll.show()
+            if hasattr(self, "_controls"):
+                self._controls.show()
             self._sidebar_panel_hidden = False
             self._splitter.setSizes(self._sidebar_panel_sizes or [900, 460])
-            self._panel_toggle_button.setText(self._tr("panel_hide"))
-            self._panel_toggle_button.setProperty("i18n_key", "panel_hide")
+            self._panel_toggle_button.setText("")
+            self._panel_toggle_button.setProperty("i18n_key", None)
             self.statusBar().showMessage(self._tr("status_panel_shown"))
         else:
             sizes = self._splitter.sizes()
             if len(sizes) >= 2 and sizes[1] > 0:
                 self._sidebar_panel_sizes = sizes
             self._settings_scroll.hide()
+            if hasattr(self, "_controls"):
+                self._controls.hide()
             self._sidebar_panel_hidden = True
-            self._panel_toggle_button.setText(self._tr("panel_show"))
-            self._panel_toggle_button.setProperty("i18n_key", "panel_show")
+            self._panel_toggle_button.setText("")
+            self._panel_toggle_button.setProperty("i18n_key", None)
             self.statusBar().showMessage(self._tr("status_panel_hidden"))
         self._apply_media_aspect_ratio()
+        QTimer.singleShot(0, self._apply_media_aspect_ratio)
 
     def _reset_panel_sizes(self, show_status: bool = True) -> None:
         if hasattr(self, "_settings_scroll"):
             self._settings_scroll.show()
+        if hasattr(self, "_controls"):
+            self._controls.show()
         self._sidebar_panel_hidden = False
         self._sidebar_panel_sizes = [900, 460]
         self._splitter.setSizes([900, 460])
         if hasattr(self, "_panel_toggle_button"):
-            self._panel_toggle_button.setText(self._tr("panel_hide"))
-            self._panel_toggle_button.setProperty("i18n_key", "panel_hide")
+            self._panel_toggle_button.setText("")
+            self._panel_toggle_button.setProperty("i18n_key", None)
         if show_status:
             self.statusBar().showMessage(self._tr("status_panel_size_reset"))
 

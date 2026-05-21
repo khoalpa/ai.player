@@ -36,8 +36,8 @@ class PlayerRuntimeMixin:
         tab = QWidget()
         self._runtime_tab_widget = tab
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(10)
+        layout.setContentsMargins(7, 7, 7, 7)
+        layout.setSpacing(8)
 
         summary = QLabel(self._tr("runtime_summary"))
         summary.setProperty("i18n_key", "runtime_summary")
@@ -46,8 +46,8 @@ class PlayerRuntimeMixin:
         layout.addWidget(summary)
 
         grid = QGridLayout()
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(8)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(7)
         self._runtime_labels: dict[str, QLabel] = {}
         rows = [
             ("media", "runtime_media"),
@@ -94,7 +94,7 @@ class PlayerRuntimeMixin:
         runtime_tab_active = (
             hasattr(self, "_settings_tabs")
             and hasattr(self, "_runtime_tab_widget")
-            and self._settings_tabs.currentWidget() is self._runtime_tab_widget
+            and self._settings_tab_contains(self._settings_tabs.currentWidget(), self._runtime_tab_widget)
         )
         if runtime_tab_active and (self._runtime_gpu_tick == 1 or self._runtime_gpu_tick % 5 == 0):
             self._runtime_gpu_text = self._gpu_status_text()
@@ -123,10 +123,16 @@ class PlayerRuntimeMixin:
             self._runtime_labels["diagnostics"].setText(self._runtime_diagnostics_summary())
 
     def _runtime_tab_changed(self, index: int) -> None:
-        if hasattr(self, "_runtime_tab_widget") and self._settings_tabs.widget(index) is self._runtime_tab_widget:
+        if hasattr(self, "_runtime_tab_widget") and self._settings_tab_contains(
+            self._settings_tabs.widget(index), self._runtime_tab_widget
+        ):
             self._runtime_gpu_tick = 0
             self._runtime_media_info_text = self._runtime_media_info_text_current(force=True)
             self._refresh_runtime_tab()
+
+    @staticmethod
+    def _settings_tab_contains(tab: QWidget | None, content: QWidget) -> bool:
+        return tab is content or (hasattr(tab, "widget") and tab.widget() is content)
 
     def _runtime_media_info_text_current(self, force: bool = False) -> str:
         source_path = self._runtime_media_path or (self._video_path or "")
@@ -387,7 +393,10 @@ class PlayerRuntimeMixin:
     def _gpu_runtime_text(self) -> str:
         lines = [
             self._tr("runtime_config_line").format(
-                whisper=self._selected_whisper_device(),
+                whisper=(
+                    f"{self._selected_whisper_device()}/"
+                    f"{self._selected_whisper_compute()} b{int(self._whisper_beam_slider.value())}"
+                ),
                 translator=self._selected_translation_device(),
                 vieneu=self._selected_vieneu_device(),
             ),
@@ -403,9 +412,7 @@ class PlayerRuntimeMixin:
 
             version = getattr(ctranslate2, "__version__", "?")
             cuda_count = ctranslate2.get_cuda_device_count()
-            lines.append(
-                f"CTranslate2: {version} | CUDA devices={cuda_count}"
-            )
+            lines.append(f"CTranslate2: {version} | CUDA devices={cuda_count}")
         except Exception as exc:
             lines.append(self._tr("runtime_ctranslate_failed").format(detail=_repair_mojibake(str(exc))))
         return "\n".join(lines)

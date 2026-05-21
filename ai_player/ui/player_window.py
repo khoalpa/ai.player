@@ -25,6 +25,7 @@ from ai_player.ui.player_window_layout import PlayerLayoutMixin
 from ai_player.ui.player_window_lifecycle import PlayerLifecycleMixin
 from ai_player.ui.player_window_media import PlayerMediaMixin
 from ai_player.ui.player_window_meeting import PlayerMeetingMixin
+from ai_player.ui.player_window_offline_models import PlayerOfflineModelsMixin
 from ai_player.ui.player_window_runtime import PlayerRuntimeMixin
 from ai_player.ui.player_window_settings import PlayerSettingsMixin
 from ai_player.ui.player_window_sources import PlayerSourceMixin
@@ -44,6 +45,7 @@ from ai_player.workers.player_window_workers import (
 class PlayerWindow(
     UserGuideMixin,
     PlayerRuntimeMixin,
+    PlayerOfflineModelsMixin,
     PlayerTranscriptMixin,
     PlayerSettingsMixin,
     PlayerMediaMixin,
@@ -91,6 +93,7 @@ class PlayerWindow(
         self._document_worker = None
         self._source_filter_worker: SourceAudioFilterWorker | None = None
         self._source_filter_worker_mode = self._config.original_audio_voice_filter_mode
+        self._source_filter_worker_model = self._config.original_audio_voice_filter_model
         self._source_filter_restart_pending = False
         self._playback_compat_worker: PlaybackCompatibilityWorker | None = None
         self._sidebar_panel_hidden = False

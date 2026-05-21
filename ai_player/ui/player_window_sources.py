@@ -148,7 +148,9 @@ class PlayerSourceMixin:
             self._cache_dialog.close()
             self._cache_dialog = None
         quality_label = self._combo_text(self._playback_quality_combo)
-        status_key = "status_open_url_quality" if self._config.video_url_full_cache else "status_open_url_stream_quality"
+        status_key = (
+            "status_open_url_quality" if self._config.video_url_full_cache else "status_open_url_stream_quality"
+        )
         self.statusBar().showMessage(self._tr(status_key).format(quality=quality_label))
         self._url_worker = VideoSourceWorker(
             url,

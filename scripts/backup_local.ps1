@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if (-not $Python) {
     $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
-    $Python = if (Test-Path $VenvPython) { $VenvPython } else { "python" }
+    $Python = if (Test-Path $VenvPython) { $VenvPython } elseif (Get-Command py -ErrorAction SilentlyContinue) { "py" } else { "python" }
 }
 if (-not $BackupRoot) {
     $BackupRoot = Split-Path -Parent $ProjectRoot

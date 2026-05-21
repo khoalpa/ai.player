@@ -102,6 +102,21 @@ def effective_whisper_compute_type(value: str, device: str) -> str:
     return compute_type
 
 
+def effective_whisper_beam_size(value: object) -> int:
+    try:
+        return max(1, min(8, int(value)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def whisper_transcribe_kwargs(config: AppConfig, language: str | None) -> dict[str, object]:
+    return {
+        "beam_size": effective_whisper_beam_size(config.whisper_beam_size),
+        "vad_filter": bool(config.whisper_vad_filter),
+        "language": language,
+    }
+
+
 def _create_whisper_model(
     model_path: str,
     *,
