@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 import unicodedata
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -30,45 +30,31 @@ from ai_player.core.config import (
     AppConfig,
 )
 from ai_player.core.offline_env import pop_hf_offline_environment, push_hf_offline_environment
-
-
-@dataclass(frozen=True)
-class VoiceOption:
-    id: str
-    name: str
-
-
-@dataclass(frozen=True)
-class VieNeuModelOption:
-    id: str
-    name: str
-    offline: bool
+from ai_player.services.tts_voices import (
+    EDGE_VOICES,
+    STANDARD_VIENEU_VOICES,
+    TURBO_VIENEU_VOICES,
+    VieNeuModelOption,
+    VoiceOption,
+    available_tts_provider_options,
+    available_vieneu_mode_options,
+    migrate_vieneu_legacy_voice_id,
+)
+from ai_player.services.tts_voices import (
+    normalize_voice_token as _normalize_voice_token,
+)
+from ai_player.services.tts_voices import (
+    read_vieneu_voices as _read_vieneu_voices,
+)
+from ai_player.services.tts_voices import (
+    vieneu_model_voices_path as _vieneu_model_voices_path,
+)
+from ai_player.services.tts_voices import voice_gender as _catalog_voice_gender
 
 
 class TTSError(RuntimeError):
     pass
 
-
-EDGE_VOICES = [
-    VoiceOption("vi-VN-HoaiMyNeural", "Hoài My (nữ, Việt Nam)"),
-    VoiceOption("vi-VN-NamMinhNeural", "Nam Minh (nam, Việt Nam)"),
-]
-
-STANDARD_VIENEU_VOICES = [
-    VoiceOption("Binh", "Bình (nam miền Bắc)"),
-    VoiceOption("Tuyen", "Tuyên (nam miền Bắc)"),
-    VoiceOption("Ngoc", "Ngọc (nữ miền Bắc)"),
-    VoiceOption("Ly", "Ly (nữ miền Bắc)"),
-    VoiceOption("Vinh", "Vĩnh (nam miền Nam)"),
-    VoiceOption("Doan", "Đoan (nữ miền Nam)"),
-]
-
-TURBO_VIENEU_VOICES = [
-    VoiceOption("Bích Ngọc", "Bích Ngọc (nữ miền Bắc)"),
-    VoiceOption("Phạm Tuyên", "Phạm Tuyên (nam miền Bắc)"),
-    VoiceOption("Thục Đoan", "Thục Đoan (nữ miền Nam)"),
-    VoiceOption("Xuân Vĩnh", "Xuân Vĩnh (nam miền Nam)"),
-]
 
 _VIENEU_ENGINE_LOCK = threading.Lock()
 _VIENEU_ENGINE_CACHE: dict[tuple[str, ...], Any] = {}
@@ -79,18 +65,11 @@ _TTS_CACHE_KEY_LOCKS: dict[Path, threading.Lock] = {}
 
 
 def available_tts_providers() -> list[VoiceOption]:
-    return [
-        VoiceOption("none", "Không TTS"),
-        VoiceOption("vieneu", "VieNeu-TTS"),
-        VoiceOption("edge", "Edge TTS"),
-    ]
+    return available_tts_provider_options()
 
 
 def available_vieneu_modes() -> list[VoiceOption]:
-    return [
-        VoiceOption("turbo", "Turbo"),
-        VoiceOption("standard", "Standard"),
-    ]
+    return available_vieneu_mode_options()
 
 
 def available_vieneu_models(mode: str, config: AppConfig) -> list[VieNeuModelOption]:
@@ -173,36 +152,7 @@ def select_voice_for_gender(provider: str, config: AppConfig, gender: str) -> st
 
 
 def voice_gender(provider: str, voice_id: object) -> str:
-    normalized = _normalize_voice_token(voice_id)
-    if normalize_tts_provider(provider) == "edge":
-        if "namminh" in normalized or "nam minh" in normalized:
-            return "male"
-        if "hoai my" in normalized or "hoaimy" in normalized:
-            return "female"
-
-    female_tokens = {
-        "doan",
-        "thuc doan",
-        "ngoc",
-        "bich ngoc",
-        "ly",
-        "hoai my",
-        "hoaimy",
-    }
-    male_tokens = {
-        "binh",
-        "tuyen",
-        "pham tuyen",
-        "vinh",
-        "xuan vinh",
-        "nam minh",
-        "namminh",
-    }
-    if normalized in female_tokens or any(token in normalized for token in female_tokens):
-        return "female"
-    if normalized in male_tokens or any(token in normalized for token in male_tokens):
-        return "male"
-    return "unknown"
+    return _catalog_voice_gender(provider, voice_id)
 
 
 def create_tts_provider(config: AppConfig) -> BaseTTSProvider:
@@ -1081,49 +1031,6 @@ def _resolve_vieneu_preset_voice(engine: Any, voice_id: str) -> Any | None:
     raise TTSError(f"Không tìm thấy voice VieNeu {voice_id!r}. Các voice hiện có: {available_ids or '(trống)'}")
 
 
-def migrate_vieneu_legacy_voice_id(
-    voice_id: object,
-    available_choices: list[tuple[str, str]] | tuple[tuple[str, str], ...],
-) -> str:
-    raw = str(voice_id or "").strip()
-    normalized = _normalize_voice_token(raw)
-    if not normalized:
-        return raw
-
-    entries = []
-    for label, preset_id in tuple(available_choices or ()):
-        clean_id = str(preset_id or "").strip()
-        clean_label = str(label or clean_id).strip()
-        if clean_id:
-            entries.append((clean_id, _normalize_voice_token(clean_id), _normalize_voice_token(clean_label)))
-
-    for clean_id, norm_id, norm_label in entries:
-        if normalized in {norm_id, norm_label, _normalize_voice_token(norm_label.split("(", 1)[0])}:
-            return clean_id
-
-    hints = {
-        "binh": ("binh", "nam", "bac"),
-        "tuyen": ("tuyen", "nam", "bac"),
-        "ngoc": ("ngoc", "nu", "bac"),
-        "ly": ("ly", "nu", "bac"),
-        "vinh": ("vinh", "nam", "nam"),
-        "doan": ("doan", "nu", "nam"),
-    }.get(normalized)
-    if not hints:
-        return raw
-
-    ranked: list[tuple[int, str]] = []
-    for clean_id, norm_id, norm_label in entries:
-        haystack = f"{norm_id} {norm_label}"
-        score = sum(1 for hint in hints if hint in haystack)
-        if score:
-            ranked.append((score, clean_id))
-    if ranked:
-        ranked.sort(key=lambda item: (-item[0], item[1]))
-        return ranked[0][1]
-    return raw
-
-
 def _tts_cache_enabled() -> bool:
     return str(os.getenv("AI_PLAYER_TTS_CACHE", "1")).strip().lower() not in {"0", "false", "no", "off"}
 
@@ -1166,11 +1073,6 @@ def _cache_text(value: object) -> str:
     return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
 
 
-def _strip_accents(value: object) -> str:
-    text = unicodedata.normalize("NFKD", str(value or ""))
-    return "".join(ch for ch in text if not unicodedata.combining(ch))
-
-
 def _preferred_voice_ids(provider: str, config: AppConfig, gender: str) -> tuple[str, ...]:
     if normalize_tts_provider(provider) == "edge":
         return ("vi-VN-NamMinhNeural",) if gender == "male" else ("vi-VN-HoaiMyNeural",)
@@ -1187,11 +1089,6 @@ def _preferred_voice_ids(provider: str, config: AppConfig, gender: str) -> tuple
         if gender == "male"
         else ("Thục Đoan", "Bích Ngọc", "Thuc Doan", "Bich Ngoc")
     )
-
-
-def _normalize_voice_token(value: object) -> str:
-    text = _strip_accents(value).replace("đ", "d").replace("Đ", "D")
-    return " ".join(text.strip().lower().split())
 
 
 def _clean_message(value: object) -> str:
@@ -1234,24 +1131,3 @@ def _vieneu_voices(config: AppConfig | None) -> list[VoiceOption]:
 
     return STANDARD_VIENEU_VOICES if mode == "standard" else TURBO_VIENEU_VOICES
 
-
-def _vieneu_model_voices_path(model_name: str) -> Path:
-    model_path = Path(str(model_name or ""))
-    if model_path.exists() and model_path.is_dir():
-        return model_path / "voices.json"
-    if model_path.exists() and model_path.is_file():
-        return model_path.parent / "voices.json"
-    return Path()
-
-
-def _read_vieneu_voices(voices_path: Path) -> list[VoiceOption]:
-    try:
-        data = json.loads(voices_path.read_text(encoding="utf-8-sig"))
-        presets = data.get("presets", {})
-        return [
-            VoiceOption(str(voice_id), str(preset.get("description") or voice_id))
-            for voice_id, preset in presets.items()
-            if isinstance(preset, dict)
-        ]
-    except Exception:
-        return []

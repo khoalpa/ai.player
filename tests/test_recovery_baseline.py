@@ -21,6 +21,17 @@ def test_app_config_defaults_are_constructible(monkeypatch) -> None:
     assert config.performance_preset == DEFAULT_PERFORMANCE_PRESET == "balanced"
 
 
+def test_app_config_from_env_overlays_static_defaults(monkeypatch) -> None:
+    monkeypatch.setenv("AI_PLAYER_TARGET_LANGUAGE", "en")
+    monkeypatch.setenv("AI_PLAYER_DUBBING_AUTO_MATCH_AUDIO", "0")
+
+    config = AppConfig.from_env()
+
+    assert AppConfig().target_language == "vi"
+    assert config.target_language == "en"
+    assert config.dubbing_auto_match_audio is False
+
+
 def test_runtime_diagnostics_collects_required_sections() -> None:
     report = collect_runtime_diagnostics(include_audio_devices=False)
 

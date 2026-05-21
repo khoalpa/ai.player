@@ -5,6 +5,7 @@ Use this checklist before sharing a build.
 ## Source Baseline
 
 - Confirm the working tree contains only intended changes.
+- Install the release dependency set with `.\.venv\Scripts\python.exe -m pip install -c constraints\windows-release-py310.txt -e ".[dev,packaging]"`.
 - Run `.\.venv\Scripts\python.exe -m ruff check .`.
 - Run `.\.venv\Scripts\python.exe -m pytest`.
 - Run `.\.venv\Scripts\python.exe .\scripts\runtime_doctor.py`.
@@ -27,6 +28,7 @@ Use this checklist before sharing a build.
 ## Export Smoke Test
 
 - Export a short dubbed media file.
+- Run the release smoke coverage with `.\.venv\Scripts\python.exe -m pytest tests\test_release_smoke.py`.
 - Re-open exported files with a normal media player and confirm duration is plausible.
 
 ## Portable Build
@@ -34,3 +36,4 @@ Use this checklist before sharing a build.
 - Build with `.\scripts\build_portable.ps1`.
 - Launch the app from `dist\portable`.
 - Run Runtime Doctor from the portable app.
+- Record the completed smoke results in `docs\manual_smoke_results.md`.

@@ -1,7 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('D:\\project\\ai.player\\ai_player\\resources', 'ai_player\\resources'), ('D:\\project\\ai.player\\ai_player\\vieneu_tts\\vieneu\\assets', 'ai_player\\vieneu_tts\\vieneu\\assets')]
+project_root = Path(SPECPATH).resolve()
+datas = [
+    (str(project_root / "ai_player" / "resources"), "ai_player\\resources"),
+    (
+        str(project_root / "ai_player" / "vieneu_tts" / "vieneu" / "assets"),
+        "ai_player\\vieneu_tts\\vieneu\\assets",
+    ),
+]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('PySide6')
@@ -11,8 +20,8 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['D:\\project\\ai.player\\main.py'],
-    pathex=[],
+    [str(project_root / 'main.py')],
+    pathex=[str(project_root)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

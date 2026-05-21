@@ -1,0 +1,39 @@
+# Windows release constraints validated on 2026-05-21 with Python 3.10.
+# Use with: python -m pip install -c constraints/windows-release-py310.txt -e ".[dev,packaging]"
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+PySide6-Essentials==6.11.0
+PySide6-Addons==6.11.0
+python-docx==1.2.0
+python-pptx==1.0.2
+pypdf==6.11.0
+PyMuPDF==1.27.2.3
+Pillow==12.2.0
+faster-whisper==1.2.1
+ctranslate2==4.7.1
+edge-tts==7.2.8
+sentencepiece==0.2.1
+torch==2.11.0+cu128
+transformers==5.8.0
+huggingface_hub==1.14.0
+sea-g2p==0.7.5
+llama-cpp-python==0.3.16
+soundfile==0.13.1
+soundcard==0.4.6
+librosa==0.11.0
+perth==1.0.0
+neucodec==0.0.5
+yt-dlp==2026.3.17
+onnxruntime-gpu==1.23.2; platform_system == "Windows"
+onnxruntime==1.23.2; platform_system != "Windows"
+nvidia-cublas-cu12==12.9.2.10; platform_system == "Windows"
+nvidia-cudnn-cu12==9.22.0.52; platform_system == "Windows"
+nvidia-cuda-nvrtc-cu12==12.9.86; platform_system == "Windows"
+requests==2.33.1
+tqdm==4.67.3
+
+# Packaging/dev tools used by release checks.
+pytest==9.0.3
+ruff==0.15.13
+pyinstaller==6.20.0
+pyinstaller-hooks-contrib==2026.5

@@ -32,14 +32,7 @@ New-Item -ItemType Directory -Force -Path $PortableRoot | Out-Null
 & $Python -m PyInstaller `
     --noconfirm `
     --clean `
-    --onedir `
-    --windowed `
-    --name "AI Player" `
-    --collect-all PySide6 `
-    --collect-all edge_tts `
-    --add-data "$ProjectRoot\ai_player\resources;ai_player\resources" `
-    --add-data "$ProjectRoot\ai_player\vieneu_tts\vieneu\assets;ai_player\vieneu_tts\vieneu\assets" `
-    "$ProjectRoot\main.py"
+    "$ProjectRoot\AI Player.spec"
 
 $AppDist = Join-Path $DistRoot "AI Player"
 if (-not (Test-Path $AppDist)) {
