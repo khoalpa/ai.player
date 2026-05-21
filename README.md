@@ -6,12 +6,12 @@ AI Player là ứng dụng Windows dùng PySide6 để xem video, đọc tài li
 
 Nếu AI Player hữu ích với bạn, bạn có thể ủng hộ tác giả qua VietQR/MB Bank:
 
-- Chủ tài khoản: `LE PHAM ANH KHOA`
-- Số tài khoản: `0914030780`
 - Ngân hàng: `MB Bank`
+- Số tài khoản: `0914030780`
+- Chủ tài khoản: `LE PHAM ANH KHOA`
 - Nội dung gợi ý: `Donation AI Player`
 
-<img src="docs/assets/donation-mbb-0914030780.jpg" alt="VietQR donation for AI Player - MB Bank 0914030780" width="320">
+![Donation VietQR](docs/assets/donation-mbb-0914030780.jpg)
 
 ## Tính Năng Chính
 
