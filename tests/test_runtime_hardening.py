@@ -107,6 +107,56 @@ def test_warm_runtime_components_warms_transcript_cleanup(monkeypatch) -> None:
     assert calls
 
 
+def test_runtime_warmup_stage_detection_skips_empty_configuration() -> None:
+    config = AppConfig(
+        runtime_warmup_enabled=True,
+        runtime_warmup_whisper=False,
+        runtime_warmup_translation=True,
+        translator_provider="none",
+        runtime_warmup_tts=False,
+        transcript_cleanup_mode="off",
+    )
+
+    assert runtime_warmup.has_runtime_warmup_stage(config) is False
+
+
+def test_runtime_warmup_stage_detection_keeps_tts_default_off() -> None:
+    config = AppConfig(
+        runtime_warmup_enabled=True,
+        runtime_warmup_whisper=False,
+        runtime_warmup_translation=False,
+        transcript_cleanup_mode="off",
+        tts_provider="vieneu",
+    )
+
+    assert runtime_warmup.has_runtime_warmup_stage(config) is False
+
+
+def test_warm_runtime_components_keeps_tts_default_off(monkeypatch) -> None:
+    monkeypatch.setattr(runtime_warmup, "_warm_tts", lambda _config: pytest.fail("TTS should not warm by default"))
+    config = AppConfig(
+        runtime_warmup_enabled=True,
+        runtime_warmup_whisper=False,
+        runtime_warmup_translation=False,
+        transcript_cleanup_mode="off",
+        tts_provider="vieneu",
+    )
+
+    assert runtime_warmup.warm_runtime_components(config) == {}
+
+
+def test_runtime_warmup_stage_detection_includes_cleanup() -> None:
+    config = AppConfig(
+        runtime_warmup_enabled=True,
+        runtime_warmup_whisper=False,
+        runtime_warmup_translation=False,
+        runtime_warmup_tts=False,
+        transcript_cleanup_mode="light",
+    )
+
+    assert runtime_warmup.has_runtime_warmup_stage(config) is True
+
+
 def test_cuda_runtime_files_available_finds_nested_dll(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(gpu, "configure_cuda_dll_paths", lambda: None)
     monkeypatch.setattr(gpu.shutil, "which", lambda _name: None)

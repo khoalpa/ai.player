@@ -348,6 +348,8 @@
     "warmup_loading_translation": "Preloading translator...",
     "warmup_loading_transcript_cleanup": "Preloading transcript cleanup...",
     "warmup_loading_tts": "Preloading TTS...",
+    "status_runtime_warmup_ready": "Runtime is ready.",
+    "status_runtime_warmup_failed": "Runtime preloading failed: {detail}",
     "transcript_error_choose_file": "Choose a transcript file before starting dubbing.",
     "document_error_missing_file": "The document file does not exist.",
     "document_error_empty_content": "No readable content could be extracted from this document.",

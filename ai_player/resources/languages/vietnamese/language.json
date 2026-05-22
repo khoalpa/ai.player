@@ -407,6 +407,8 @@
     "warmup_loading_translation": "Đang nạp sẵn bộ dịch...",
     "warmup_loading_transcript_cleanup": "Đang nạp sẵn bộ làm sạch lời thoại...",
     "warmup_loading_tts": "Đang nạp sẵn TTS...",
+    "status_runtime_warmup_ready": "Runtime đã sẵn sàng.",
+    "status_runtime_warmup_failed": "Nạp sẵn runtime lỗi: {detail}",
     "transcript_error_choose_file": "Hãy chọn tệp transcript trước khi bắt đầu lồng tiếng.",
     "document_error_missing_file": "Tệp tài liệu không tồn tại.",
     "document_error_empty_content": "Không trích được nội dung từ tài liệu này.",

@@ -35,6 +35,89 @@ def test_player_window_event_loop_smoke(qapp) -> None:
         window.close()
 
 
+def test_runtime_warmup_status_does_not_leave_last_progress_message(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window.statusBar().showMessage(window._tr("warmup_loading_tts"))
+        window._runtime_warmup_finished_successfully({"tts_seconds": 0.1})
+
+        assert window.statusBar().currentMessage() == window._tr("status_runtime_warmup_ready")
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_runtime_warmup_status_ignores_empty_success(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        startup_message = window._runtime_startup_status_message()
+        window.statusBar().showMessage(startup_message)
+
+        window._runtime_warmup_finished_successfully({})
+
+        assert window.statusBar().currentMessage() == startup_message
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_runtime_warmup_status_can_replace_startup_status(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window.statusBar().showMessage(window._runtime_startup_status_message())
+
+        window._runtime_warmup_status_changed(window._tr("warmup_loading_translation"))
+
+        assert window.statusBar().currentMessage() == window._tr("warmup_loading_translation")
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_runtime_warmup_status_survives_language_change(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        english_message = "Preloading translator..."
+        window._show_runtime_warmup_status(english_message)
+        window._set_combo_data(window._ui_language_combo, "vi")
+        qapp.processEvents()
+
+        window._runtime_warmup_finished_successfully({"translation_seconds": 0.1})
+
+        assert window.statusBar().currentMessage() == window._tr("status_runtime_warmup_ready")
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_runtime_warmup_status_does_not_override_user_status(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window.statusBar().showMessage("User opened a file")
+
+        window._runtime_warmup_status_changed(window._tr("warmup_loading_translation"))
+        window._runtime_warmup_finished_successfully({})
+        window._runtime_warmup_failed("boom")
+
+        assert window.statusBar().currentMessage() == "User opened a file"
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_runtime_warmup_status_can_replace_previous_failure(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window._runtime_warmup_failed("boom")
+
+        window._runtime_warmup_status_changed(window._tr("warmup_loading_translation"))
+
+        assert window.statusBar().currentMessage() == window._tr("warmup_loading_translation")
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
 def test_player_window_fits_common_laptop_width(qapp) -> None:
     window = PlayerWindow()
     try:

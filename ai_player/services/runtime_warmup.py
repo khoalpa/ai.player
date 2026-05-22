@@ -50,13 +50,25 @@ def warm_runtime_components(
         _emit(progress_callback, ui_text("warmup_loading_transcript_cleanup", config.gui_language))
         timings["transcript_cleanup_seconds"] = _time_call(lambda: _warm_transcript_cleanup(config))
 
-    if getattr(config, "runtime_warmup_tts", True) and normalize_tts_provider(config.tts_provider) != "none":
+    if getattr(config, "runtime_warmup_tts", False) and normalize_tts_provider(config.tts_provider) != "none":
         check_cancelled()
         _emit(progress_callback, ui_text("warmup_loading_tts", config.gui_language))
         timings["tts_seconds"] = _time_call(lambda: _warm_tts(config))
 
     check_cancelled()
     return timings
+
+
+def has_runtime_warmup_stage(config: AppConfig) -> bool:
+    if not getattr(config, "runtime_warmup_enabled", True):
+        return False
+    if getattr(config, "runtime_warmup_whisper", True):
+        return True
+    if getattr(config, "runtime_warmup_translation", True) and effective_translator_provider(config) != "none":
+        return True
+    if getattr(config, "transcript_cleanup_mode", "off") != "off":
+        return True
+    return getattr(config, "runtime_warmup_tts", False) and normalize_tts_provider(config.tts_provider) != "none"
 
 
 def _warm_whisper(config: AppConfig) -> None:

@@ -125,7 +125,7 @@ class AppConfig:
     runtime_warmup_enabled: bool = True
     runtime_warmup_whisper: bool = True
     runtime_warmup_translation: bool = True
-    runtime_warmup_tts: bool = True
+    runtime_warmup_tts: bool = False
     video_aspect_ratio: str = "16:9"
     playback_video_quality: str = "720p"
     video_url_full_cache: bool = True

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import fields, replace
 from typing import Any
 
@@ -38,6 +39,7 @@ def load_app_config(base: AppConfig | None = None) -> AppConfig:
         data.pop(name, None)
     _migrate_removed_local_models(data)
     _migrate_preserved_source_flags(data)
+    _migrate_runtime_warmup_flags(data)
 
     values: dict[str, Any] = {}
     field_map = {field.name: field for field in fields(AppConfig)}
@@ -89,6 +91,13 @@ def _migrate_preserved_source_flags(data: dict[str, Any]) -> None:
         data["preserve_source_terms"] = data["preserve_english_terms"]
     if "preserve_source_terms" in data:
         data["preserve_english_terms"] = data["preserve_source_terms"]
+
+
+def _migrate_runtime_warmup_flags(data: dict[str, Any]) -> None:
+    if os.getenv("AI_PLAYER_PREWARM_TTS") is None:
+        data["runtime_warmup_tts"] = False
+    else:
+        data.pop("runtime_warmup_tts", None)
 
 
 def save_app_config(config: AppConfig) -> None:

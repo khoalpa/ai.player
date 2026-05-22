@@ -13,6 +13,7 @@ from ai_player.core.config import (
     AppConfig,
 )
 from ai_player.core.settings_store import load_app_config
+from ai_player.services.runtime_warmup import has_runtime_warmup_stage
 from ai_player.services.translation import (
     configured_translation_backend,
 )
@@ -123,6 +124,7 @@ class PlayerWindow(
         self._runtime_media_path = ""
         self._runtime_media_info_path = ""
         self._runtime_media_info_text = self._tr("status_no_video")
+        self._runtime_warmup_last_status = ""
 
         self._transcript_segments: list[tuple[str, str]] = []
 
@@ -143,16 +145,13 @@ class PlayerWindow(
         self._runtime_timer.start()
         self._refresh_runtime_tab()
 
-        self.statusBar().showMessage(
-            self._tr("status_translation_backend").format(
-                backend=configured_translation_backend(self._config),
-                voice=self._config.tts_voice,
-            )
-        )
+        self.statusBar().showMessage(self._runtime_startup_status_message())
         self._start_runtime_warmup()
 
     def _start_runtime_warmup(self) -> None:
         if not self._config.runtime_warmup_enabled:
+            return
+        if not has_runtime_warmup_stage(self._config):
             return
         app = QApplication.instance()
         if app is not None and app.platformName().lower() == "offscreen":
@@ -161,10 +160,52 @@ class PlayerWindow(
             return
         worker = RuntimeWarmupWorker(self._config, self)
         self._runtime_warmup_worker = worker
-        worker.status_changed.connect(self.statusBar().showMessage)
-        worker.failed.connect(lambda message: self.statusBar().showMessage(f"Runtime warm-up failed: {message}"))
+        worker.status_changed.connect(self._runtime_warmup_status_changed)
+        worker.finished_successfully.connect(self._runtime_warmup_finished_successfully)
+        worker.failed.connect(self._runtime_warmup_failed)
         worker.finished.connect(lambda worker=worker: self._runtime_warmup_worker_finished(worker))
         worker.start()
+
+    def _runtime_warmup_status_changed(self, message: str) -> None:
+        self._show_runtime_warmup_status(message)
+
+    def _runtime_warmup_finished_successfully(self, _timings: object) -> None:
+        if isinstance(_timings, dict) and not _timings:
+            return
+        self._show_runtime_warmup_status(self._tr("status_runtime_warmup_ready"))
+
+    def _runtime_warmup_failed(self, message: str) -> None:
+        self._show_runtime_warmup_status(self._tr("status_runtime_warmup_failed").format(detail=message))
+
+    def _show_runtime_warmup_status(self, message: str) -> None:
+        if self._can_replace_status_with_runtime_warmup():
+            self._runtime_warmup_last_status = message
+            self.statusBar().showMessage(message)
+
+    def _can_replace_status_with_runtime_warmup(self) -> bool:
+        current = self.statusBar().currentMessage()
+        previous_warmup_status = getattr(self, "_runtime_warmup_last_status", "")
+        warmup_messages = {
+            self._tr("warmup_loading_whisper"),
+            self._tr("warmup_loading_translation"),
+            self._tr("warmup_loading_transcript_cleanup"),
+            self._tr("warmup_loading_tts"),
+            self._tr("status_runtime_warmup_ready"),
+        }
+        warmup_failed_prefix = self._tr("status_runtime_warmup_failed").split("{detail}", 1)[0]
+        return (
+            not current
+            or current == previous_warmup_status
+            or current == self._runtime_startup_status_message()
+            or current in warmup_messages
+            or (bool(warmup_failed_prefix) and current.startswith(warmup_failed_prefix))
+        )
+
+    def _runtime_startup_status_message(self) -> str:
+        return self._tr("status_translation_backend").format(
+            backend=configured_translation_backend(self._config),
+            voice=self._config.tts_voice,
+        )
 
     def _runtime_warmup_worker_finished(self, worker: RuntimeWarmupWorker) -> None:
         if self._runtime_warmup_worker is worker:
