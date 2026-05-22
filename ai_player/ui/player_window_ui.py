@@ -210,6 +210,11 @@ class PlayerUiMixin:
                 border: 1px solid #d8dee7;
                 border-radius: 8px;
             }
+            QFrame#videoPanel[focusMedia="true"] {
+                background: #0b1020;
+                border: 0;
+                border-radius: 0;
+            }
             QFrame#sidePanel {
                 background: #fbfcfd;
                 border: 1px solid #d8dee7;
@@ -220,13 +225,23 @@ class PlayerUiMixin:
                 border: 1px solid #111827;
                 border-radius: 8px;
             }
+            QFrame#mediaFrame[focusMedia="true"] {
+                border: 0;
+                border-radius: 0;
+            }
             QFrame#videoPlaceholder {
                 background: #0b1020;
                 border-radius: 8px;
             }
+            QFrame#videoPlaceholder[focusMedia="true"] {
+                border-radius: 0;
+            }
             QStackedWidget#mediaStack {
                 background: #0b1020;
                 border-radius: 8px;
+            }
+            QStackedWidget#mediaStack[focusMedia="true"] {
+                border-radius: 0;
             }
             QLabel#subtitleOverlay {
                 background: transparent;

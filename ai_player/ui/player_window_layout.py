@@ -146,6 +146,7 @@ class PlayerLayoutMixin:
 
         source_bar = QFrame()
         source_bar.setObjectName("sourceBar")
+        self._source_bar = source_bar
         source_layout = QHBoxLayout(source_bar)
         source_layout.setContentsMargins(14, 9, 14, 9)
         source_layout.setSpacing(6)
@@ -163,6 +164,17 @@ class PlayerLayoutMixin:
         source_layout.addWidget(self._meeting_button)
         source_layout.addWidget(self._export_button)
         source_layout.addWidget(self._ui_language_combo)
+        self._header_controls = (
+            self._video_fullscreen_button,
+            self._layout_reset_button,
+            self._help_button,
+            self._open_file_button,
+            self._open_url_button,
+            self._open_document_button,
+            self._meeting_button,
+            self._export_button,
+            self._ui_language_combo,
+        )
 
         self._video_widget = QVideoWidget()
         self._video_widget.setObjectName("videoSurface")
@@ -241,7 +253,7 @@ class PlayerLayoutMixin:
         self._fullscreen_shortcut.activated.connect(self._toggle_video_fullscreen)
         self._fullscreen_escape_shortcut = QShortcut(QKeySequence("Esc"), self)
         self._fullscreen_escape_shortcut.setContext(Qt.ApplicationShortcut)
-        self._fullscreen_escape_shortcut.activated.connect(self._exit_video_fullscreen)
+        self._fullscreen_escape_shortcut.activated.connect(self._handle_escape_shortcut)
 
         self._play_button = self._icon_button(QStyle.StandardPixmap.SP_MediaPlay, "play")
         self._play_button.clicked.connect(self._play)
@@ -372,10 +384,12 @@ class PlayerLayoutMixin:
 
         video_panel = QFrame()
         video_panel.setObjectName("videoPanel")
+        self._video_panel = video_panel
         video_layout = QVBoxLayout(video_panel)
+        self._video_layout = video_layout
         video_layout.setContentsMargins(12, 12, 12, 12)
         video_layout.setSpacing(10)
-        video_layout.addWidget(self._media_frame, 1)
+        video_layout.addWidget(self._media_frame, 1, Qt.AlignCenter)
         video_layout.addWidget(controls)
         video_layout.setStretch(0, 1)
         video_layout.setStretch(1, 0)
@@ -1035,6 +1049,7 @@ class PlayerLayoutMixin:
         self._splitter.setSizes([900, 460])
 
         root = QVBoxLayout()
+        self._root_layout = root
         root.setContentsMargins(14, 12, 14, 10)
         root.setSpacing(10)
         root.addWidget(source_bar)

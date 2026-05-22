@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QScrollArea
+from PySide6.QtWidgets import QFrame, QScrollArea
 
 from ai_player.core.config import LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH, LOCAL_TRANSLATION_MODEL_PATH
+from ai_player.services.document_reader import DocumentPage
 from ai_player.ui.player_window import PlayerWindow
 
 
@@ -54,7 +55,11 @@ def test_media_frame_expands_when_settings_panel_is_hidden(qapp) -> None:
         window.show()
         qapp.processEvents()
         initial_width = window._media_frame.width()
+        media_layout = window._media_frame.parentWidget().layout()
         assert window._controls.isVisible()
+        assert window._source_bar.isVisible()
+        assert all(widget.isVisible() for widget in window._header_controls)
+        assert media_layout.itemAt(media_layout.indexOf(window._media_frame)).alignment() & Qt.AlignCenter
 
         window._set_sidebar_panel_visible(False)
         qapp.processEvents()
@@ -62,14 +67,169 @@ def test_media_frame_expands_when_settings_panel_is_hidden(qapp) -> None:
 
         assert window._sidebar_panel_hidden is True
         assert not window._controls.isVisible()
+        assert not window._source_bar.isVisible()
+        assert not window.statusBar().isVisible()
+        assert all(not widget.isVisible() for widget in window._header_controls)
+        assert not window._panel_toggle_button.isVisible()
+        assert window._root_layout.contentsMargins().left() == 0
+        assert window._video_layout.contentsMargins().left() == 0
+        assert window._video_panel.property("focusMedia") is True
+        assert window._media_frame.property("focusMedia") is True
+        assert window._video_panel.contentsRect().size() == window._video_panel.size()
+        assert window._media_frame.size() == window._video_panel.size()
+        assert window._media_frame.size() == window._splitter.size()
+        assert window._media_frame.size() == window.centralWidget().size()
         assert window._splitter.sizes()[1] == 0
         assert window._media_frame.width() > initial_width
 
-        window._set_sidebar_panel_visible(True)
+        window._handle_escape_shortcut()
         qapp.processEvents()
 
         assert window._sidebar_panel_hidden is False
         assert window._controls.isVisible()
+        assert window._source_bar.isVisible()
+        assert window.statusBar().isVisible()
+        assert all(widget.isVisible() for widget in window._header_controls)
+        assert window._root_layout.contentsMargins().left() == 14
+        assert window._video_layout.contentsMargins().left() == 12
+        assert window._video_panel.property("focusMedia") is False
+        assert window._media_frame.property("focusMedia") is False
+        assert window._video_panel.frameShape() == QFrame.Shape.NoFrame
+        assert window._media_frame.frameShape() == QFrame.Shape.NoFrame
+
+        window._set_sidebar_panel_visible(False)
+        qapp.processEvents()
+        window._reset_panel_sizes()
+        qapp.processEvents()
+
+        assert window._sidebar_panel_hidden is False
+        assert window._controls.isVisible()
+        assert window._source_bar.isVisible()
+        assert window.statusBar().isVisible()
+        assert all(widget.isVisible() for widget in window._header_controls)
+        assert window._root_layout.contentsMargins().left() == 14
+        assert window._video_layout.contentsMargins().left() == 12
+        assert window._video_panel.property("focusMedia") is False
+        assert window._media_frame.property("focusMedia") is False
+        assert window._video_panel.frameShape() == QFrame.Shape.NoFrame
+        assert window._media_frame.frameShape() == QFrame.Shape.NoFrame
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_escape_restores_full_ui_from_focus_media_fullscreen(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window.resize(1366, 768)
+        window.show()
+        qapp.processEvents()
+
+        window._set_sidebar_panel_visible(False)
+        qapp.processEvents()
+        window._set_video_fullscreen(True)
+        qapp.processEvents()
+
+        assert window._sidebar_panel_hidden is True
+        assert window._video_fullscreen is True
+
+        window._handle_escape_shortcut()
+        qapp.processEvents()
+        qapp.processEvents()
+
+        assert window._video_fullscreen is False
+        assert window._sidebar_panel_hidden is False
+        assert window._media_frame.parentWidget() is window._video_panel
+        assert window._controls.isVisible()
+        assert window._source_bar.isVisible()
+        assert window.statusBar().isVisible()
+        assert window._video_panel.property("focusMedia") is False
+        assert window._media_frame.property("focusMedia") is False
+        assert window._video_panel.frameShape() == QFrame.Shape.NoFrame
+        assert window._media_frame.frameShape() == QFrame.Shape.NoFrame
+        assert window._root_layout.contentsMargins().left() == 14
+        assert window._video_layout.contentsMargins().left() == 12
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_repeated_focus_media_toggle_preserves_layout_state(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window.resize(1366, 768)
+        window.show()
+        qapp.processEvents()
+
+        for _ in range(3):
+            window._set_sidebar_panel_visible(False)
+            qapp.processEvents()
+            qapp.processEvents()
+
+            assert window._sidebar_panel_hidden is True
+            assert window._media_frame.size() == window.centralWidget().size()
+            assert window._video_panel.contentsRect().size() == window._video_panel.size()
+            assert window._video_panel.frameShape() == QFrame.Shape.NoFrame
+            assert window._media_frame.frameShape() == QFrame.Shape.NoFrame
+
+            window._set_sidebar_panel_visible(True)
+            qapp.processEvents()
+            qapp.processEvents()
+
+            assert window._sidebar_panel_hidden is False
+            assert window._root_layout.contentsMargins().left() == 14
+            assert window._video_layout.contentsMargins().left() == 12
+            assert window._video_panel.property("focusMedia") is False
+            assert window._media_frame.property("focusMedia") is False
+            assert window._video_panel.frameShape() == QFrame.Shape.NoFrame
+            assert window._media_frame.frameShape() == QFrame.Shape.NoFrame
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_focus_media_refreshes_document_page_after_resize(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    try:
+        window.resize(1366, 768)
+        window.show()
+        qapp.processEvents()
+        window._set_document_mode(
+            True,
+            6000,
+            [
+                DocumentPage(
+                    number=1,
+                    title="Demo",
+                    text="Document page",
+                    start_seconds=0,
+                    duration_seconds=6,
+                )
+            ],
+        )
+        qapp.processEvents()
+
+        calls = []
+        original_update_document_page = window._update_document_page
+
+        def update_document_page_spy(force: bool = False) -> None:
+            calls.append(force)
+            original_update_document_page(force=force)
+
+        monkeypatch.setattr(window, "_update_document_page", update_document_page_spy)
+
+        window._set_sidebar_panel_visible(False)
+        qapp.processEvents()
+        qapp.processEvents()
+
+        assert True in calls
+
+        calls.clear()
+        window._set_sidebar_panel_visible(True)
+        qapp.processEvents()
+        qapp.processEvents()
+
+        assert True in calls
         window._settings_save_timer.stop()
     finally:
         window.close()

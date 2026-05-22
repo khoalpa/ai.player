@@ -10,6 +10,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, QUrl
 from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import QFrame
 
 from ai_player.services.ffmpeg import ffprobe_executable
 from ai_player.services.source_voice_filter import source_voice_filter_signature
@@ -385,10 +386,12 @@ class PlayerMediaMixin:
         if self._video_fullscreen:
             self._apply_fullscreen_media_size()
             return
-        if self._selected_video_aspect_ratio() == "9:16":
-            ratio_width, ratio_height = 9, 16
-        else:
-            ratio_width, ratio_height = 16, 9
+        if self._sidebar_panel_hidden:
+            self._media_frame.setMinimumSize(0, 0)
+            self._media_frame.setMaximumSize(16777215, 16777215)
+            self._position_subtitle_overlay()
+            self._refresh_document_page_for_media_size()
+            return
         panel = self._media_frame.parentWidget()
         if panel and panel.layout():
             margins = panel.layout().contentsMargins()
@@ -403,6 +406,10 @@ class PlayerMediaMixin:
             available = self._media_stack.size()
             max_width = max(160, available.width() - 4)
             max_height = max(120, available.height() - 4)
+        if self._selected_video_aspect_ratio() == "9:16":
+            ratio_width, ratio_height = 9, 16
+        else:
+            ratio_width, ratio_height = 16, 9
         width = max_width
         height = int(width * ratio_height / ratio_width)
         if height > max_height:
@@ -410,6 +417,11 @@ class PlayerMediaMixin:
             width = int(height * ratio_width / ratio_height)
         self._media_frame.setFixedSize(max(1, width), max(1, height))
         self._position_subtitle_overlay()
+        self._refresh_document_page_for_media_size()
+
+    def _refresh_document_page_for_media_size(self) -> None:
+        if self._document_mode and self._document_pages:
+            self._update_document_page(force=True)
 
     def _play_active_source(self) -> None:
         if self._document_mode:
@@ -692,6 +704,12 @@ class PlayerMediaMixin:
         if self._video_fullscreen:
             self._set_video_fullscreen(False)
 
+    def _handle_escape_shortcut(self) -> None:
+        if self._video_fullscreen:
+            self._set_video_fullscreen(False)
+        if self._sidebar_panel_hidden:
+            self._set_sidebar_panel_visible(True)
+
     def _set_video_fullscreen(self, enabled: bool) -> None:
         if enabled == self._video_fullscreen:
             return
@@ -785,7 +803,7 @@ class PlayerMediaMixin:
                 return True
             if event.type() == QEvent.Type.KeyPress and event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_F11):
                 if event.key() == Qt.Key.Key_Escape:
-                    self._exit_video_fullscreen()
+                    self._handle_escape_shortcut()
                 else:
                     self._toggle_video_fullscreen()
                 return True
@@ -799,13 +817,95 @@ class PlayerMediaMixin:
             return 0
         return self._controls.sizeHint().height()
 
+    def _set_header_controls_visible(self, visible: bool) -> None:
+        for widget in getattr(self, "_header_controls", ()):
+            widget.setVisible(visible)
+
+    def _set_focus_media_property(self, enabled: bool) -> None:
+        widgets = (
+            getattr(self, "_video_panel", None),
+            self._media_frame,
+            getattr(self, "_video_placeholder", None),
+            getattr(self, "_media_stack", None),
+        )
+        original_shapes = getattr(self, "_focus_media_frame_shapes", None)
+        if original_shapes is None:
+            original_shapes = {}
+            self._focus_media_frame_shapes = original_shapes
+        for widget in widgets:
+            if widget is None:
+                continue
+            original_shape = None
+            if isinstance(widget, QFrame):
+                key = id(widget)
+                original_shapes.setdefault(key, widget.frameShape())
+                original_shape = original_shapes[key]
+            widget.setProperty("focusMedia", enabled)
+            style = widget.style()
+            style.unpolish(widget)
+            style.polish(widget)
+            if original_shape is not None:
+                widget.setFrameShape(QFrame.Shape.NoFrame if enabled else original_shape)
+            widget.update()
+
+    @staticmethod
+    def _layout_margins(layout) -> tuple[int, int, int, int]:
+        margins = layout.contentsMargins()
+        return margins.left(), margins.top(), margins.right(), margins.bottom()
+
+    @staticmethod
+    def _set_layout_margins(layout, margins: tuple[int, int, int, int]) -> None:
+        layout.setContentsMargins(*margins)
+
+    def _focus_media_layout_state(self) -> dict[str, object]:
+        state = getattr(self, "_focus_media_layout_state_cache", None)
+        if state is None:
+            state = {}
+            if hasattr(self, "_root_layout"):
+                state["root_margins"] = self._layout_margins(self._root_layout)
+                state["root_spacing"] = self._root_layout.spacing()
+            if hasattr(self, "_video_layout"):
+                state["video_margins"] = self._layout_margins(self._video_layout)
+                state["video_spacing"] = self._video_layout.spacing()
+                if self._media_frame:
+                    item = self._video_layout.itemAt(self._video_layout.indexOf(self._media_frame))
+                    state["media_alignment"] = item.alignment() if item is not None else Qt.AlignCenter
+            self._focus_media_layout_state_cache = state
+        return state
+
+    def _set_focus_media_chrome(self, enabled: bool) -> None:
+        state = self._focus_media_layout_state()
+        self._set_focus_media_property(enabled)
+        if hasattr(self, "_root_layout"):
+            if enabled:
+                self._root_layout.setContentsMargins(0, 0, 0, 0)
+            else:
+                self._set_layout_margins(self._root_layout, state.get("root_margins", (14, 12, 14, 10)))
+            self._root_layout.setSpacing(0 if enabled else int(state.get("root_spacing", 10)))
+        if hasattr(self, "_video_layout"):
+            if enabled:
+                self._video_layout.setContentsMargins(0, 0, 0, 0)
+            else:
+                self._set_layout_margins(self._video_layout, state.get("video_margins", (12, 12, 12, 12)))
+            self._video_layout.setSpacing(0 if enabled else int(state.get("video_spacing", 10)))
+            if self._media_frame:
+                self._video_layout.setAlignment(
+                    self._media_frame,
+                    Qt.AlignmentFlag(0) if enabled else state.get("media_alignment", Qt.AlignCenter),
+                )
+        self.statusBar().setVisible(not enabled)
+
     def _set_sidebar_panel_visible(self, visible: bool) -> None:
         if not hasattr(self, "_settings_scroll"):
             return
         if visible:
+            self._set_focus_media_chrome(False)
+            if hasattr(self, "_source_bar"):
+                self._source_bar.show()
             self._settings_scroll.show()
             if hasattr(self, "_controls"):
                 self._controls.show()
+            self._set_header_controls_visible(True)
             self._sidebar_panel_hidden = False
             self._splitter.setSizes(self._sidebar_panel_sizes or [900, 460])
             self._panel_toggle_button.setText("")
@@ -815,9 +915,13 @@ class PlayerMediaMixin:
             sizes = self._splitter.sizes()
             if len(sizes) >= 2 and sizes[1] > 0:
                 self._sidebar_panel_sizes = sizes
+            self._set_focus_media_chrome(True)
+            if hasattr(self, "_source_bar"):
+                self._source_bar.hide()
             self._settings_scroll.hide()
             if hasattr(self, "_controls"):
                 self._controls.hide()
+            self._set_header_controls_visible(False)
             self._sidebar_panel_hidden = True
             self._panel_toggle_button.setText("")
             self._panel_toggle_button.setProperty("i18n_key", None)
@@ -826,16 +930,22 @@ class PlayerMediaMixin:
         QTimer.singleShot(0, self._apply_media_aspect_ratio)
 
     def _reset_panel_sizes(self, show_status: bool = True) -> None:
+        self._set_focus_media_chrome(False)
+        if hasattr(self, "_source_bar"):
+            self._source_bar.show()
         if hasattr(self, "_settings_scroll"):
             self._settings_scroll.show()
         if hasattr(self, "_controls"):
             self._controls.show()
+        self._set_header_controls_visible(True)
         self._sidebar_panel_hidden = False
         self._sidebar_panel_sizes = [900, 460]
         self._splitter.setSizes([900, 460])
         if hasattr(self, "_panel_toggle_button"):
             self._panel_toggle_button.setText("")
             self._panel_toggle_button.setProperty("i18n_key", None)
+        self._apply_media_aspect_ratio()
+        QTimer.singleShot(0, self._apply_media_aspect_ratio)
         if show_status:
             self.statusBar().showMessage(self._tr("status_panel_size_reset"))
 
