@@ -56,11 +56,19 @@ class VideoSourceWorker(QThread):
     failed = Signal(str)
     progress_changed = Signal(object)
 
-    def __init__(self, url: str, playback_quality: str, full_cache: bool = True, parent=None) -> None:
+    def __init__(
+        self,
+        url: str,
+        playback_quality: str,
+        full_cache: bool = True,
+        language_id: str | None = None,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._url = url
         self._playback_quality = playback_quality
         self._full_cache = full_cache
+        self._language_id = language_id
         self._stop_requested = False
 
     def stop(self) -> None:
@@ -76,6 +84,7 @@ class VideoSourceWorker(QThread):
                     full_cache=self._full_cache,
                     progress_callback=self.progress_changed.emit if self._full_cache else None,
                     cancel_callback=lambda: self._stop_requested or self.isInterruptionRequested(),
+                    language_id=self._language_id,
                 )
             )
         except Exception as exc:
@@ -87,11 +96,19 @@ class DocumentTranscriptWorker(QThread):
     ready = Signal(object, bool)
     failed = Signal(str)
 
-    def __init__(self, path: str, start_dubbing: bool, seconds_per_segment: int = 6, parent=None) -> None:
+    def __init__(
+        self,
+        path: str,
+        start_dubbing: bool,
+        seconds_per_segment: int = 6,
+        language_id: str | None = None,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._path = path
         self._start_dubbing = start_dubbing
         self._seconds_per_segment = seconds_per_segment
+        self._language_id = language_id
         self._stop_requested = False
 
     def stop(self) -> None:
@@ -104,6 +121,7 @@ class DocumentTranscriptWorker(QThread):
                 self._path,
                 seconds_per_segment=self._seconds_per_segment,
                 cancel_callback=lambda: self._stop_requested or self.isInterruptionRequested(),
+                language_id=self._language_id,
             )
         except Exception as exc:
             if not self._stop_requested and not self.isInterruptionRequested():

@@ -49,6 +49,24 @@ def test_non_speech_tts_text_keeps_spoken_words(value: str) -> None:
     assert not tts.is_non_speech_tts_text(value)
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("\u4f55\u3067\u3059\u304b", ""),
+        ("\u0110\u00e2y l\u00e0 \u5148\u8f29", "\u0110\u00e2y l\u00e0"),
+        ("AI Player", "AI Player"),
+        ("\u00ea \u00ea \u00ea", ""),
+    ],
+)
+def test_prepare_tts_text_removes_source_script_residue(value: str, expected: str) -> None:
+    assert tts.prepare_tts_text(value, "vi") == expected
+
+
+def test_pathological_tts_duration_detects_short_text_that_runs_too_long() -> None:
+    assert tts.is_pathological_tts_duration("l\u00e0 g\u00ec", 5.0, target_duration_seconds=1.0)
+    assert not tts.is_pathological_tts_duration("l\u00e0 g\u00ec", 1.2, target_duration_seconds=1.0)
+
+
 def test_cached_tts_provider_reuses_cached_audio(monkeypatch, tmp_path) -> None:
     calls: list[str] = []
     cache_path = tmp_path / "cache.wav"

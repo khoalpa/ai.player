@@ -11,6 +11,7 @@ from PySide6.QtCore import QThread, Signal
 
 from ai_player.core.config import PROJECT_ROOT, AppConfig
 from ai_player.core.gpu import ctranslate2_cuda_available, cuda_runtime_files_available
+from ai_player.core.i18n import ui_text
 from ai_player.core.offline_env import OfflineEnvironmentToken, pop_hf_offline_environment, push_hf_offline_environment
 from ai_player.core.performance import measure_stage
 from ai_player.pipeline.export_plan import (
@@ -132,6 +133,12 @@ class DubbingExportWorker(QThread):
             self._keep_partial_requested = True
         self._stop_requested = True
 
+    def _tr(self, key: str, **kwargs: object) -> str:
+        return ui_text(key, self._config.gui_language, **kwargs)
+
+    def _emit_progress(self, key: str, **kwargs: object) -> None:
+        self.progress_changed.emit(self._tr(key, **kwargs))
+
     def _should_abort(self) -> bool:
         return self._stop_requested and not self._keep_partial_requested
 
@@ -151,42 +158,40 @@ class DubbingExportWorker(QThread):
             offline_env = self._configure_offline_environment()
             self._voice_selector.reset()
             self._set_progress(0)
-            self.progress_changed.emit("Đang khởi tạo translator va TTS trong nền...")
+            self._emit_progress("export_progress_initializing")
             self._tts_provider = create_tts_provider(self._config)
             self._translator = get_shared_vietnamese_translator(self._config)
             self._set_progress(8)
             if self._config.audio_source in {"system", "microphone", "system_microphone", "subtitle"}:
-                raise RuntimeError(
-                    "Export hiện hỗ trợ nguồn Âm gốc và Transcript. Nguồn live/Subtitle chỉ hỗ trợ lồng tiếng khi phát."
-                )
+                raise RuntimeError(self._tr("export_error_source_unsupported"))
             if self._config.audio_source not in {"transcript", "document_editor"}:
                 self._validate_whisper_model()
             self._temp_dir = Path(tempfile.mkdtemp(prefix="ai-player-export-"))
             self._output_path.parent.mkdir(parents=True, exist_ok=True)
 
             if self._config.audio_source in {"transcript", "document_editor"}:
-                self.progress_changed.emit("Đang đọc transcript để export...")
+                self._emit_progress("export_progress_reading_transcript")
                 self._set_progress(12)
                 cues = self._build_transcript_cues()
             else:
-                self.progress_changed.emit("\u0110ang t\u00e1ch audio ngu\u1ed3n...")
+                self._emit_progress("export_progress_extracting_audio")
                 self._set_progress(10)
                 source_audio = self._temp_dir / "source.wav"
                 self._extract_source_audio(source_audio)
                 self._set_progress(18)
 
-                self.progress_changed.emit("\u0110ang nh\u1eadn di\u1ec7n v\u00e0 d\u1ecbch l\u1eddi tho\u1ea1i...")
+                self._emit_progress("export_progress_transcribing_translating")
                 self._set_progress(22)
                 cues = self._build_cues(source_audio)
             if self._should_abort():
                 return
             if not cues:
-                raise RuntimeError("Kh\u00f4ng t\u00ecm th\u1ea5y l\u1eddi tho\u1ea1i \u0111\u1ec3 export.")
+                raise RuntimeError(self._tr("export_error_no_dialogue"))
             if self._keep_partial_requested:
                 self._finalize_partial(cues)
                 return
 
-            self.progress_changed.emit("\u0110ang gh\u00e9p audio l\u1ed3ng ti\u1ebfng Vi\u1ec7t...")
+            self._emit_progress("export_progress_mixing_dubbed_audio")
             self._set_progress(76)
             dubbed_audio = self._temp_dir / "dubbed_vi.wav"
             self._build_aligned_audio(cues, dubbed_audio)
@@ -198,7 +203,7 @@ class DubbingExportWorker(QThread):
                 self._set_progress(92)
                 shutil.copyfile(dubbed_audio, self._output_path)
             elif self._export_kind == "video":
-                self.progress_changed.emit("\u0110ang xu\u1ea5t video MP4...")
+                self._emit_progress("export_progress_writing_mp4")
                 self._set_progress(90)
                 try:
                     self._mux_video(dubbed_audio, cancel_strategy="quit")
@@ -207,7 +212,7 @@ class DubbingExportWorker(QThread):
                         self.partial_finished.emit(str(self._output_path))
                     return
             else:
-                raise RuntimeError(f"Ki\u1ec3u export kh\u00f4ng h\u1ee3p l\u1ec7: {self._export_kind}")
+                raise RuntimeError(self._tr("export_error_invalid_kind", kind=self._export_kind))
             self._set_progress(100)
             self.export_finished.emit(str(self._output_path))
         except Exception as exc:
@@ -228,10 +233,7 @@ class DubbingExportWorker(QThread):
 
     def _validate_whisper_model(self) -> None:
         if self._config.whisper_offline and not Path(self._config.whisper_model).exists():
-            raise RuntimeError(
-                "Thi\u1ebfu model Whisper offline. Ch\u1ea1y scripts\\download_offline_models.ps1 "
-                "\u0111\u1ec3 t\u1ea3i model tr\u01b0\u1edbc khi export."
-            )
+            raise RuntimeError(self._tr("export_error_missing_whisper_offline"))
 
     def _selected_whisper_language(self) -> str | None:
         language = str(self._config.source_language or "auto").strip().lower()
@@ -241,7 +243,11 @@ class DubbingExportWorker(QThread):
         if self._temp_dir is None:
             return []
 
-        entries = _load_transcript_entries(self._config.transcript_path, self._config.segment_seconds)
+        entries = _load_transcript_entries(
+            self._config.transcript_path,
+            self._config.segment_seconds,
+            self._config.gui_language,
+        )
         tts_suffix = "wav" if normalize_tts_provider(self._config.tts_provider) == "vieneu" else "mp3"
         raw_items = []
         for index, entry in enumerate(entries):
@@ -294,7 +300,7 @@ class DubbingExportWorker(QThread):
                 cue = future.result()
                 cues.append(cue)
                 self._set_range_progress(18, 74, completed, total_entries)
-                self.progress_changed.emit(f"Dang tao giong Viet tai {_format_hhmmss(cue.start_seconds)}...")
+                self._emit_progress("export_progress_creating_voice_at", time=_format_hhmmss(cue.start_seconds))
         return sorted(cues, key=lambda cue: cue.start_seconds)
 
     def _build_transcript_export_cue(
@@ -434,9 +440,7 @@ class DubbingExportWorker(QThread):
                 cue = future.result()
                 cues.append(cue)
                 self._set_range_progress(35, 74, completed, total_segments)
-                self.progress_changed.emit(
-                    f"\u0110ang t\u1ea1o gi\u1ecdng Vi\u1ec7t t\u1ea1i {_format_hhmmss(cue.start_seconds)}..."
-                )
+                self._emit_progress("export_progress_creating_voice_at", time=_format_hhmmss(cue.start_seconds))
         return sorted(cues, key=lambda cue: cue.start_seconds)
 
     def _build_source_export_cue(
@@ -501,11 +505,11 @@ class DubbingExportWorker(QThread):
             )
         except Exception as exc:
             if self._whisper_device == "cpu" and self._whisper_compute_type != "int8":
-                self.progress_changed.emit("Whisper CPU không hỗ trợ float16, chuyển sang int8...")
+                self._emit_progress("worker_whisper_cpu_float16_fallback")
                 return self._switch_whisper_to_cpu(exc)
             if self._whisper_device == "cpu":
                 raise
-            self.progress_changed.emit("Whisper không chạy được CUDA/Auto, chuyển sang CPU...")
+            self._emit_progress("worker_whisper_cuda_fallback")
             return self._switch_whisper_to_cpu(exc)
 
     def _switch_whisper_to_cpu(self, _cause: Exception | None = None) -> SharedWhisperModel:
@@ -525,12 +529,12 @@ class DubbingExportWorker(QThread):
             return model.transcribe(str(source_audio), **kwargs)
         except Exception as exc:
             if self._whisper_device == "cpu" and self._whisper_compute_type != "int8":
-                self.progress_changed.emit("Whisper CPU không hỗ trợ compute hiện tại, chuyển sang int8...")
+                self._emit_progress("worker_whisper_cpu_compute_fallback")
                 model = self._switch_whisper_to_cpu(exc)
                 return model.transcribe(str(source_audio), **kwargs)
             if self._whisper_device == "cpu":
                 raise
-            self.progress_changed.emit("Whisper lỗi CUDA/CUBLAS, chuyển sang CPU...")
+            self._emit_progress("worker_whisper_cublas_fallback")
             model = self._switch_whisper_to_cpu(exc)
             return model.transcribe(str(source_audio), **kwargs)
 
@@ -680,7 +684,7 @@ class DubbingExportWorker(QThread):
         last_second = _cues_end_seconds(cues)
         if last_second <= 0.0:
             return
-        self.progress_changed.emit("Đang ghi phần video đã xuất...")
+        self._emit_progress("export_progress_writing_partial")
         self._set_progress(90)
         dubbed_audio = self._temp_dir / "dubbed_vi_partial.wav"
         self._build_aligned_audio(cues, dubbed_audio)
@@ -694,7 +698,7 @@ class DubbingExportWorker(QThread):
 
     def _run_ffmpeg(self, args: list[object], *, respect_stop: bool = True, **kwargs) -> None:
         if respect_stop and self._stop_requested:
-            raise RuntimeError("Export cancelled")
+            raise RuntimeError(self._tr("export_error_cancelled"))
         cancel_callback = self._is_stop_requested if respect_stop else (lambda: False)
         run_ffmpeg_cancelable(args, cancel_callback=cancel_callback, **kwargs)
 
@@ -736,6 +740,12 @@ class DocumentReviewExportWorker(QThread):
             self._keep_partial_requested = True
         self._stop_requested = True
 
+    def _tr(self, key: str, **kwargs: object) -> str:
+        return ui_text(key, self._config.gui_language, **kwargs)
+
+    def _emit_progress(self, key: str, **kwargs: object) -> None:
+        self.progress_changed.emit(self._tr(key, **kwargs))
+
     def _should_abort(self) -> bool:
         return self._stop_requested and not getattr(self, "_keep_partial_requested", False)
 
@@ -754,25 +764,25 @@ class DocumentReviewExportWorker(QThread):
         try:
             offline_env = self._configure_offline_environment()
             self._set_progress(0)
-            self.progress_changed.emit("Đang khởi tạo translator và TTS trong nền...")
+            self._emit_progress("export_progress_initializing")
             self._tts_provider = create_tts_provider(self._config)
             self._translator = get_shared_vietnamese_translator(self._config)
             self._set_progress(8)
             if not self._pages:
-                raise RuntimeError("Chưa có trang tài liệu để export.")
+                raise RuntimeError(self._tr("document_export_error_no_pages"))
             if not self._transcript_path.exists():
-                raise RuntimeError("Chưa có transcript tài liệu để export.")
+                raise RuntimeError(self._tr("document_export_error_no_transcript"))
 
             self._temp_dir = Path(tempfile.mkdtemp(prefix="ai-player-document-export-"))
             self._output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            self.progress_changed.emit("Đang đọc transcript tài liệu...")
+            self._emit_progress("document_export_progress_reading_transcript")
             self._set_progress(12)
             transcript_cues = _read_srt_cues(self._transcript_path)
             if not transcript_cues:
-                raise RuntimeError("Transcript tài liệu không có nội dung để tạo giọng đọc.")
+                raise RuntimeError(self._tr("document_export_error_empty_transcript"))
 
-            self.progress_changed.emit("Đang dịch và tạo giọng đọc chất lượng cao...")
+            self._emit_progress("document_export_progress_translating_voice")
             self._set_progress(18)
             audio_cues = self._build_audio_cues(transcript_cues)
             if self._should_abort():
@@ -782,7 +792,7 @@ class DocumentReviewExportWorker(QThread):
                 return
 
             dubbed_audio = self._temp_dir / "document-dubbed.wav"
-            self.progress_changed.emit("Đang ghép audio lôgng tiếng Việt...")
+            self._emit_progress("document_export_progress_mixing_audio")
             self._set_progress(76)
             self._build_aligned_audio(audio_cues, dubbed_audio)
             self._set_progress(84)
@@ -790,12 +800,12 @@ class DocumentReviewExportWorker(QThread):
                 return
             audio_duration = _duration_seconds(dubbed_audio)
 
-            self.progress_changed.emit("Đang dừng video tài liệu để xem lại...")
+            self._emit_progress("document_export_progress_building_review_video")
             self._set_progress(86)
             review_video = self._temp_dir / "document-pages.mp4"
             self._build_document_video(review_video, audio_duration)
 
-            self.progress_changed.emit("Đang xuất MP4 chất lượng cao...")
+            self._emit_progress("document_export_progress_writing_mp4")
             self._set_progress(92)
             try:
                 self._mux_document_video(review_video, dubbed_audio, cancel_strategy="quit")
@@ -867,7 +877,10 @@ class DocumentReviewExportWorker(QThread):
                 cue = future.result()
                 cues.append(cue)
                 self._set_range_progress(18, 74, completed, total_cues)
-                self.progress_changed.emit(f"Dang tao giong doc tai {_format_hhmmss(cue.start_seconds)}...")
+                self._emit_progress(
+                    "document_export_progress_creating_voice_at",
+                    time=_format_hhmmss(cue.start_seconds),
+                )
         return sorted(cues, key=lambda cue: cue.start_seconds)
 
     def _build_document_export_cue(
@@ -986,7 +999,7 @@ class DocumentReviewExportWorker(QThread):
             if candidate.exists():
                 return candidate
         if self._temp_dir is None:
-            raise RuntimeError("Temp dir chua san sang.")
+            raise RuntimeError(self._tr("document_export_error_temp_missing"))
         return _render_text_page_image(
             page.title or f"Trang {index}",
             page.text,
@@ -1030,7 +1043,7 @@ class DocumentReviewExportWorker(QThread):
     def _finalize_partial(self, cues: list[ExportCue]) -> None:
         if self._temp_dir is None or not cues:
             return
-        self.progress_changed.emit("Đang ghi phần video đã xuất...")
+        self._emit_progress("export_progress_writing_partial")
         self._set_progress(90)
         dubbed_audio = self._temp_dir / "document-dubbed-partial.wav"
         self._build_aligned_audio(cues, dubbed_audio)
@@ -1097,7 +1110,7 @@ class DocumentReviewExportWorker(QThread):
 
     def _run_ffmpeg(self, args: list[object], *, respect_stop: bool = True, **kwargs) -> None:
         if respect_stop and self._stop_requested:
-            raise RuntimeError("Export cancelled")
+            raise RuntimeError(self._tr("export_error_cancelled"))
         cancel_callback = self._is_stop_requested if respect_stop else (lambda: False)
         run_ffmpeg_cancelable(args, cancel_callback=cancel_callback, **kwargs)
 

@@ -125,6 +125,39 @@ def test_resolve_page_url_without_full_cache_returns_stream_url(monkeypatch) -> 
     assert "progress_hooks" not in captured_options
 
 
+def test_resolve_page_url_cleans_ytdlp_color_codes(monkeypatch) -> None:
+    class FakeYoutubeDL:
+        def __init__(self, _options):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _url, download):
+            assert download is True
+            raise RuntimeError("\x1b[0;31mERROR:\x1b[0m [youtube] demo: This video is not available")
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", SimpleNamespace(YoutubeDL=FakeYoutubeDL))
+
+    with pytest.raises(video_source.VideoSourceError) as exc_info:
+        video_source.resolve_video_source("https://youtu.be/demo", full_cache=True)
+
+    message = str(exc_info.value)
+    assert "This video is not available" in message
+    assert "ERROR:" not in message
+    assert "\x1b" not in message
+    assert "[0;31m" not in message
+
+
+def test_clean_download_error_removes_bare_ansi_codes() -> None:
+    message = video_source._clean_download_error("[][0;31mERROR:[][0m [youtube] demo: unavailable")
+
+    assert message == "[youtube] demo: unavailable"
+
+
 def test_buomtv_url_without_full_cache_uses_pwa_stream(monkeypatch) -> None:
     class FakeResponse:
         def __init__(self, payload):
@@ -192,7 +225,7 @@ def test_buomtv_url_wraps_http_errors(monkeypatch) -> None:
 
     monkeypatch.setitem(sys.modules, "requests", SimpleNamespace(Session=FakeSession))
 
-    with pytest.raises(video_source.VideoSourceError, match="BuomTV token API loi HTTP"):
+    with pytest.raises(video_source.VideoSourceError, match="BuomTV token API lỗi HTTP"):
         video_source.resolve_video_source("https://buomtv.life/movie/SSIS-245/106746", full_cache=False)
 
 
@@ -210,7 +243,7 @@ def test_buomtv_url_wraps_invalid_json(monkeypatch) -> None:
 
     monkeypatch.setitem(sys.modules, "requests", SimpleNamespace(Session=FakeSession))
 
-    with pytest.raises(video_source.VideoSourceError, match="BuomTV token API khong tra JSON hop le"):
+    with pytest.raises(video_source.VideoSourceError, match="BuomTV token API không trả JSON hợp lệ"):
         video_source.resolve_video_source("https://buomtv.life/movie/SSIS-245/106746", full_cache=False)
 
 

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
+from ai_player.core.i18n import ui_text
+
 
 class VideoSourceError(RuntimeError):
     pass
@@ -78,6 +80,8 @@ DIRECT_MEDIA_EXTENSIONS = {
 }
 CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 CACHE_MAX_BYTES = 20 * 1024 * 1024 * 1024
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+BARE_ANSI_COLOR_RE = re.compile(r"(?:\[\])?\[[0-9;]{1,12}m")
 
 
 def resolve_video_source(
@@ -87,13 +91,14 @@ def resolve_video_source(
     cancel_callback=None,
     *,
     full_cache: bool = True,
+    language_id: str | None = None,
 ) -> VideoSource:
     url = value.strip()
     if not url:
-        raise VideoSourceError("URL rỗng.")
+        raise VideoSourceError(ui_text("video_error_empty_url", language_id))
 
     if _should_resolve_with_ytdlp(url):
-        return _resolve_page_url(url, playback_quality, full_cache, progress_callback, cancel_callback)
+        return _resolve_page_url(url, playback_quality, full_cache, progress_callback, cancel_callback, language_id)
 
     return VideoSource(input_url=url, playback_url=url, title=url, is_resolved=False)
 
@@ -123,18 +128,16 @@ def _resolve_page_url(
     full_cache: bool,
     progress_callback=None,
     cancel_callback=None,
+    language_id: str | None = None,
 ) -> VideoSource:
     provider = _provider_name(url)
     if provider == "buomtv":
-        return _resolve_buomtv_url(url, playback_quality, full_cache, progress_callback, cancel_callback)
+        return _resolve_buomtv_url(url, playback_quality, full_cache, progress_callback, cancel_callback, language_id)
 
     try:
         import yt_dlp
     except ImportError as exc:
-        raise VideoSourceError(
-            "Thiếu yt-dlp để mở link trang video. Chạy: "
-            ".\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt"
-        ) from exc
+        raise VideoSourceError(ui_text("video_error_missing_ytdlp_page", language_id)) from exc
 
     provider = _provider_name(url)
     quality = _normalize_playback_quality(playback_quality)
@@ -142,7 +145,7 @@ def _resolve_page_url(
 
     def check_cancelled() -> None:
         if cancel_callback is not None and cancel_callback():
-            raise VideoSourceCancelled("Da huy mo URL.")
+            raise VideoSourceCancelled(ui_text("video_error_open_cancelled", language_id))
 
     check_cancelled()
     if full_cache and progress_callback is not None:
@@ -204,12 +207,14 @@ def _resolve_page_url(
     except VideoSourceCancelled:
         raise
     except Exception as exc:
-        raise VideoSourceError(f"Không tải được video từ {provider}: {exc}") from exc
+        raise VideoSourceError(
+            ui_text("video_error_download_failed", language_id, provider=provider, detail=_clean_download_error(exc))
+        ) from exc
 
     if not full_cache:
         playback_url = _stream_playback_url(info)
         if not playback_url:
-            raise VideoSourceError(f"Khong tim thay URL phat truc tiep tu {provider}.")
+            raise VideoSourceError(ui_text("video_error_stream_url_missing", language_id, provider=provider))
         return VideoSource(
             input_url=url,
             playback_url=playback_url,
@@ -222,7 +227,7 @@ def _resolve_page_url(
         cache_dir = _source_cache_dir(provider, quality)
     local_path = _downloaded_file_path(info, cache_dir)
     if not local_path:
-        raise VideoSourceError(f"Không tìm thấy file video {provider} đã tải.")
+        raise VideoSourceError(ui_text("video_error_downloaded_file_missing", language_id, provider=provider))
 
     if progress_callback is not None:
         progress_callback(
@@ -368,16 +373,17 @@ def _resolve_buomtv_url(
     full_cache: bool,
     progress_callback=None,
     cancel_callback=None,
+    language_id: str | None = None,
 ) -> VideoSource:
     provider = "buomtv"
     quality = _normalize_playback_quality(playback_quality)
 
     def check_cancelled() -> None:
         if cancel_callback is not None and cancel_callback():
-            raise VideoSourceCancelled("Da huy mo URL.")
+            raise VideoSourceCancelled(ui_text("video_error_open_cancelled", language_id))
 
     check_cancelled()
-    video_info = _fetch_buomtv_video_info(url)
+    video_info = _fetch_buomtv_video_info(url, language_id)
     title = str(video_info.get("video_title") or url)
     stream_path = _select_buomtv_stream_url(
         video_info.get("video_urls") or {},
@@ -385,7 +391,7 @@ def _resolve_buomtv_url(
         str(video_info.get("video_main_tag") or ""),
     )
     if not stream_path:
-        raise VideoSourceError("Khong tim thay URL phat tu BuomTV.")
+        raise VideoSourceError(ui_text("video_error_buomtv_stream_missing", language_id))
     stream_url = _absolute_buomtv_url(url, stream_path)
 
     if not full_cache:
@@ -394,10 +400,7 @@ def _resolve_buomtv_url(
     try:
         import yt_dlp
     except ImportError as exc:
-        raise VideoSourceError(
-            "Thieu yt-dlp de cache link BuomTV. Chay: "
-            ".\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt"
-        ) from exc
+        raise VideoSourceError(ui_text("video_error_missing_ytdlp_buomtv", language_id)) from exc
 
     cache_dir = _source_cache_dir(provider, quality)
     if progress_callback is not None:
@@ -456,11 +459,13 @@ def _resolve_buomtv_url(
     except VideoSourceCancelled:
         raise
     except Exception as exc:
-        raise VideoSourceError(f"Khong tai duoc video tu BuomTV: {exc}") from exc
+        raise VideoSourceError(
+            ui_text("video_error_buomtv_download_failed", language_id, detail=_clean_download_error(exc))
+        ) from exc
 
     local_path = _downloaded_file_path(info, cache_dir)
     if not local_path:
-        raise VideoSourceError("Khong tim thay file video BuomTV da tai.")
+        raise VideoSourceError(ui_text("video_error_buomtv_downloaded_file_missing", language_id))
 
     if progress_callback is not None:
         progress_callback(
@@ -477,14 +482,14 @@ def _resolve_buomtv_url(
     return VideoSource(input_url=url, playback_url=local_path, title=title, provider=provider, is_resolved=True)
 
 
-def _fetch_buomtv_video_info(url: str) -> dict:
+def _fetch_buomtv_video_info(url: str, language_id: str | None = None) -> dict:
     try:
         import requests
     except ImportError as exc:
-        raise VideoSourceError("Thieu requests de mo link BuomTV.") from exc
+        raise VideoSourceError(ui_text("video_error_missing_requests_buomtv", language_id)) from exc
 
     parsed = urlparse(url.strip())
-    video_type, video_id = _parse_buomtv_video_path(parsed.path)
+    video_type, video_id = _parse_buomtv_video_path(parsed.path, language_id)
     api_base = _buomtv_api_base(parsed)
     headers = _buomtv_headers(url)
     session = requests.Session()
@@ -497,11 +502,11 @@ def _fetch_buomtv_video_info(url: str) -> dict:
             timeout=30,
         )
     except Exception as exc:
-        raise VideoSourceError(f"Khong goi duoc API token BuomTV: {exc}") from exc
-    token_payload = _buomtv_response_json(token_response, "token")
+        raise VideoSourceError(ui_text("video_error_buomtv_token_api_failed", language_id, detail=exc)) from exc
+    token_payload = _buomtv_response_json(token_response, "token", language_id)
     token = str((token_payload.get("response") or {}).get("token") or "")
     if not token:
-        raise VideoSourceError("Khong lay duoc token BuomTV.")
+        raise VideoSourceError(ui_text("video_error_buomtv_token_missing", language_id))
 
     info_url = (
         f"{api_base}/pwa/video/info/{quote(video_id)}"
@@ -510,32 +515,32 @@ def _fetch_buomtv_video_info(url: str) -> dict:
     try:
         info_response = session.get(info_url, headers=headers, timeout=30)
     except Exception as exc:
-        raise VideoSourceError(f"Khong goi duoc API video BuomTV: {exc}") from exc
-    payload = _buomtv_response_json(info_response, "video")
+        raise VideoSourceError(ui_text("video_error_buomtv_video_api_failed", language_id, detail=exc)) from exc
+    payload = _buomtv_response_json(info_response, "video", language_id)
     status = payload.get("status") or {}
     if status.get("code") != 200:
-        message = str(status.get("message") or "loi khong xac dinh")
-        raise VideoSourceError(f"BuomTV tra loi loi: {message}")
+        message = str(status.get("message") or ui_text("video_error_unknown", language_id))
+        raise VideoSourceError(ui_text("video_error_buomtv_status", language_id, detail=message))
     response = payload.get("response") or {}
     return response if isinstance(response, dict) else {}
 
 
-def _buomtv_response_json(response, context: str) -> dict:
+def _buomtv_response_json(response, context: str, language_id: str | None = None) -> dict:
     try:
         if hasattr(response, "raise_for_status"):
             response.raise_for_status()
     except Exception as exc:
-        raise VideoSourceError(f"BuomTV {context} API loi HTTP: {exc}") from exc
+        raise VideoSourceError(ui_text("video_error_buomtv_http", language_id, context=context, detail=exc)) from exc
     try:
         payload = response.json()
     except ValueError as exc:
-        raise VideoSourceError(f"BuomTV {context} API khong tra JSON hop le.") from exc
+        raise VideoSourceError(ui_text("video_error_buomtv_invalid_json", language_id, context=context)) from exc
     if not isinstance(payload, dict):
-        raise VideoSourceError(f"BuomTV {context} API tra du lieu khong hop le.")
+        raise VideoSourceError(ui_text("video_error_buomtv_invalid_data", language_id, context=context))
     return payload
 
 
-def _parse_buomtv_video_path(path: str) -> tuple[str, str]:
+def _parse_buomtv_video_path(path: str, language_id: str | None = None) -> tuple[str, str]:
     parts = [part for part in path.split("/") if part]
     if parts and parts[0] in {"th", "en", "cn"}:
         parts = parts[1:]
@@ -545,7 +550,7 @@ def _parse_buomtv_video_path(path: str) -> tuple[str, str]:
         return "short", parts[1]
     if len(parts) >= 2 and parts[0] == "anime":
         return "anime", parts[1]
-    raise VideoSourceError("URL BuomTV khong dung dinh dang video.")
+    raise VideoSourceError(ui_text("video_error_buomtv_bad_url", language_id))
 
 
 def _select_buomtv_stream_url(video_urls: dict, playback_quality: str, video_main_tag: str = "") -> str:
@@ -676,6 +681,17 @@ def _downloaded_file_path(info: dict, cache_dir: Path) -> str:
             if path.is_file() and path.suffix.lower() not in {".part", ".ytdl"}:
                 return str(path)
     return ""
+
+
+def _clean_download_error(value: object) -> str:
+    text = str(value or "").replace("\r", "\n")
+    text = ANSI_ESCAPE_RE.sub("", text)
+    text = BARE_ANSI_COLOR_RE.sub("", text)
+    lines = [" ".join(line.split()) for line in text.splitlines()]
+    text = " ".join(line for line in lines if line)
+    text = re.sub(r"\bERROR:\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or value.__class__.__name__
 
 
 def _stream_playback_url(info: dict) -> str:

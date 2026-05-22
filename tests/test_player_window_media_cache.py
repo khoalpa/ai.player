@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import sys
 import tempfile
+from pathlib import Path
 
+from ai_player.services import demucs_separation
 from ai_player.ui.player_window_media import PlayerMediaMixin
 
 
@@ -78,3 +81,11 @@ def test_qt_compatible_probe_is_cached_until_file_changes(monkeypatch, tmp_path)
 
     assert PlayerMediaMixin._is_qt_compatible_local_video(str(source))
     assert calls["count"] == 2
+
+
+def test_frozen_demucs_command_uses_app_runner(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(Path("AI Player.exe")))
+    monkeypatch.delenv("AI_PLAYER_DEMUCS_PATH", raising=False)
+
+    assert demucs_separation.demucs_command() == [str(Path("AI Player.exe")), "--demucs-runner"]

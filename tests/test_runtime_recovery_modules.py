@@ -90,14 +90,21 @@ def test_demucs_python_does_not_use_frozen_app_executable(monkeypatch, tmp_path)
     assert demucs_separation._demucs_python() == ""
 
 
-def test_demucs_command_uses_executable_when_frozen(monkeypatch, tmp_path) -> None:
+def test_demucs_command_uses_bundled_runner_when_frozen(monkeypatch, tmp_path) -> None:
     external_python = tmp_path / "python.exe"
     external_python.write_bytes(b"")
     monkeypatch.setenv("AI_PLAYER_DEMUCS_PYTHON", str(external_python))
     monkeypatch.setattr(demucs_separation.sys, "frozen", True, raising=False)
-    monkeypatch.setattr(demucs_separation, "demucs_executable", lambda: "demucs.exe")
+    monkeypatch.setattr(demucs_separation.sys, "executable", str(tmp_path / "AI Player.exe"))
 
-    assert demucs_separation.demucs_command() == ["demucs.exe"]
+    assert demucs_separation.demucs_command() == [str(tmp_path / "AI Player.exe"), "--demucs-runner"]
+
+
+def test_configured_demucs_path_still_wins_when_frozen(monkeypatch) -> None:
+    monkeypatch.setenv("AI_PLAYER_DEMUCS_PATH", "custom-demucs.exe")
+    monkeypatch.setattr(demucs_separation.sys, "frozen", True, raising=False)
+
+    assert demucs_separation.demucs_command() == ["custom-demucs.exe"]
 
 
 def test_runtime_caches_clear_without_error() -> None:

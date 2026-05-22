@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
+from importlib.util import find_spec
 
 from PyInstaller.utils.hooks import collect_all
 
@@ -17,6 +18,10 @@ tmp_ret = collect_all('PySide6')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('edge_tts')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+for package_name in ('demucs', 'dora', 'julius', 'lameenc'):
+    if find_spec(package_name) is not None:
+        tmp_ret = collect_all(package_name)
+        datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(

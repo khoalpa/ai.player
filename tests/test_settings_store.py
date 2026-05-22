@@ -72,6 +72,75 @@ def test_load_app_config_coerces_numeric_values(tmp_path, monkeypatch) -> None:
     assert config.dubbing_speed_min == 0.85
 
 
+def test_load_app_config_reads_preserved_source_terms_from_file_not_settings(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    terms_file = tmp_path / "preserved_source_terms.txt"
+    terms_file.write_text("OpenAI\n先生\n", encoding="utf-8")
+    settings_file.write_text(
+        json.dumps(
+            {
+                "preserve_source_terms": True,
+                "preserved_source_terms": "STALE",
+                "preserved_english_terms": "LEGACY_STALE",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+    monkeypatch.setattr(
+        settings_store,
+        "read_preserved_source_terms_file",
+        lambda: terms_file.read_text(encoding="utf-8").strip(),
+    )
+
+    config = settings_store.load_app_config(AppConfig())
+
+    assert config.preserved_source_terms == "OpenAI\n先生"
+    assert config.preserved_english_terms == "OpenAI\n先生"
+
+
+def test_load_app_config_refreshes_preserved_source_terms_from_file_without_settings(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "missing-settings.json"
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+    monkeypatch.setattr(settings_store, "read_preserved_source_terms_file", lambda: "OpenAI\nNLLB")
+
+    config = settings_store.load_app_config(AppConfig(preserved_source_terms="STALE"))
+
+    assert config.preserved_source_terms == "OpenAI\nNLLB"
+    assert config.preserved_english_terms == "OpenAI\nNLLB"
+
+
+def test_load_app_config_migrates_legacy_english_terms_flag_to_source_flag(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"preserve_english_terms": False}), encoding="utf-8")
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+    monkeypatch.setattr(settings_store, "read_preserved_source_terms_file", lambda: "OpenAI")
+
+    config = settings_store.load_app_config(AppConfig())
+
+    assert config.preserve_source_terms is False
+    assert config.preserve_english_terms is False
+
+
+def test_save_app_config_writes_term_flags_but_not_term_content(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+    config = AppConfig(
+        preserve_source_terms=True,
+        preserved_source_terms="OpenAI\n오빠",
+        preserve_english_terms=False,
+        preserved_english_terms="legacy",
+    )
+
+    settings_store.save_app_config(config)
+    data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+
+    assert data["preserve_source_terms"] is True
+    assert data["preserve_english_terms"] is True
+    assert data["preserved_source_terms"] == ""
+    assert data["preserved_english_terms"] == ""
+
+
 def test_load_app_config_migrates_removed_translation_provider_and_models(tmp_path, monkeypatch) -> None:
     settings_file = tmp_path / "settings.json"
     settings_file.write_text(

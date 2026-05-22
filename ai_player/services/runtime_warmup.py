@@ -4,6 +4,7 @@ import time
 from collections.abc import Callable
 
 from ai_player.core.config import RUNTIME_DIR, AppConfig
+from ai_player.core.i18n import ui_text
 from ai_player.core.performance import measure_stage
 from ai_player.services.transcript_cleanup import TranscriptCleaner
 from ai_player.services.translation import effective_translator_provider
@@ -36,22 +37,22 @@ def warm_runtime_components(
 
     if getattr(config, "runtime_warmup_whisper", True):
         check_cancelled()
-        _emit(progress_callback, "Đang nạp sẵn Whisper...")
+        _emit(progress_callback, ui_text("warmup_loading_whisper", config.gui_language))
         timings["whisper_load_seconds"] = _time_call(lambda: _warm_whisper(config))
 
     if getattr(config, "runtime_warmup_translation", True) and effective_translator_provider(config) != "none":
         check_cancelled()
-        _emit(progress_callback, "Đang nạp sẵn bộ dịch...")
+        _emit(progress_callback, ui_text("warmup_loading_translation", config.gui_language))
         timings["translation_seconds"] = _time_call(lambda: _warm_translation(config))
 
     if getattr(config, "transcript_cleanup_mode", "off") != "off":
         check_cancelled()
-        _emit(progress_callback, "Đang nạp sẵn bộ làm sạch lời thoại...")
+        _emit(progress_callback, ui_text("warmup_loading_transcript_cleanup", config.gui_language))
         timings["transcript_cleanup_seconds"] = _time_call(lambda: _warm_transcript_cleanup(config))
 
     if getattr(config, "runtime_warmup_tts", True) and normalize_tts_provider(config.tts_provider) != "none":
         check_cancelled()
-        _emit(progress_callback, "Đang nạp sẵn TTS...")
+        _emit(progress_callback, ui_text("warmup_loading_tts", config.gui_language))
         timings["tts_seconds"] = _time_call(lambda: _warm_tts(config))
 
     check_cancelled()

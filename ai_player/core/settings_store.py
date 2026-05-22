@@ -10,6 +10,8 @@ from ai_player.core.config import (
     LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH,
     AppConfig,
     preserved_english_terms_file_path,
+    preserved_source_terms_file_path,
+    read_preserved_source_terms_file,
 )
 
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
@@ -17,6 +19,9 @@ SESSION_ONLY_DEFAULTS = {
     "audio_source": "original",
     "transcript_path": "",
     "dubbing_enabled_by_default": False,
+    "preserved_source_terms": "",
+    "preserved_english_terms": "",
+    "preserved_source_terms_file": str(preserved_source_terms_file_path()),
     "preserved_english_terms_file": str(preserved_english_terms_file_path()),
 }
 SECRET_SETTINGS = {
@@ -25,13 +30,14 @@ SECRET_SETTINGS = {
 
 
 def load_app_config(base: AppConfig | None = None) -> AppConfig:
-    config = base or AppConfig.from_env()
+    config = _with_preserved_terms_from_file(base or AppConfig.from_env())
     data = _read_settings()
     if not data:
         return config
     for name in set(SESSION_ONLY_DEFAULTS) | SECRET_SETTINGS:
         data.pop(name, None)
     _migrate_removed_local_models(data)
+    _migrate_preserved_source_flags(data)
 
     values: dict[str, Any] = {}
     field_map = {field.name: field for field in fields(AppConfig)}
@@ -40,7 +46,12 @@ def load_app_config(base: AppConfig | None = None) -> AppConfig:
         if field is None:
             continue
         values[name] = _coerce_value(value, getattr(config, name))
-    return replace(config, **values)
+    return _with_preserved_terms_from_file(replace(config, **values))
+
+
+def _with_preserved_terms_from_file(config: AppConfig) -> AppConfig:
+    preserved_terms = read_preserved_source_terms_file()
+    return replace(config, preserved_source_terms=preserved_terms, preserved_english_terms=preserved_terms)
 
 
 def _migrate_removed_local_models(data: dict[str, Any]) -> None:
@@ -73,10 +84,19 @@ def _migrate_removed_local_models(data: dict[str, Any]) -> None:
         data["transcript_cleanup_model"] = str(LOCAL_TRANSCRIPT_CLEANUP_MODEL_PATH)
 
 
+def _migrate_preserved_source_flags(data: dict[str, Any]) -> None:
+    if "preserve_source_terms" not in data and "preserve_english_terms" in data:
+        data["preserve_source_terms"] = data["preserve_english_terms"]
+    if "preserve_source_terms" in data:
+        data["preserve_english_terms"] = data["preserve_source_terms"]
+
+
 def save_app_config(config: AppConfig) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     data = {field.name: getattr(config, field.name) for field in fields(AppConfig) if field.name not in SECRET_SETTINGS}
     data.update(SESSION_ONLY_DEFAULTS)
+    data["preserve_english_terms"] = bool(config.preserve_source_terms)
+    data["preserved_source_terms_file"] = str(preserved_source_terms_file_path())
     data["preserved_english_terms_file"] = str(preserved_english_terms_file_path())
     SETTINGS_FILE.write_text(
         json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),

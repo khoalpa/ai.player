@@ -64,6 +64,8 @@ def translation_runtime_key(config: AppConfig) -> TranslationRuntimeKey:
         max_tokens=int(config.translation_max_tokens),
         beams=int(config.translation_num_beams),
         target_language=str(config.target_language),
-        preserve_terms=bool(config.preserve_english_terms),
-        preserved_terms=str(config.preserved_english_terms),
+        preserve_terms=bool(config.preserve_source_terms),
+        preserved_terms="\n".join(
+            part for part in (str(config.preserved_source_terms), str(config.preserved_english_terms)) if part.strip()
+        ),
     )

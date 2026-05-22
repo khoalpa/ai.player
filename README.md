@@ -29,7 +29,7 @@ AI Player là ứng dụng Windows dùng PySide6 để xem video, đọc tài li
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e ".[dev,packaging]"
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,packaging,audio-separation]"
 ```
 
 Nếu chỉ chạy app, có thể dùng:
@@ -183,6 +183,8 @@ $env:AI_PLAYER_TRANSLATOR_PROVIDER="nllb_ct2"    # nllb_ct2, nllb, none
 $env:AI_PLAYER_TRANSLATION_MODEL="models\translation\nllb-200-distilled-600M-ct2-int8"
 $env:AI_PLAYER_TRANSLATION_DEVICE="auto"
 $env:AI_PLAYER_TARGET_LANGUAGE="vi"
+$env:AI_PLAYER_PRESERVE_SOURCE_TERMS="1"
+$env:AI_PLAYER_PRESERVED_SOURCE_TERMS="OpenAI, API, NLLB, 先生, 오빠, gpt-4.1-mini"
 
 $env:AI_PLAYER_TTS_PROVIDER="vieneu"             # vieneu, edge, none
 $env:AI_PLAYER_TTS_VOICE="Doan"

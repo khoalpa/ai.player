@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QLineEdit, QPushButton, QSlider, QWidget
 
-from ai_player.core.config import DEFAULT_PERFORMANCE_PRESET, AppConfig
+from ai_player.core.config import DEFAULT_PERFORMANCE_PRESET, AppConfig, read_preserved_source_terms_file
 from ai_player.core.runtime_catalog import available_language_options, available_translation_provider_options
 from ai_player.core.settings_store import save_app_config
 from ai_player.services.audio_timeline import normalize_overlap_policy
@@ -99,6 +99,22 @@ class PlayerSettingsMixin:
     def _sync_auto_voice_controls_enabled(self, *_args) -> None:
         enabled = self._auto_voice_gender_check.isChecked()
         for widget in (self._auto_voice_gender_mode_combo, self._tts_male_voice_combo, self._tts_female_voice_combo):
+            widget.setEnabled(enabled)
+
+    def _sync_auto_match_controls_enabled(self, *_args) -> None:
+        if not hasattr(self, "_auto_match_audio_check"):
+            return
+        enabled = self._auto_match_audio_check.isChecked()
+        for widget in (
+            self._speed_min_slider,
+            self._speed_min_value,
+            self._speed_max_slider,
+            self._speed_max_value,
+            self._volume_gain_min_slider,
+            self._volume_gain_min_value,
+            self._volume_gain_max_slider,
+            self._volume_gain_max_value,
+        ):
             widget.setEnabled(enabled)
 
     def _populate_gender_voice_combo(
@@ -348,7 +364,7 @@ class PlayerSettingsMixin:
         return "" if data is None else str(data).strip()
 
     def _current_runtime_config(self) -> AppConfig:
-        preserved_terms = self._normalized_preserved_terms_text()
+        preserved_terms = read_preserved_source_terms_file()
         config = replace(
             self._config,
             gui_language=self._selected_gui_language(),
@@ -379,6 +395,8 @@ class PlayerSettingsMixin:
             local_translation_device=self._selected_translation_device(),
             local_translation_model=self._selected_nllb_model(),
             local_translation_offline=self._translation_offline_check.isChecked(),
+            preserve_source_terms=self._preserve_terms_check.isChecked(),
+            preserved_source_terms=preserved_terms,
             preserve_english_terms=self._preserve_terms_check.isChecked(),
             preserved_english_terms=preserved_terms,
             translation_max_tokens=int(self._translation_max_tokens_slider.value()),
@@ -501,6 +519,7 @@ class PlayerSettingsMixin:
         self._set_slider_value(self._volume_gain_min_slider, preset.get("dubbing_volume_gain_min_db"))
         self._set_slider_value(self._volume_gain_max_slider, preset.get("dubbing_volume_gain_max_db"))
         self._sync_auto_voice_controls_enabled()
+        self._sync_auto_match_controls_enabled()
         self._sync_audio_source_controls()
         self._save_settings()
         self.statusBar().showMessage(self._tr("status_preset_applied"))
@@ -562,6 +581,7 @@ class PlayerSettingsMixin:
         )
         for checkbox in checks:
             checkbox.toggled.connect(self._queue_save_settings)
+        self._auto_match_audio_check.toggled.connect(self._sync_auto_match_controls_enabled)
 
         sliders = (
             self._volume_slider,
@@ -586,7 +606,6 @@ class PlayerSettingsMixin:
         for slider in sliders:
             slider.valueChanged.connect(self._queue_save_settings)
 
-        self._preserved_terms_edit.textEdited.connect(self._queue_save_settings)
         self._transcript_cleanup_api_base_edit.textEdited.connect(self._queue_save_settings)
         self._transcript_cleanup_api_key_edit.textEdited.connect(self._queue_save_settings)
 
@@ -614,10 +633,10 @@ class PlayerSettingsMixin:
         if hasattr(self, "_settings_tabs"):
             self._settings_tabs.setTabText(0, self._tr("basic_tab"))
             self._settings_tabs.setTabText(1, self._tr("models_tab"))
-            self._settings_tabs.setTabText(2, self._tr("advanced_tab"))
-            self._settings_tabs.setTabText(3, self._tr("transcript_tab"))
-            self._settings_tabs.setTabText(4, self._tr("runtime_tab"))
-            self._settings_tabs.setTabText(5, self._tr("offline_models_tab"))
+            self._settings_tabs.setTabText(2, self._tr("offline_models_tab"))
+            self._settings_tabs.setTabText(3, self._tr("advanced_tab"))
+            self._settings_tabs.setTabText(4, self._tr("transcript_tab"))
+            self._settings_tabs.setTabText(5, self._tr("runtime_tab"))
         if hasattr(self, "_offline_models_log"):
             self._offline_models_log.setPlaceholderText(self._tr("offline_models_log_placeholder"))
         if hasattr(self, "_document_view"):
@@ -628,6 +647,12 @@ class PlayerSettingsMixin:
             self._transcript.setPlaceholderText(self._tr("transcript_placeholder"))
         if hasattr(self, "_transcript_path_edit"):
             self._transcript_path_edit.setPlaceholderText(self._tr("transcript_file_placeholder"))
+        if hasattr(self, "_preserve_terms_check"):
+            self._set_preserve_terms_tooltip()
+        if hasattr(self, "_transcript_view_combo"):
+            self._transcript_view_combo.setAccessibleName(self._tr("show_transcript"))
+        if hasattr(self, "_transcript_type_combo"):
+            self._transcript_type_combo.setAccessibleName(self._tr("transcript_type"))
         self._retranslate_inline_option_combos()
 
     def _refresh_language_pack_combos(self) -> None:
@@ -820,6 +845,5 @@ class PlayerSettingsMixin:
                 return
 
     def _save_settings(self) -> None:
-        self._save_preserved_terms()
         self._config = self._current_runtime_config()
         save_app_config(self._config)

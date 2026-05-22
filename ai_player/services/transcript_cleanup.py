@@ -19,6 +19,10 @@ class TranscriptCleanupError(RuntimeError):
     pass
 
 
+class TranscriptCleanupBatchError(TranscriptCleanupError):
+    pass
+
+
 LOGGER = logging.getLogger(__name__)
 _LOCAL_GGUF_CACHE: dict[str, Any] = {}
 _LOCAL_TRANSFORMERS_CACHE: dict[str, tuple[Any, Any]] = {}
@@ -27,9 +31,40 @@ _MAX_CLEANUP_EXTRA_CHARS = 120
 
 
 @dataclass(frozen=True)
+class ProtectedTerm:
+    canonical: str
+    patterns: tuple[re.Pattern[str], ...]
+
+
+@dataclass(frozen=True)
 class CleanupContext:
     source_language: str | None = None
     previous_text: str = ""
+
+
+_PROTECTED_TERMS = (
+    ProtectedTerm(
+        "NLLB",
+        (
+            re.compile(r"\bn\s*[-.]?\s*l\s*[-.]?\s*l\s*[-.]?\s*b\b", re.IGNORECASE),
+            re.compile(r"\bnllb\b", re.IGNORECASE),
+        ),
+    ),
+    ProtectedTerm(
+        "OpenAI",
+        (
+            re.compile(r"\bopen\s*[-.]?\s*ai\b", re.IGNORECASE),
+            re.compile(r"\bopenai\b", re.IGNORECASE),
+        ),
+    ),
+    ProtectedTerm(
+        "API",
+        (
+            re.compile(r"\ba\s*[-.]?\s*p\s*[-.]?\s*i\b", re.IGNORECASE),
+            re.compile(r"\bapi\b", re.IGNORECASE),
+        ),
+    ),
+)
 
 
 class TranscriptCleaner:
@@ -47,6 +82,7 @@ class TranscriptCleaner:
         clean_text = " ".join(str(text or "").split())
         if not clean_text or not self.enabled:
             return clean_text
+        clean_text = _normalize_protected_terms(clean_text)
         context = CleanupContext(source_language=source_language, previous_text=self._previous_text)
         try:
             result = _clean_with_provider(clean_text, context, self._config)
@@ -62,6 +98,7 @@ class TranscriptCleaner:
         clean_texts = [" ".join(str(text or "").split()) for text in texts]
         if not self.enabled:
             return clean_texts
+        clean_texts = [_normalize_protected_terms(text) for text in clean_texts]
         indexed = [(index, text) for index, text in enumerate(clean_texts) if text]
         if not indexed:
             return clean_texts
@@ -74,15 +111,28 @@ class TranscriptCleaner:
         try:
             result = _clean_many_with_provider([text for _index, text in indexed], context, self._config)
             self.last_error = ""
+        except TranscriptCleanupBatchError as exc:
+            self._record_failure(exc)
+            return self._clean_many_individually(clean_texts, indexed, source_language)
         except Exception as exc:
             self._record_failure(exc)
             return clean_texts
         if len(result) != len(indexed):
-            self._record_failure(TranscriptCleanupError("Cleanup batch returned an unexpected item count."))
-            return clean_texts
+            self._record_failure(TranscriptCleanupBatchError("Cleanup batch returned an unexpected item count."))
+            return self._clean_many_individually(clean_texts, indexed, source_language)
         for (index, original), cleaned in zip(indexed, result, strict=False):
             clean_texts[index] = _safe_cleanup_output(original, cleaned)
             self._previous_text = clean_texts[index]
+        return clean_texts
+
+    def _clean_many_individually(
+        self,
+        clean_texts: list[str],
+        indexed: list[tuple[int, str]],
+        source_language: str | None,
+    ) -> list[str]:
+        for index, text in indexed:
+            clean_texts[index] = self.clean(text, source_language)
         return clean_texts
 
     def _record_failure(self, exc: Exception) -> None:
@@ -134,7 +184,7 @@ def _build_prompt(text: str, context: CleanupContext, config: AppConfig) -> str:
         "- Chỉ trả về transcript đã sửa, không giải thích.\n"
         "- Không dịch sang ngôn ngữ khác.\n"
         "- Không thêm thông tin không có trong câu gốc.\n"
-        "- Giữ nguyên tên riêng, lệnh terminal, URL, API, model, số liệu nếu không chắc.\n"
+        "- Giữ nguyên tên riêng, lệnh terminal, URL, API, OpenAI, NLLB, model, số liệu nếu không chắc.\n"
         "- Nếu câu quá nhiễu hoặc không chắc, trả về gần giống câu gốc nhất.\n"
         f"{previous_block}\n"
         f"Transcript thô: {text}\n"
@@ -161,6 +211,7 @@ def _build_batch_prompt(texts: list[str], context: CleanupContext, config: AppCo
         "- Chỉ trả về JSON array các chuỗi đã sửa, đúng số lượng và đúng thứ tự.\n"
         "- Không giải thích, không markdown, không dịch sang ngôn ngữ khác.\n"
         "- Không thêm thông tin không có trong câu gốc.\n"
+        "- Giữ nguyên tên riêng, lệnh terminal, URL, API, OpenAI, NLLB, model, số liệu nếu không chắc.\n"
         "- Nếu câu quá nhiễu hoặc không chắc, giữ gần giống câu gốc nhất.\n"
         f"{previous_block}\n"
         "Transcript thô:\n"
@@ -254,16 +305,9 @@ def _call_local_transformers(prompt: str, model_path: Path, config: AppConfig) -
             raise TranscriptCleanupError("Thiếu torch/transformers cho Headless local.") from exc
         with block_unneeded_transformers_optional_imports():
             tokenizer = AutoTokenizer.from_pretrained(key, local_files_only=True)
-        kwargs = {
-            "local_files_only": True,
-            "torch_dtype": torch.float16 if torch.cuda.is_available() else torch.float32,
-        }
-        if torch.cuda.is_available() and importlib.util.find_spec("accelerate") is not None:
-            kwargs["device_map"] = "auto"
+        kwargs = _local_transformers_load_kwargs(torch)
         with block_unneeded_transformers_optional_imports():
-            model = AutoModelForCausalLM.from_pretrained(key, **kwargs)
-        if "device_map" not in kwargs:
-            model.to("cuda" if torch.cuda.is_available() else "cpu")
+            model = _load_local_transformers_model(AutoModelForCausalLM, key, kwargs)
         model.eval()
         cached = (tokenizer, model)
         _LOCAL_TRANSFORMERS_CACHE[key] = cached
@@ -280,7 +324,8 @@ def _call_local_transformers(prompt: str, model_path: Path, config: AppConfig) -
         except Exception:
             pass
     encoded = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1800)
-    encoded = {name: value.to(model.device) for name, value in encoded.items()}
+    device = _local_transformers_input_device(model, torch)
+    encoded = {name: value.to(device) for name, value in encoded.items()}
     with torch.no_grad():
         output = model.generate(
             **encoded,
@@ -290,6 +335,50 @@ def _call_local_transformers(prompt: str, model_path: Path, config: AppConfig) -
         )
     generated = output[0][encoded["input_ids"].shape[-1] :]
     return tokenizer.decode(generated, skip_special_tokens=True)
+
+
+def _local_transformers_load_kwargs(torch_module: Any) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "local_files_only": True,
+        "dtype": torch_module.float16 if torch_module.cuda.is_available() else torch_module.float32,
+    }
+    if torch_module.cuda.is_available() and importlib.util.find_spec("accelerate") is not None:
+        kwargs["device_map"] = "auto"
+    return kwargs
+
+
+def _load_local_transformers_model(model_cls: Any, model_path: str, kwargs: dict[str, Any]) -> Any:
+    try:
+        return model_cls.from_pretrained(model_path, **kwargs)
+    except TypeError as exc:
+        if "dtype" not in kwargs or "dtype" not in str(exc):
+            raise
+        legacy_kwargs = dict(kwargs)
+        legacy_kwargs["torch_dtype"] = legacy_kwargs.pop("dtype")
+        return model_cls.from_pretrained(model_path, **legacy_kwargs)
+
+
+def _local_transformers_input_device(model: Any, torch_module: Any) -> Any:
+    hf_device_map = getattr(model, "hf_device_map", None)
+    if isinstance(hf_device_map, dict):
+        for device in hf_device_map.values():
+            device_text = str(device)
+            if device_text and device_text != "disk":
+                return device_text
+    try:
+        device = model.device
+        if str(device) != "meta":
+            return device
+    except Exception:
+        pass
+    try:
+        for parameter in model.parameters():
+            device = getattr(parameter, "device", None)
+            if device is not None and str(device) != "meta":
+                return device
+    except Exception:
+        pass
+    return "cuda" if torch_module.cuda.is_available() and importlib.util.find_spec("accelerate") is not None else "cpu"
 
 
 def _sanitize_llm_output(text: str) -> str:
@@ -315,7 +404,8 @@ def _sanitize_llm_output(text: str) -> str:
 
 
 def _safe_cleanup_output(original: str, candidate: str) -> str:
-    cleaned = _sanitize_llm_output(candidate)
+    original = _normalize_protected_terms(original)
+    cleaned = _normalize_protected_terms(_sanitize_llm_output(candidate))
     if not cleaned:
         return original
     if _looks_unsafe_cleanup(original, cleaned):
@@ -331,6 +421,8 @@ def _looks_unsafe_cleanup(original: str, cleaned: str) -> bool:
     max_length = max(len(original_text) + _MAX_CLEANUP_EXTRA_CHARS, int(len(original_text) * _MAX_CLEANUP_LENGTH_RATIO))
     if len(cleaned_text) > max_length:
         return True
+    if not _preserves_protected_terms(original_text, cleaned_text):
+        return True
     lower = cleaned_text.casefold()
     unsafe_prefixes = (
         "giải thích:",
@@ -343,6 +435,29 @@ def _looks_unsafe_cleanup(original: str, cleaned: str) -> bool:
     return lower.startswith(unsafe_prefixes)
 
 
+def _normalize_protected_terms(text: str) -> str:
+    value = str(text or "")
+    if not value:
+        return value
+    for term in _PROTECTED_TERMS:
+        for pattern in term.patterns:
+            value = pattern.sub(term.canonical, value)
+    return " ".join(value.split())
+
+
+def _protected_terms_in(text: str) -> set[str]:
+    value = str(text or "")
+    return {term.canonical for term in _PROTECTED_TERMS if any(pattern.search(value) for pattern in term.patterns)}
+
+
+def _preserves_protected_terms(original: str, cleaned: str) -> bool:
+    required = _protected_terms_in(original)
+    if not required:
+        return True
+    present = _protected_terms_in(cleaned)
+    return required.issubset(present)
+
+
 def _parse_cleanup_batch_output(text: str) -> list[str]:
     value = str(text or "").strip()
     value = re.sub(r"^```(?:json)?\s*", "", value, flags=re.IGNORECASE)
@@ -350,9 +465,9 @@ def _parse_cleanup_batch_output(text: str) -> list[str]:
     try:
         data = json.loads(value)
     except json.JSONDecodeError as exc:
-        raise TranscriptCleanupError("Cleanup batch did not return valid JSON.") from exc
+        raise TranscriptCleanupBatchError("Cleanup batch did not return valid JSON.") from exc
     if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
-        raise TranscriptCleanupError("Cleanup batch JSON must be an array of strings.")
+        raise TranscriptCleanupBatchError("Cleanup batch JSON must be an array of strings.")
     return [_sanitize_llm_output(item) for item in data]
 
 

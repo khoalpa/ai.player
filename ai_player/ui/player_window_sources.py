@@ -64,7 +64,13 @@ class PlayerSourceMixin:
         self._source_label.setText(path)
         self._set_document_opening_controls(False)
         self.statusBar().showMessage(self._tr("status_open_document_loading"))
-        self._document_worker = DocumentTranscriptWorker(path, start_dubbing, seconds_per_segment=6, parent=self)
+        self._document_worker = DocumentTranscriptWorker(
+            path,
+            start_dubbing,
+            seconds_per_segment=6,
+            language_id=self._config.gui_language,
+            parent=self,
+        )
         self._document_worker.ready.connect(self._document_transcript_ready)
         self._document_worker.failed.connect(self._document_transcript_failed)
         self._document_worker.finished.connect(self._document_worker_finished)
@@ -135,9 +141,13 @@ class PlayerSourceMixin:
             QMessageBox.information(self, self._tr("app_title"), self._tr("msg_url_opening"))
             return
 
+        forced_full_cache = self._source_filter_forces_video_url_full_cache()
+        full_cache = self._effective_video_url_full_cache()
         self.statusBar().showMessage(
-            self._tr("status_open_url_cache")
-            if self._config.video_url_full_cache
+            self._tr("status_open_url_source_filter_cache")
+            if forced_full_cache
+            else self._tr("status_open_url_cache")
+            if full_cache
             else self._tr("status_open_url_stream")
         )
         self._stop_dubbing()
@@ -148,21 +158,37 @@ class PlayerSourceMixin:
             self._cache_dialog.close()
             self._cache_dialog = None
         quality_label = self._combo_text(self._playback_quality_combo)
-        status_key = (
-            "status_open_url_quality" if self._config.video_url_full_cache else "status_open_url_stream_quality"
-        )
+        if forced_full_cache:
+            status_key = "status_open_url_source_filter_quality"
+        elif full_cache:
+            status_key = "status_open_url_quality"
+        else:
+            status_key = "status_open_url_stream_quality"
         self.statusBar().showMessage(self._tr(status_key).format(quality=quality_label))
         self._url_worker = VideoSourceWorker(
             url,
             self._config.playback_video_quality,
-            self._config.video_url_full_cache,
-            self,
+            full_cache=full_cache,
+            language_id=self._config.gui_language,
+            parent=self,
         )
         self._url_worker.progress_changed.connect(self._video_cache_progress_changed)
         self._url_worker.resolved.connect(self._video_url_resolved)
         self._url_worker.failed.connect(self._video_url_failed)
         self._url_worker.finished.connect(self._video_url_finished)
         self._url_worker.start()
+
+    def _effective_video_url_full_cache(self) -> bool:
+        if self._selected_video_url_full_cache():
+            return True
+        return hasattr(self, "_source_filter_check") and self._source_filter_check.isChecked()
+
+    def _source_filter_forces_video_url_full_cache(self) -> bool:
+        return (
+            not self._selected_video_url_full_cache()
+            and hasattr(self, "_source_filter_check")
+            and self._source_filter_check.isChecked()
+        )
 
     def _video_cache_progress_changed(self, data) -> None:
         if self._cache_dialog is None:

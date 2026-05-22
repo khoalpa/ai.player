@@ -181,7 +181,7 @@ class TurboGPUVieNeuTTS(BaseTurboVieNeuTTS):
             logger.info(f"⏳ Loading Turbo GPU (Standard) from: {repo} on {self.device}...")
             self.tokenizer = AutoTokenizer.from_pretrained(repo, token=hf_token)
             dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
-            self.backbone = AutoModelForCausalLM.from_pretrained(repo, torch_dtype=dtype, token=hf_token).to(
+            self.backbone = AutoModelForCausalLM.from_pretrained(repo, dtype=dtype, token=hf_token).to(
                 torch.device(self.device)
             )
             self.backbone.eval()

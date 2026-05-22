@@ -33,6 +33,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 CONFIG_DIR = DATA_DIR / "config"
 RUNTIME_DIR = DATA_DIR / "tmp"
 PRESERVED_ENGLISH_TERMS_FILE = CONFIG_DIR / "preserved_english_terms.txt"
+PRESERVED_SOURCE_TERMS_FILE = CONFIG_DIR / "preserved_source_terms.txt"
 DEFAULT_DUBBING_BUFFER_SECONDS = 10.0
 DEFAULT_ORIGINAL_VOLUME = 0
 DEFAULT_DUBBING_VOICE_VOLUME = 100
@@ -46,6 +47,11 @@ DEFAULT_PRESERVED_ENGLISH_TERMS = (
     "login, model, offline, online, password, plugin, prompt, RAM, server, "
     "software, stream, token, tool, URL, user, video, voice, web, Wi-Fi, Windows"
 )
+DEFAULT_PRESERVED_SOURCE_TERMS = (
+    f"{DEFAULT_PRESERVED_ENGLISH_TERMS}, HTTP, HTTPS, JSON, CLI, CUDA_VISIBLE_DEVICES, "
+    "gpt-4.1-mini, Qwen2.5, RTX 4090, pip install, .env, requirements.txt, "
+    "先生, 先輩, 後輩, さん, ちゃん, くん, 오빠, 언니, 형, 누나, 선배, 师傅, 江湖"
+)
 
 
 def preserved_english_terms_file_path() -> Path:
@@ -53,14 +59,23 @@ def preserved_english_terms_file_path() -> Path:
     return Path(configured) if configured else PRESERVED_ENGLISH_TERMS_FILE
 
 
+def preserved_source_terms_file_path() -> Path:
+    configured = os.getenv("AI_PLAYER_PRESERVED_SOURCE_TERMS_FILE", "").strip()
+    if configured:
+        return Path(configured)
+    legacy = os.getenv("AI_PLAYER_PRESERVED_ENGLISH_TERMS_FILE", "").strip()
+    return Path(legacy) if legacy else PRESERVED_SOURCE_TERMS_FILE
+
+
 def ensure_preserved_terms_file() -> Path:
-    path = preserved_english_terms_file_path()
+    path = preserved_source_terms_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
-        path.write_text(
-            _terms_text(DEFAULT_PRESERVED_ENGLISH_TERMS),
-            encoding="utf-8",
-        )
+        legacy_path = preserved_english_terms_file_path()
+        if legacy_path.exists():
+            path.write_text(legacy_path.read_text(encoding="utf-8"), encoding="utf-8")
+        else:
+            path.write_text(_terms_text(DEFAULT_PRESERVED_SOURCE_TERMS), encoding="utf-8")
     return path
 
 
@@ -72,6 +87,10 @@ def read_preserved_terms_file() -> str:
 def write_preserved_terms_file(value: str) -> None:
     path = ensure_preserved_terms_file()
     path.write_text(_terms_text(value), encoding="utf-8")
+
+
+read_preserved_source_terms_file = read_preserved_terms_file
+write_preserved_source_terms_file = write_preserved_terms_file
 
 
 def _terms_text(value: str) -> str:
@@ -152,6 +171,9 @@ class AppConfig:
     translator_provider: str = "nllb_ct2"
     performance_preset: str = DEFAULT_PERFORMANCE_PRESET
     export_video_quality: str = "balanced"
+    preserve_source_terms: bool = True
+    preserved_source_terms: str = field(default_factory=read_preserved_source_terms_file)
+    preserved_source_terms_file: str = field(default_factory=lambda: str(preserved_source_terms_file_path()))
     preserve_english_terms: bool = True
     preserved_english_terms: str = field(default_factory=read_preserved_terms_file)
     preserved_english_terms_file: str = field(default_factory=lambda: str(preserved_english_terms_file_path()))
@@ -249,6 +271,9 @@ _APP_CONFIG_ENV_FIELDS = {
     "translator_provider": ("AI_PLAYER_TRANSLATOR_PROVIDER", "str"),
     "performance_preset": ("AI_PLAYER_PERFORMANCE_PRESET", "str"),
     "export_video_quality": ("AI_PLAYER_EXPORT_VIDEO_QUALITY", "str"),
+    "preserve_source_terms": ("AI_PLAYER_PRESERVE_SOURCE_TERMS", "bool"),
+    "preserved_source_terms": ("AI_PLAYER_PRESERVED_SOURCE_TERMS", "str"),
+    "preserved_source_terms_file": ("AI_PLAYER_PRESERVED_SOURCE_TERMS_FILE", "str"),
     "preserve_english_terms": ("AI_PLAYER_PRESERVE_ENGLISH_TERMS", "bool"),
     "preserved_english_terms": ("AI_PLAYER_PRESERVED_ENGLISH_TERMS", "str"),
     "preserved_english_terms_file": ("AI_PLAYER_PRESERVED_ENGLISH_TERMS_FILE", "str"),
@@ -302,6 +327,18 @@ def _app_config_env_values(base: AppConfig | None = None) -> dict[str, object]:
     for field_name, (env_name, value_type) in _APP_CONFIG_ENV_FIELDS.items():
         default = getattr(config, field_name)
         values[field_name] = _env_value(env_name, value_type, default)
+    if "AI_PLAYER_PRESERVE_SOURCE_TERMS" not in os.environ and "AI_PLAYER_PRESERVE_ENGLISH_TERMS" in os.environ:
+        values["preserve_source_terms"] = values["preserve_english_terms"]
+    if "AI_PLAYER_PRESERVED_SOURCE_TERMS" not in os.environ and "AI_PLAYER_PRESERVED_ENGLISH_TERMS" in os.environ:
+        values["preserved_source_terms"] = values["preserved_english_terms"]
+    if (
+        "AI_PLAYER_PRESERVED_SOURCE_TERMS_FILE" not in os.environ
+        and "AI_PLAYER_PRESERVED_ENGLISH_TERMS_FILE" in os.environ
+    ):
+        values["preserved_source_terms_file"] = values["preserved_english_terms_file"]
+    values["preserve_english_terms"] = values["preserve_source_terms"]
+    values["preserved_english_terms"] = values["preserved_source_terms"]
+    values["preserved_english_terms_file"] = values["preserved_source_terms_file"]
     return values
 
 

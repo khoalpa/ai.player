@@ -2,15 +2,15 @@
   "options": [
     {
       "value": "smart",
-      "label": "Thong minh"
+      "label": "Thông minh"
     },
     {
       "value": "strict_start",
-      "label": "Bam moc nguon"
+      "label": "Bám mốc nguồn"
     },
     {
       "value": "avoid_overlap",
-      "label": "Tranh chong tieng"
+      "label": "Tránh chồng tiếng"
     }
   ]
 }

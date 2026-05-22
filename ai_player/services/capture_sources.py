@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from ai_player.core.i18n import ui_text
 from ai_player.services.ffmpeg import ffmpeg_executable, resolve_media_command
 
 CAPTURE_BACKENDS = {"auto", "soundcard", "ffmpeg"}
@@ -26,6 +27,7 @@ def capture_microphone_audio(
     duration_seconds: int,
     device_name: str = "",
     backend: str = "auto",
+    language_id: str | None = None,
 ) -> None:
     backend = _normalize_capture_backend(backend)
     device = (
@@ -36,15 +38,19 @@ def capture_microphone_audio(
     if backend in {"auto", "soundcard"} and _capture_soundcard_microphone(output_path, duration_seconds, device):
         return
     if backend == "soundcard":
-        raise RuntimeError(
-            "Soundcard khong capture duoc microphone. Thu Capture backend = Auto hoac FFmpeg DirectShow."
-        )
+        raise RuntimeError(ui_text("capture_soundcard_microphone_failed", language_id))
     if not device:
         devices = list_dshow_audio_devices()
         if not devices:
-            raise RuntimeError("Không tìm thấy microphone DirectShow nào. Kiểm tra quyền microphone của Windows.")
+            raise RuntimeError(ui_text("capture_no_microphone", language_id))
         device = devices[0]
-    _capture_dshow_audio(device, output_path, duration_seconds, "microphone")
+    _capture_dshow_audio(
+        device,
+        output_path,
+        duration_seconds,
+        ui_text("capture_label_microphone", language_id),
+        language_id,
+    )
 
 
 def capture_system_audio(
@@ -52,6 +58,7 @@ def capture_system_audio(
     duration_seconds: int,
     device_name: str = "",
     backend: str = "auto",
+    language_id: str | None = None,
 ) -> None:
     backend = _normalize_capture_backend(backend)
     device = (
@@ -62,18 +69,19 @@ def capture_system_audio(
     if backend in {"auto", "soundcard"} and _capture_soundcard_loopback(output_path, duration_seconds, device):
         return
     if backend == "soundcard":
-        raise RuntimeError(
-            "Soundcard khong capture duoc am he thong. Thu Capture backend = Auto hoac FFmpeg DirectShow."
-        )
+        raise RuntimeError(ui_text("capture_soundcard_system_failed", language_id))
     devices = list_dshow_audio_devices()
     if not device:
         device = _preferred_system_audio_device(devices)
     if not device:
-        raise RuntimeError(
-            "Không tìm thấy thiết bị âm hệ thống. Cài VB-CABLE/Screen Capture Recorder, "
-            "bật Stereo Mix, hoặc đặt AI_PLAYER_SYSTEM_AUDIO_DEVICE đúng tên DirectShow."
-        )
-    _capture_dshow_audio(device, output_path, duration_seconds, "âm hệ thống")
+        raise RuntimeError(ui_text("capture_no_system_device", language_id))
+    _capture_dshow_audio(
+        device,
+        output_path,
+        duration_seconds,
+        ui_text("capture_label_system_audio", language_id),
+        language_id,
+    )
 
 
 def capture_meeting_audio_until_stopped(
@@ -82,6 +90,7 @@ def capture_meeting_audio_until_stopped(
     system_device_name: str = "",
     microphone_device_name: str = "",
     backend: str = "auto",
+    language_id: str | None = None,
 ) -> None:
     backend = _normalize_capture_backend(backend)
     system_device_name = system_device_name or os.getenv("AI_PLAYER_CAPTURE_SYSTEM_DEVICE", "")
@@ -91,10 +100,8 @@ def capture_meeting_audio_until_stopped(
     ):
         return
     if backend == "soundcard":
-        raise RuntimeError(
-            "Soundcard khong capture duoc System + Micro. Thu Capture backend = Auto hoac FFmpeg DirectShow."
-        )
-    _capture_ffmpeg_meeting(output_path, stop_event, system_device_name, microphone_device_name)
+        raise RuntimeError(ui_text("capture_soundcard_meeting_failed", language_id))
+    _capture_ffmpeg_meeting(output_path, stop_event, system_device_name, microphone_device_name, language_id)
 
 
 def capture_system_microphone_audio(
@@ -103,6 +110,7 @@ def capture_system_microphone_audio(
     system_device_name: str = "",
     microphone_device_name: str = "",
     backend: str = "auto",
+    language_id: str | None = None,
 ) -> None:
     stop_event = threading.Event()
     timer = threading.Timer(max(1, int(duration_seconds)), stop_event.set)
@@ -114,6 +122,7 @@ def capture_system_microphone_audio(
             system_device_name=system_device_name,
             microphone_device_name=microphone_device_name,
             backend=backend,
+            language_id=language_id,
         )
     finally:
         stop_event.set()
@@ -176,7 +185,13 @@ def _preferred_system_audio_device(devices: list[str]) -> str:
     return ""
 
 
-def _capture_dshow_audio(device: str, output_path: Path, duration_seconds: int, label: str) -> None:
+def _capture_dshow_audio(
+    device: str,
+    output_path: Path,
+    duration_seconds: int,
+    label: str,
+    language_id: str | None = None,
+) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     command = [
         ffmpeg_executable(),
@@ -199,9 +214,9 @@ def _capture_dshow_audio(device: str, output_path: Path, duration_seconds: int, 
     process = subprocess.run(command, capture_output=True, text=True, errors="replace")
     if process.returncode != 0:
         detail = (process.stderr or process.stdout or "").strip()
-        raise RuntimeError(f"Khong capture duoc {label} tu '{device}'. {detail}")
+        raise RuntimeError(ui_text("capture_ffmpeg_failed", language_id, label=label, device=device, detail=detail))
     if not output_path.exists() or output_path.stat().st_size == 0:
-        raise RuntimeError(f"Capture {label} không tạo được tệp audio.")
+        raise RuntimeError(ui_text("capture_empty_audio", language_id, label=label))
 
 
 def _capture_soundcard_loopback(output_path: Path, duration_seconds: int, device_name: str) -> bool:
@@ -332,6 +347,7 @@ def _capture_ffmpeg_meeting(
     stop_event: threading.Event,
     system_device_name: str,
     microphone_device_name: str,
+    language_id: str | None = None,
 ) -> None:
     import tempfile
 
@@ -343,7 +359,7 @@ def _capture_ffmpeg_meeting(
     if not microphone_device:
         microphone_device = devices[0] if devices else ""
     if not system_device or not microphone_device:
-        raise RuntimeError("Không tìm thấy đủ thiết bị System và Micro để ghi meeting.")
+        raise RuntimeError(ui_text("capture_meeting_devices_missing", language_id))
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="ai-player-meeting-") as temp_name:
@@ -365,7 +381,7 @@ def _capture_ffmpeg_meeting(
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=2.0)
-        _mix_audio_files(system_path, micro_path, output_path)
+        _mix_audio_files(system_path, micro_path, output_path, language_id)
 
 
 def _start_dshow_recording(device: str, output_path: Path) -> subprocess.Popen:
@@ -392,10 +408,15 @@ def _start_dshow_recording(device: str, output_path: Path) -> subprocess.Popen:
     return subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo)
 
 
-def _mix_audio_files(system_path: Path, micro_path: Path, output_path: Path) -> None:
+def _mix_audio_files(
+    system_path: Path,
+    micro_path: Path,
+    output_path: Path,
+    language_id: str | None = None,
+) -> None:
     inputs = [path for path in (system_path, micro_path) if path.exists() and path.stat().st_size > 0]
     if not inputs:
-        raise RuntimeError("Meeting không tạo được audio System/Micro.")
+        raise RuntimeError(ui_text("capture_meeting_audio_missing", language_id))
     if len(inputs) == 1:
         command = [
             ffmpeg_executable(),
@@ -432,7 +453,7 @@ def _mix_audio_files(system_path: Path, micro_path: Path, output_path: Path) -> 
         ]
     subprocess.run(resolve_media_command(command), check=True)
     if not output_path.exists() or output_path.stat().st_size == 0:
-        raise RuntimeError("Meeting không tạo được tệp audio.")
+        raise RuntimeError(ui_text("capture_meeting_output_empty", language_id))
 
 
 def _write_mixed_audio(

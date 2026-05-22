@@ -24,6 +24,10 @@ librosa==0.11.0
 perth==1.0.0
 neucodec==0.0.5
 yt-dlp==2026.3.17
+demucs==4.0.1
+dora-search==0.1.12
+julius==0.2.7
+lameenc==1.8.2
 onnxruntime-gpu==1.23.2; platform_system == "Windows"
 onnxruntime==1.23.2; platform_system != "Windows"
 nvidia-cublas-cu12==12.9.2.10; platform_system == "Windows"

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from ai_player.core.config import AppConfig
 from ai_player.services import transcript_cleanup
+
+REGRESSION_CASES = json.loads(
+    (Path(__file__).parent / "fixtures" / "transcript_cleanup_regression.json").read_text(encoding="utf-8")
+)
 
 
 def test_transcript_cleaner_disabled_normalizes_whitespace() -> None:
@@ -28,6 +35,17 @@ def test_safe_cleanup_output_falls_back_for_unsafe_response() -> None:
     assert transcript_cleanup._safe_cleanup_output(original, unsafe) == original
 
 
+def test_cleanup_regression_fixture_covers_decision_categories() -> None:
+    categories = {case["category"] for case in REGRESSION_CASES}
+
+    assert categories == {"fix_correct", "block_wrong_edit", "keep_correct"}
+
+
+@pytest.mark.parametrize("case", REGRESSION_CASES, ids=lambda case: case["id"])
+def test_cleanup_regression_cases(case: dict[str, str]) -> None:
+    assert transcript_cleanup._safe_cleanup_output(case["input"], case["candidate"]) == case["expected"]
+
+
 def test_clean_many_uses_batch_json_response(monkeypatch) -> None:
     prompts: list[str] = []
 
@@ -47,15 +65,46 @@ def test_clean_many_uses_batch_json_response(monkeypatch) -> None:
 
 
 def test_clean_many_falls_back_when_batch_shape_is_wrong(monkeypatch) -> None:
-    monkeypatch.setattr(
-        transcript_cleanup,
-        "_call_cleanup_provider",
-        lambda *_args: '["Chỉ một câu"]',
-    )
+    calls: list[str] = []
+
+    def fake_call(prompt: str, *_args) -> str:
+        calls.append(prompt)
+        if "JSON array" in prompt:
+            return '["Chỉ một câu"]'
+        if "câu một" in prompt:
+            return "Câu một"
+        return "Câu hai"
+
+    monkeypatch.setattr(transcript_cleanup, "_call_cleanup_provider", fake_call)
     cleaner = transcript_cleanup.TranscriptCleaner(AppConfig(transcript_cleanup_mode="light"))
 
-    assert cleaner.clean_many(["câu một", "câu hai"], "vi") == ["câu một", "câu hai"]
-    assert cleaner.last_error
+    assert cleaner.clean_many(["câu một", "câu hai"], "vi") == ["Câu một", "Câu hai"]
+    assert len(calls) == 3
+
+
+def test_clean_many_falls_back_to_single_cleanup_when_batch_json_is_invalid(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_call(prompt: str, *_args) -> str:
+        calls.append(prompt)
+        if "JSON array" in prompt:
+            return "không phải json"
+        if "OpenAI API key" in prompt:
+            return "OpenAI API key không nên để trong file cấu hình"
+        return "Hôm nay mình demo NLLB"
+
+    monkeypatch.setattr(transcript_cleanup, "_call_cleanup_provider", fake_call)
+    cleaner = transcript_cleanup.TranscriptCleaner(AppConfig(transcript_cleanup_mode="strong"))
+
+    result = cleaner.clean_many(
+        ["hom nay minh demo n l l b", "open ai api key khong nen de trong file cau hinh"], "vi"
+    )
+
+    assert result == [
+        "Hôm nay mình demo NLLB",
+        "OpenAI API key không nên để trong file cấu hình",
+    ]
+    assert len(calls) == 3
 
 
 def test_cleanup_failure_logs_once_and_returns_original(monkeypatch, caplog) -> None:
@@ -90,3 +139,49 @@ def test_cleanup_aliases(value: str, expected: str) -> None:
     )
 
     assert normalizer(value) == expected
+
+
+def test_local_transformers_kwargs_use_dtype_not_deprecated_torch_dtype(monkeypatch) -> None:
+    monkeypatch.setattr(transcript_cleanup.importlib.util, "find_spec", lambda _name: None)
+    torch = SimpleNamespace(
+        float16="float16",
+        float32="float32",
+        cuda=SimpleNamespace(is_available=lambda: True),
+    )
+
+    kwargs = transcript_cleanup._local_transformers_load_kwargs(torch)
+
+    assert kwargs == {"local_files_only": True, "dtype": "float16"}
+    assert "torch_dtype" not in kwargs
+
+
+def test_load_local_transformers_model_falls_back_for_old_transformers() -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModelClass:
+        @staticmethod
+        def from_pretrained(_model_path: str, **kwargs):
+            calls.append(kwargs)
+            if "dtype" in kwargs:
+                raise TypeError("from_pretrained() got an unexpected keyword argument 'dtype'")
+            return "model"
+
+    result = transcript_cleanup._load_local_transformers_model(
+        FakeModelClass,
+        "model-path",
+        {"local_files_only": True, "dtype": "float32"},
+    )
+
+    assert result == "model"
+    assert calls == [
+        {"local_files_only": True, "dtype": "float32"},
+        {"local_files_only": True, "torch_dtype": "float32"},
+    ]
+
+
+def test_local_transformers_input_device_avoids_meta_device(monkeypatch) -> None:
+    monkeypatch.setattr(transcript_cleanup.importlib.util, "find_spec", lambda _name: None)
+    torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
+    model = SimpleNamespace(device="meta", parameters=lambda: iter(()))
+
+    assert transcript_cleanup._local_transformers_input_device(model, torch) == "cpu"

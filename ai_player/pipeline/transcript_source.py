@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from ai_player.core.i18n import ui_text
+
 
 @dataclass(frozen=True)
 class TranscriptEntry:
@@ -12,10 +14,14 @@ class TranscriptEntry:
     text: str
 
 
-def load_transcript_entries(path_value: str, segment_seconds: int) -> list[TranscriptEntry]:
+def load_transcript_entries(
+    path_value: str,
+    segment_seconds: int,
+    language_id: str | None = None,
+) -> list[TranscriptEntry]:
     path = Path(str(path_value or "").strip())
     if not path.exists() or not path.is_file():
-        raise RuntimeError("Hay chon tep transcript truoc khi bat long tieng.")
+        raise RuntimeError(ui_text("transcript_error_choose_file", language_id))
     text = path.read_text(encoding="utf-8-sig", errors="replace")
     suffix = path.suffix.lower()
     if suffix in {".srt", ".vtt"} or "-->" in text:

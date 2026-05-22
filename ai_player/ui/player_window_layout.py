@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QKeySequence, QPalette, QShortcut
+from PySide6.QtGui import QColor, QKeySequence, QPainter, QPalette, QShortcut
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -47,6 +47,40 @@ from ai_player.ui.player_window_utils import (
 from ai_player.ui.player_window_utils import (
     ui_label as _ui_label,
 )
+
+
+class SubtitleOverlayLabel(QLabel):
+    def __init__(self) -> None:
+        super().__init__()
+        self._subtitle_background_color = QColor(0, 0, 0, 0)
+
+    def setSubtitleBackgroundColor(self, value: str) -> None:
+        self._subtitle_background_color = _subtitle_qcolor(value)
+        self.update()
+
+    def subtitleBackgroundColor(self) -> QColor:
+        return QColor(self._subtitle_background_color)
+
+    def paintEvent(self, event) -> None:
+        if self._subtitle_background_color.alpha() > 0:
+            painter = QPainter(self)
+            painter.fillRect(self.rect(), self._subtitle_background_color)
+            painter.end()
+        super().paintEvent(event)
+
+
+def _subtitle_qcolor(value: str) -> QColor:
+    text = str(value or "").strip()
+    if text.lower().startswith("rgba(") and text.endswith(")"):
+        parts = [part.strip() for part in text[5:-1].split(",")]
+        if len(parts) == 4:
+            try:
+                red, green, blue, alpha = [max(0, min(255, int(float(part)))) for part in parts]
+                return QColor(red, green, blue, alpha)
+            except ValueError:
+                pass
+    color = QColor(text)
+    return color if color.isValid() else QColor(0, 0, 0, 0)
 
 
 class PlayerLayoutMixin:
@@ -187,7 +221,7 @@ class PlayerLayoutMixin:
         media_frame_layout = QVBoxLayout(self._media_frame)
         media_frame_layout.setContentsMargins(0, 0, 0, 0)
         media_frame_layout.addWidget(self._media_stack)
-        self._subtitle_overlay = QLabel()
+        self._subtitle_overlay = SubtitleOverlayLabel()
         self._subtitle_overlay.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self._subtitle_overlay.setObjectName("subtitleOverlay")
         self._subtitle_overlay.setAlignment(Qt.AlignCenter)
@@ -199,7 +233,7 @@ class PlayerLayoutMixin:
         self._subtitle_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self._subtitle_overlay.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self._subtitle_overlay.setAttribute(Qt.WA_TranslucentBackground, True)
-        self._subtitle_overlay.setAttribute(Qt.WA_NoSystemBackground, True)
+        self._subtitle_overlay.setAttribute(Qt.WA_StyledBackground, True)
         self._subtitle_overlay.setAutoFillBackground(False)
         self._subtitle_overlay.hide()
         self._fullscreen_shortcut = QShortcut(QKeySequence("F11"), self)
@@ -444,16 +478,8 @@ class PlayerLayoutMixin:
         )
         self._preserve_terms_check = QCheckBox(self._tr("keep_terms"))
         self._preserve_terms_check.setProperty("i18n_key", "keep_terms")
-        self._preserve_terms_check.setChecked(self._config.preserve_english_terms)
-        self._preserved_terms_edit = QLineEdit(self._config.preserved_english_terms)
-        self._preserved_terms_edit.setPlaceholderText("AI, API, server, database, URL...")
-        self._preserved_terms_edit.setToolTip(
-            f"{self._tr('saved_at_prefix')} {self._config.preserved_english_terms_file}"
-        )
-        self._preserved_terms_edit.setClearButtonEnabled(True)
-        self._preserved_terms_edit.setEnabled(self._preserve_terms_check.isChecked())
-        self._preserve_terms_check.toggled.connect(self._preserved_terms_edit.setEnabled)
-        self._preserved_terms_edit.editingFinished.connect(self._save_preserved_terms)
+        self._preserve_terms_check.setChecked(self._config.preserve_source_terms)
+        self._set_preserve_terms_tooltip()
         self._whisper_offline_check = QCheckBox(self._tr("whisper_offline"))
         self._whisper_offline_check.setProperty("i18n_key", "whisper_offline")
         self._whisper_offline_check.setChecked(self._config.whisper_offline)
@@ -699,68 +725,104 @@ class PlayerLayoutMixin:
         preset_layout.addWidget(self._field_label("preset"))
         preset_layout.addWidget(self._performance_preset_combo, 1)
 
-        settings_grid = QGridLayout()
-        settings_grid.setHorizontalSpacing(8)
-        settings_grid.setVerticalSpacing(7)
-        settings_grid.addWidget(self._field_label("source_language"), 0, 0)
-        settings_grid.addWidget(self._source_language_combo, 0, 1)
-        settings_grid.addWidget(self._field_label("target_language"), 1, 0)
-        settings_grid.addWidget(self._target_language_combo, 1, 1)
-        settings_grid.addWidget(self._field_label("voice_default"), 2, 0)
-        settings_grid.addWidget(self._tts_voice_combo, 2, 1)
-        settings_grid.addWidget(self._field_label("buffer"), 3, 0)
-        settings_grid.addWidget(self._slider_row(self._dubbing_buffer_slider, self._dubbing_buffer_value), 3, 1)
-        settings_grid.addWidget(self._field_label("speed"), 4, 0)
-        settings_grid.addWidget(self._slider_row(self._dub_speed_slider, self._dub_speed_value), 4, 1)
-        settings_grid.addWidget(self._field_label("video_delay"), 5, 0)
-        settings_grid.addWidget(self._slider_row(self._video_delay_slider, self._video_delay_value), 5, 1)
-        settings_grid.addWidget(self._field_label("export_video_quality"), 6, 0)
-        settings_grid.addWidget(self._export_video_quality_combo, 6, 1)
-        settings_grid.addWidget(self._source_filter_check, 7, 0, 1, 2)
-        settings_grid.addWidget(self._field_label("source_filter_provider"), 8, 0)
-        settings_grid.addWidget(self._source_filter_mode_combo, 8, 1)
-        settings_grid.addWidget(self._field_label("source_filter_model"), 9, 0)
-        settings_grid.addWidget(self._source_filter_model_combo, 9, 1)
-        settings_grid.addWidget(self._auto_voice_gender_check, 10, 0, 1, 2)
-        settings_grid.addWidget(self._field_label("voice_gender_mode"), 11, 0)
-        settings_grid.addWidget(self._auto_voice_gender_mode_combo, 11, 1)
-        settings_grid.addWidget(self._field_label("male_voice"), 12, 0)
-        settings_grid.addWidget(self._tts_male_voice_combo, 12, 1)
-        settings_grid.addWidget(self._field_label("female_voice"), 13, 0)
-        settings_grid.addWidget(self._tts_female_voice_combo, 13, 1)
-        settings_grid.addWidget(self._auto_match_audio_check, 14, 0, 1, 2)
-        settings_grid.addWidget(self._video_url_full_cache_check, 15, 0, 1, 2)
+        basic_source_grid = QGridLayout()
+        basic_source_grid.setHorizontalSpacing(8)
+        basic_source_grid.setVerticalSpacing(7)
+        basic_source_grid.addWidget(preset_row, 0, 0, 1, 2)
+        basic_source_grid.addWidget(self._audio_source_panel(), 1, 0, 1, 2)
+        basic_source_grid.addWidget(self._field_label("source_language"), 2, 0)
+        basic_source_grid.addWidget(self._source_language_combo, 2, 1)
+        basic_source_grid.addWidget(self._field_label("target_language"), 3, 0)
+        basic_source_grid.addWidget(self._target_language_combo, 3, 1)
 
-        advanced_grid = QGridLayout()
-        advanced_grid.setHorizontalSpacing(8)
-        advanced_grid.setVerticalSpacing(7)
-        advanced_grid.addWidget(self._preserve_terms_check, 0, 0, 1, 2)
-        advanced_grid.addWidget(self._field_label("preserved_terms"), 1, 0)
-        advanced_grid.addWidget(self._preserved_terms_edit, 1, 1)
-        advanced_grid.addWidget(self._field_label("segment_length"), 2, 0)
-        advanced_grid.addWidget(self._slider_row(self._segment_seconds_slider, self._segment_seconds_value), 2, 1)
-        advanced_grid.addWidget(self._field_label("prebuffer_segments"), 3, 0)
-        advanced_grid.addWidget(self._slider_row(self._prebuffer_segments_slider, self._prebuffer_segments_value), 3, 1)
-        advanced_grid.addWidget(self._field_label("lookahead_segments"), 4, 0)
-        advanced_grid.addWidget(self._slider_row(self._lookahead_segments_slider, self._lookahead_segments_value), 4, 1)
-        advanced_grid.addWidget(self._field_label("overlap_policy"), 5, 0)
-        advanced_grid.addWidget(self._overlap_policy_combo, 5, 1)
-        advanced_grid.addWidget(self._field_label("start_delay"), 6, 0)
-        advanced_grid.addWidget(self._slider_row(self._start_delay_slider, self._start_delay_value), 6, 1)
-        advanced_grid.addWidget(self._field_label("speed_min"), 7, 0)
-        advanced_grid.addWidget(self._slider_row(self._speed_min_slider, self._speed_min_value), 7, 1)
-        advanced_grid.addWidget(self._field_label("speed_max"), 8, 0)
-        advanced_grid.addWidget(self._slider_row(self._speed_max_slider, self._speed_max_value), 8, 1)
-        advanced_grid.addWidget(self._field_label("gain_min"), 9, 0)
-        advanced_grid.addWidget(self._slider_row(self._volume_gain_min_slider, self._volume_gain_min_value), 9, 1)
-        advanced_grid.addWidget(self._field_label("gain_max"), 10, 0)
-        advanced_grid.addWidget(self._slider_row(self._volume_gain_max_slider, self._volume_gain_max_value), 10, 1)
-        advanced_grid.addWidget(self._field_label("capture_backend"), 11, 0)
-        advanced_grid.addWidget(self._capture_backend_combo, 11, 1)
-        advanced_grid.addWidget(self._field_label("system_audio"), 12, 0)
-        advanced_grid.addWidget(self._capture_system_device_combo, 12, 1)
-        advanced_grid.addWidget(self._field_label("microphone"), 13, 0)
-        advanced_grid.addWidget(self._capture_microphone_device_combo, 13, 1)
+        basic_voice_grid = QGridLayout()
+        basic_voice_grid.setHorizontalSpacing(8)
+        basic_voice_grid.setVerticalSpacing(7)
+        basic_voice_grid.addWidget(self._field_label("voice_default"), 0, 0)
+        basic_voice_grid.addWidget(self._tts_voice_combo, 0, 1)
+        basic_voice_grid.addWidget(self._auto_voice_gender_check, 1, 0, 1, 2)
+        basic_voice_grid.addWidget(self._field_label("voice_gender_mode"), 2, 0)
+        basic_voice_grid.addWidget(self._auto_voice_gender_mode_combo, 2, 1)
+        basic_voice_grid.addWidget(self._field_label("male_voice"), 3, 0)
+        basic_voice_grid.addWidget(self._tts_male_voice_combo, 3, 1)
+        basic_voice_grid.addWidget(self._field_label("female_voice"), 4, 0)
+        basic_voice_grid.addWidget(self._tts_female_voice_combo, 4, 1)
+
+        basic_playback_grid = QGridLayout()
+        basic_playback_grid.setHorizontalSpacing(8)
+        basic_playback_grid.setVerticalSpacing(7)
+        basic_playback_grid.addWidget(self._field_label("buffer"), 0, 0)
+        basic_playback_grid.addWidget(
+            self._slider_row(self._dubbing_buffer_slider, self._dubbing_buffer_value), 0, 1
+        )
+        basic_playback_grid.addWidget(self._field_label("speed"), 1, 0)
+        basic_playback_grid.addWidget(self._slider_row(self._dub_speed_slider, self._dub_speed_value), 1, 1)
+        basic_playback_grid.addWidget(self._field_label("video_delay"), 2, 0)
+        basic_playback_grid.addWidget(self._slider_row(self._video_delay_slider, self._video_delay_value), 2, 1)
+
+        basic_processing_grid = QGridLayout()
+        basic_processing_grid.setHorizontalSpacing(8)
+        basic_processing_grid.setVerticalSpacing(7)
+        basic_processing_grid.addWidget(self._source_filter_check, 0, 0, 1, 2)
+        basic_processing_grid.addWidget(self._field_label("source_filter_provider"), 1, 0)
+        basic_processing_grid.addWidget(self._source_filter_mode_combo, 1, 1)
+        basic_processing_grid.addWidget(self._field_label("source_filter_model"), 2, 0)
+        basic_processing_grid.addWidget(self._source_filter_model_combo, 2, 1)
+        basic_processing_grid.addWidget(self._field_label("export_video_quality"), 3, 0)
+        basic_processing_grid.addWidget(self._export_video_quality_combo, 3, 1)
+        basic_processing_grid.addWidget(self._video_url_full_cache_check, 4, 0, 1, 2)
+
+        advanced_terms_grid = QGridLayout()
+        advanced_terms_grid.setHorizontalSpacing(8)
+        advanced_terms_grid.setVerticalSpacing(7)
+        advanced_terms_grid.addWidget(self._preserve_terms_check, 0, 0, 1, 2)
+
+        advanced_timing_grid = QGridLayout()
+        advanced_timing_grid.setHorizontalSpacing(8)
+        advanced_timing_grid.setVerticalSpacing(7)
+        advanced_timing_grid.addWidget(self._field_label("segment_length"), 0, 0)
+        advanced_timing_grid.addWidget(
+            self._slider_row(self._segment_seconds_slider, self._segment_seconds_value), 0, 1
+        )
+        advanced_timing_grid.addWidget(self._field_label("prebuffer_segments"), 1, 0)
+        advanced_timing_grid.addWidget(
+            self._slider_row(self._prebuffer_segments_slider, self._prebuffer_segments_value), 1, 1
+        )
+        advanced_timing_grid.addWidget(self._field_label("lookahead_segments"), 2, 0)
+        advanced_timing_grid.addWidget(
+            self._slider_row(self._lookahead_segments_slider, self._lookahead_segments_value), 2, 1
+        )
+
+        advanced_match_grid = QGridLayout()
+        advanced_match_grid.setHorizontalSpacing(8)
+        advanced_match_grid.setVerticalSpacing(7)
+        advanced_match_grid.addWidget(self._auto_match_audio_check, 0, 0, 1, 2)
+        advanced_match_grid.addWidget(self._field_label("speed_min"), 1, 0)
+        advanced_match_grid.addWidget(self._slider_row(self._speed_min_slider, self._speed_min_value), 1, 1)
+        advanced_match_grid.addWidget(self._field_label("speed_max"), 2, 0)
+        advanced_match_grid.addWidget(self._slider_row(self._speed_max_slider, self._speed_max_value), 2, 1)
+        advanced_match_grid.addWidget(self._field_label("gain_min"), 3, 0)
+        advanced_match_grid.addWidget(self._slider_row(self._volume_gain_min_slider, self._volume_gain_min_value), 3, 1)
+        advanced_match_grid.addWidget(self._field_label("gain_max"), 4, 0)
+        advanced_match_grid.addWidget(self._slider_row(self._volume_gain_max_slider, self._volume_gain_max_value), 4, 1)
+
+        advanced_playback_grid = QGridLayout()
+        advanced_playback_grid.setHorizontalSpacing(8)
+        advanced_playback_grid.setVerticalSpacing(7)
+        advanced_playback_grid.addWidget(self._field_label("overlap_policy"), 0, 0)
+        advanced_playback_grid.addWidget(self._overlap_policy_combo, 0, 1)
+        advanced_playback_grid.addWidget(self._field_label("start_delay"), 1, 0)
+        advanced_playback_grid.addWidget(self._slider_row(self._start_delay_slider, self._start_delay_value), 1, 1)
+
+        advanced_capture_grid = QGridLayout()
+        advanced_capture_grid.setHorizontalSpacing(8)
+        advanced_capture_grid.setVerticalSpacing(7)
+        advanced_capture_grid.addWidget(self._field_label("capture_backend"), 0, 0)
+        advanced_capture_grid.addWidget(self._capture_backend_combo, 0, 1)
+        advanced_capture_grid.addWidget(self._field_label("system_audio"), 1, 0)
+        advanced_capture_grid.addWidget(self._capture_system_device_combo, 1, 1)
+        advanced_capture_grid.addWidget(self._field_label("microphone"), 2, 0)
+        advanced_capture_grid.addWidget(self._capture_microphone_device_combo, 2, 1)
 
         asr_grid = QGridLayout()
         asr_grid.setHorizontalSpacing(8)
@@ -795,15 +857,15 @@ class PlayerLayoutMixin:
         translation_grid.addWidget(self._nllb_model_combo, 1, 1)
         translation_grid.addWidget(self._field_label("translator_device"), 2, 0)
         translation_grid.addWidget(self._translation_device_combo, 2, 1)
-        translation_grid.addWidget(self._translation_offline_check, 3, 0, 1, 2)
-        translation_grid.addWidget(self._field_label("translation_max_tokens"), 4, 0)
+        translation_grid.addWidget(self._field_label("translation_max_tokens"), 3, 0)
         translation_grid.addWidget(
-            self._slider_row(self._translation_max_tokens_slider, self._translation_max_tokens_value), 4, 1
+            self._slider_row(self._translation_max_tokens_slider, self._translation_max_tokens_value), 3, 1
         )
-        translation_grid.addWidget(self._field_label("translation_beams"), 5, 0)
+        translation_grid.addWidget(self._field_label("translation_beams"), 4, 0)
         translation_grid.addWidget(
-            self._slider_row(self._translation_beams_slider, self._translation_beams_value), 5, 1
+            self._slider_row(self._translation_beams_slider, self._translation_beams_value), 4, 1
         )
+        translation_grid.addWidget(self._translation_offline_check, 5, 0, 1, 2)
 
         tts_grid = QGridLayout()
         tts_grid.setHorizontalSpacing(8)
@@ -820,11 +882,11 @@ class PlayerLayoutMixin:
         tts_grid.addWidget(self._vieneu_device_combo, 4, 1)
         tts_grid.addWidget(self._field_label("vieneu_backend"), 5, 0)
         tts_grid.addWidget(self._vieneu_backend_combo, 5, 1)
-        tts_grid.addWidget(self._vieneu_offline_check, 6, 0, 1, 2)
-        tts_grid.addWidget(self._field_label("vieneu_temperature"), 7, 0)
-        tts_grid.addWidget(self._slider_row(self._vieneu_temperature_slider, self._vieneu_temperature_value), 7, 1)
-        tts_grid.addWidget(self._field_label("tts_max_chars"), 8, 0)
-        tts_grid.addWidget(self._slider_row(self._vieneu_max_chars_slider, self._vieneu_max_chars_value), 8, 1)
+        tts_grid.addWidget(self._field_label("vieneu_temperature"), 6, 0)
+        tts_grid.addWidget(self._slider_row(self._vieneu_temperature_slider, self._vieneu_temperature_value), 6, 1)
+        tts_grid.addWidget(self._field_label("tts_max_chars"), 7, 0)
+        tts_grid.addWidget(self._slider_row(self._vieneu_max_chars_slider, self._vieneu_max_chars_value), 7, 1)
+        tts_grid.addWidget(self._vieneu_offline_check, 8, 0, 1, 2)
 
         cleanup_grid = QGridLayout()
         cleanup_grid.setHorizontalSpacing(8)
@@ -884,9 +946,14 @@ class PlayerLayoutMixin:
         basic_layout.setContentsMargins(7, 7, 7, 7)
         basic_layout.setSpacing(10)
         basic_layout.addWidget(self._dub_button)
-        basic_layout.addWidget(preset_row)
-        basic_layout.addWidget(self._audio_source_panel())
-        basic_layout.addLayout(settings_grid)
+        basic_layout.addWidget(self._section_title("basic_source_group"))
+        basic_layout.addLayout(basic_source_grid)
+        basic_layout.addWidget(self._section_title("basic_voice_group"))
+        basic_layout.addLayout(basic_voice_grid)
+        basic_layout.addWidget(self._section_title("basic_playback_group"))
+        basic_layout.addLayout(basic_playback_grid)
+        basic_layout.addWidget(self._section_title("basic_processing_group"))
+        basic_layout.addLayout(basic_processing_grid)
         basic_layout.addStretch(1)
 
         models_tab = QWidget()
@@ -897,19 +964,28 @@ class PlayerLayoutMixin:
         models_layout.addLayout(asr_grid)
         models_layout.addWidget(self._section_title("ocr_group"))
         models_layout.addLayout(ocr_grid)
+        models_layout.addWidget(self._section_title("cleanup_group"))
+        models_layout.addLayout(cleanup_grid)
         models_layout.addWidget(self._section_title("translation_group"))
         models_layout.addLayout(translation_grid)
         models_layout.addWidget(self._section_title("tts_group"))
         models_layout.addLayout(tts_grid)
-        models_layout.addWidget(self._section_title("cleanup_group"))
-        models_layout.addLayout(cleanup_grid)
         models_layout.addStretch(1)
 
         advanced_tab = QWidget()
         advanced_layout = QVBoxLayout(advanced_tab)
         advanced_layout.setContentsMargins(7, 7, 7, 7)
-        advanced_layout.setSpacing(8)
-        advanced_layout.addLayout(advanced_grid)
+        advanced_layout.setSpacing(10)
+        advanced_layout.addWidget(self._section_title("advanced_terms_group"))
+        advanced_layout.addLayout(advanced_terms_grid)
+        advanced_layout.addWidget(self._section_title("advanced_timing_group"))
+        advanced_layout.addLayout(advanced_timing_grid)
+        advanced_layout.addWidget(self._section_title("advanced_audio_match_group"))
+        advanced_layout.addLayout(advanced_match_grid)
+        advanced_layout.addWidget(self._section_title("advanced_playback_group"))
+        advanced_layout.addLayout(advanced_playback_grid)
+        advanced_layout.addWidget(self._section_title("advanced_capture_group"))
+        advanced_layout.addLayout(advanced_capture_grid)
         advanced_layout.addStretch(1)
 
         transcript_tab = QWidget()
@@ -933,15 +1009,16 @@ class PlayerLayoutMixin:
         self._settings_tabs.setObjectName("settingsTabs")
         self._settings_tabs.addTab(scrollable_tab(basic_tab), self._tr("basic_tab"))
         self._settings_tabs.addTab(scrollable_tab(models_tab), self._tr("models_tab"))
+        self._settings_tabs.addTab(scrollable_tab(offline_models_tab), self._tr("offline_models_tab"))
         self._settings_tabs.addTab(scrollable_tab(advanced_tab), self._tr("advanced_tab"))
         self._settings_tabs.addTab(transcript_tab, self._tr("transcript_tab"))
         self._settings_tabs.addTab(scrollable_tab(runtime_tab), self._tr("runtime_tab"))
-        self._settings_tabs.addTab(scrollable_tab(offline_models_tab), self._tr("offline_models_tab"))
         self._settings_tabs.currentChanged.connect(self._runtime_tab_changed)
         self._settings_tabs.currentChanged.connect(self._offline_models_tab_changed)
         settings_layout.addWidget(self._settings_tabs, 1)
         self._refresh_tts_options()
         self._sync_auto_voice_controls_enabled()
+        self._sync_auto_match_controls_enabled()
         self._sync_source_filter_controls()
         self._sync_transcript_cleanup_controls()
         self._apply_control_tooltips()
@@ -995,7 +1072,6 @@ class PlayerLayoutMixin:
             ("_performance_preset_combo", "preset"),
             ("_export_video_quality_combo", "export_video_quality"),
             ("_translation_device_combo", "translator_device"),
-            ("_preserve_terms_check", "keep_terms"),
             ("_whisper_offline_check", "whisper_offline"),
             ("_translation_offline_check", "translator_offline"),
             ("_vieneu_offline_check", "vieneu_offline"),
@@ -1054,3 +1130,9 @@ class PlayerLayoutMixin:
             widget = getattr(self, widget_name, None)
             if widget is not None:
                 self._set_control_tooltip(widget, key)
+
+    def _set_preserve_terms_tooltip(self) -> None:
+        if not hasattr(self, "_preserve_terms_check"):
+            return
+        tooltip = self._tr("preserved_terms_file_tooltip").format(path=self._config.preserved_source_terms_file)
+        self._preserve_terms_check.setToolTip(tooltip)

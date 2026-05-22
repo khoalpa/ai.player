@@ -9,6 +9,7 @@
     "Giọng nam": "male_voice",
     "Giọng nữ": "female_voice",
     "Giữ thuật ngữ tiếng Anh": "keep_terms",
+    "Giữ thuật ngữ nguồn": "keep_terms",
     "Lọc âm": "source_filter",
     "Lồng tiếng": "dub_button",
     "Lồng tiếng Việt": "dub_button",

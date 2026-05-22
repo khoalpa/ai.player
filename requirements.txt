@@ -20,6 +20,7 @@ librosa>=0.11
 perth>=0.2.0
 neucodec>=0.0.5
 yt-dlp>=2025.1.15
+demucs>=4.0
 onnxruntime-gpu>=1.23; platform_system == "Windows"
 onnxruntime>=1.18; platform_system != "Windows"
 nvidia-cublas-cu12>=12.9; platform_system == "Windows"

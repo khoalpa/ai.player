@@ -16,7 +16,7 @@ if (-not $Python) {
 
 if ($InstallDependencies) {
     & $Python -m pip install --upgrade pip
-    & $Python -m pip install -e "$ProjectRoot[packaging]"
+    & $Python -m pip install -e "$ProjectRoot[packaging,audio-separation]"
 }
 
 & $Python -c "import PyInstaller" 2>$null

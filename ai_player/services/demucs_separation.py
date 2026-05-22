@@ -18,6 +18,7 @@ def demucs_available() -> bool:
     executable = demucs_executable()
     return (
         bool(_demucs_python())
+        or _bundled_demucs_available()
         or Path(executable).is_file()
         or shutil.which(executable) is not None
     )
@@ -28,7 +29,7 @@ def demucs_command() -> list[str]:
     if configured:
         return [configured]
     if getattr(sys, "frozen", False):
-        return [demucs_executable()]
+        return [sys.executable, "--demucs-runner"]
     python = _demucs_python()
     if python:
         return [python, "-m", "ai_player.services.demucs_runner"]
@@ -60,6 +61,12 @@ def _demucs_python() -> str:
         if candidate and candidate.is_file() and _python_has_demucs(str(candidate)):
             return str(candidate)
     return ""
+
+
+def _bundled_demucs_available() -> bool:
+    if not getattr(sys, "frozen", False):
+        return False
+    return find_spec("demucs") is not None
 
 
 def _python_has_demucs(python: str) -> bool:

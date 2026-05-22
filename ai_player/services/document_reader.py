@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ai_player.core.config import CONFIG_DIR
+from ai_player.core.i18n import ui_text
 
 SUPPORTED_DOCUMENT_EXTENSIONS = {
     ".csv",
@@ -65,15 +66,16 @@ def create_document_transcript(
     path_value: str,
     seconds_per_segment: int = 6,
     cancel_callback: Callable[[], bool] | None = None,
+    language_id: str | None = None,
 ) -> DocumentTranscript:
     path = Path(path_value)
     if not path.exists() or not path.is_file():
-        raise RuntimeError("Tep tai lieu khong ton tai.")
+        raise RuntimeError(ui_text("document_error_missing_file", language_id))
     _raise_if_cancelled(cancel_callback)
     pages = read_document_pages(path, seconds_per_segment, cancel_callback=cancel_callback)
     _raise_if_cancelled(cancel_callback)
     if not pages:
-        raise RuntimeError("Không trích được nội dung từ tài liệu này.")
+        raise RuntimeError(ui_text("document_error_empty_content", language_id))
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     transcript_path = CONFIG_DIR / "current_document_transcript.srt"

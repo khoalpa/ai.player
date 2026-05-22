@@ -13,6 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 from ai_player.core.config import AppConfig
+from ai_player.core.i18n import ui_text
 from ai_player.core.offline_env import OfflineEnvironmentToken, pop_hf_offline_environment, push_hf_offline_environment
 from ai_player.core.performance import measure_stage
 from ai_player.services.capture_sources import capture_system_microphone_audio
@@ -71,6 +72,12 @@ class MeetingWorker(QThread):
     def stop(self) -> None:
         self._stop_requested = True
 
+    def _tr(self, key: str, **kwargs: object) -> str:
+        return ui_text(key, self._config.gui_language, **kwargs)
+
+    def _emit_status(self, key: str, **kwargs: object) -> None:
+        self.status_changed.emit(self._tr(key, **kwargs))
+
     def run(self) -> None:
         temp_dir: Path | None = None
         offline_env: OfflineEnvironmentToken | None = None
@@ -115,7 +122,7 @@ class MeetingWorker(QThread):
             processor = threading.Thread(target=process_chunks, daemon=True)
             processor.start()
 
-            self.status_changed.emit("Đang ghi, nhận diện và lồng tiếng meeting...")
+            self._emit_status("meeting_status_recording_processing")
             while not self._stop_requested:
                 self.elapsed_changed.emit(_format_elapsed(time.monotonic() - self._started_monotonic))
                 chunk_path = temp_dir / f"meeting-chunk-{len(chunk_paths):05d}.wav"
@@ -126,6 +133,7 @@ class MeetingWorker(QThread):
                         system_device_name=self._config.capture_system_device,
                         microphone_device_name=self._config.capture_microphone_device,
                         backend=self._config.capture_backend,
+                        language_id=self._config.gui_language,
                     )
                 if chunk_path.exists() and chunk_path.stat().st_size > 0:
                     chunk_index = len(chunk_paths)
@@ -134,9 +142,9 @@ class MeetingWorker(QThread):
                 offset_seconds += chunk_seconds
 
             if not chunk_paths:
-                raise RuntimeError("Meeting không tạo được file âm thanh.")
+                raise RuntimeError(self._tr("meeting_error_no_audio"))
 
-            self.status_changed.emit("Đã dừng ghi. Đang chờ lồng tiếng hoàn tất trước khi xuất file...")
+            self._emit_status("meeting_status_waiting_export")
             work_queue.put(None)
             work_queue.join()
             processor.join(timeout=2.0)
@@ -147,7 +155,7 @@ class MeetingWorker(QThread):
             with transcript_lock:
                 transcript_text = "\n".join(transcript_lines)
             if not transcript_text.strip():
-                transcript_text = "(Không nhận diện được lời thoại.)"
+                transcript_text = self._tr("meeting_empty_transcript")
             transcript_path.write_text(transcript_text.rstrip() + "\n", encoding="utf-8")
             self.finished_successfully.emit(
                 MeetingResult(
@@ -173,9 +181,7 @@ class MeetingWorker(QThread):
 
     def _validate_whisper_model(self) -> None:
         if self._config.whisper_offline and not Path(self._config.whisper_model).exists():
-            raise RuntimeError(
-                "Thiếu model Whisper offline. Chạy scripts\\download_whisper_model.ps1 trước khi ghi meeting."
-            )
+            raise RuntimeError(self._tr("meeting_error_missing_whisper_offline"))
 
     def _selected_whisper_language(self) -> str | None:
         language = str(self._config.source_language or "auto").strip().lower()
@@ -233,15 +239,22 @@ class MeetingWorker(QThread):
                 translated = self._translate(text, getattr(info, "language", None))
             self.segment_ready.emit(text, translated)
             if _tts_disabled(self._config):
-                lines.append(f"[{_format_timestamp(start)} - {_format_timestamp(end)}]\nGốc: {text}\nVI: {translated}")
+                lines.append(self._transcript_line(start, end, text, translated))
                 continue
             tts_suffix = "wav" if normalize_tts_provider(self._config.tts_provider) == "vieneu" else "mp3"
             self._dub_segment(
                 translated,
                 temp_dir / f"meeting-tts-{chunk_index:05d}-{segment_index:03d}.{tts_suffix}",
             )
-            lines.append(f"[{_format_timestamp(start)} - {_format_timestamp(end)}]\nGốc: {text}\nVI: {translated}")
+            lines.append(self._transcript_line(start, end, text, translated))
         return lines
+
+    def _transcript_line(self, start: float, end: float, source: str, target: str) -> str:
+        return (
+            f"[{_format_timestamp(start)} - {_format_timestamp(end)}]\n"
+            f"{self._tr('transcript_label_source')}: {source}\n"
+            f"{self._tr('transcript_label_target')}: {target}"
+        )
 
     def _translate(self, text: str, detected_language: str | None) -> str:
         if self._translator is None:
@@ -253,7 +266,7 @@ class MeetingWorker(QThread):
             return
         if self._tts_provider is None:
             self._tts_provider = create_tts_provider(self._config)
-        self.status_changed.emit("Đang lồng tiếng đoạn meeting...")
+        self._emit_status("meeting_status_dubbing_segment")
         with measure_stage("meeting", "tts"):
             self._tts_provider.synthesize(text, output_path, voice=self._config.tts_voice)
         if not output_path.exists() or output_path.stat().st_size == 0:
@@ -368,7 +381,7 @@ class MeetingWorker(QThread):
         ]
         subprocess.run(command, check=True)
         if not output_path.exists() or output_path.stat().st_size == 0:
-            raise RuntimeError("Meeting không tạo được file âm thanh.")
+            raise RuntimeError(self._tr("meeting_error_no_audio"))
 
 
 def _tts_disabled(config: AppConfig) -> bool:

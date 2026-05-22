@@ -176,8 +176,23 @@ class LocalNllbTranslator:
         protected_items = [(index, _protect_english_terms(clean, self._config)) for index, clean in active_items]
         self._load_model()
         self._tokenizer.src_lang = src_lang
-        encoded = self._tokenizer(
+        translated_batch = self._translate_local_batch(
             [protected.text for _index, protected in protected_items],
+            target_lang,
+        )
+        results, retry_items = _finalize_preserved_translations(clean_texts, protected_items, translated_batch)
+        if retry_items:
+            retried_batch = self._translate_local_batch(
+                [source_text for _index, source_text, _protected, _primary in retry_items],
+                target_lang,
+            )
+            for (index, _source_text, protected, primary), retried in zip(retry_items, retried_batch, strict=False):
+                results[index] = _select_preserved_translation(primary, retried, protected)
+        return results
+
+    def _translate_local_batch(self, source_texts: list[str], target_lang: str) -> list[str]:
+        encoded = self._tokenizer(
+            source_texts,
             return_tensors="pt",
             padding=True,
             truncation=True,
@@ -189,11 +204,7 @@ class LocalNllbTranslator:
             max_new_tokens=self._config.translation_max_tokens,
             num_beams=self._config.translation_num_beams,
         )
-        translated_batch = self._tokenizer.batch_decode(output, skip_special_tokens=True)
-        results = list(clean_texts)
-        for (index, protected), translated in zip(protected_items, translated_batch, strict=False):
-            results[index] = _restore_english_terms(translated.strip(), protected)
-        return results
+        return [text.strip() for text in self._tokenizer.batch_decode(output, skip_special_tokens=True)]
 
     def _load_model(self) -> None:
         if self._model is not None and self._tokenizer is not None:
@@ -292,10 +303,25 @@ class CTranslate2NllbTranslator(LocalNllbTranslator):
         protected_items = [(index, _protect_english_terms(clean, self._config)) for index, clean in active_items]
         self._load_model()
         self._tokenizer.src_lang = src_lang
+        translated_batch = self._translate_ctranslate2_batch(
+            [protected.text for _index, protected in protected_items],
+            target_lang,
+        )
+        translated_texts, retry_items = _finalize_preserved_translations(clean_texts, protected_items, translated_batch)
+        if retry_items:
+            retried_batch = self._translate_ctranslate2_batch(
+                [source_text for _index, source_text, _protected, _primary in retry_items],
+                target_lang,
+            )
+            for (index, _source_text, protected, primary), retried in zip(retry_items, retried_batch, strict=False):
+                translated_texts[index] = _select_preserved_translation(primary, retried, protected)
+        return translated_texts
+
+    def _translate_ctranslate2_batch(self, source_texts: list[str], target_lang: str) -> list[str]:
         source_tokens_batch = []
         target_prefixes = []
-        for _index, protected in protected_items:
-            source_ids = self._tokenizer(protected.text, return_tensors="pt", truncation=True).input_ids[0]
+        for text in source_texts:
+            source_ids = self._tokenizer(text, return_tensors="pt", truncation=True).input_ids[0]
             source_tokens_batch.append(self._tokenizer.convert_ids_to_tokens(source_ids))
             target_prefixes.append([target_lang])
         translate_kwargs = {
@@ -311,16 +337,17 @@ class CTranslate2NllbTranslator(LocalNllbTranslator):
             translate_kwargs.pop("batch_type", None)
             translate_kwargs.pop("max_batch_size", None)
             results = self._translator.translate_batch(source_tokens_batch, **translate_kwargs)
-        translated_texts = list(clean_texts)
-        for (index, protected), result in zip(protected_items, results, strict=False):
+        translated_texts = []
+        for result in results:
             output_tokens = list(result.hypotheses[0])
             if output_tokens and output_tokens[0] == target_lang:
                 output_tokens = output_tokens[1:]
-            translated = self._tokenizer.decode(
-                self._tokenizer.convert_tokens_to_ids(output_tokens),
-                skip_special_tokens=True,
-            ).strip()
-            translated_texts[index] = _restore_english_terms(translated, protected)
+            translated_texts.append(
+                self._tokenizer.decode(
+                    self._tokenizer.convert_tokens_to_ids(output_tokens),
+                    skip_special_tokens=True,
+                ).strip()
+            )
         return translated_texts
 
     def _load_model(self) -> None:
@@ -424,11 +451,14 @@ class ProtectedTerms:
     replacements: tuple[tuple[str, str], ...]
 
 
+PreservedRetryItem = tuple[int, str, ProtectedTerms, str]
+
+
 def _protect_english_terms(text: str, config: AppConfig) -> ProtectedTerms:
-    if not config.preserve_english_terms:
+    if not _preserve_source_terms_enabled(config):
         return ProtectedTerms(text=text, replacements=())
 
-    terms = _preserved_terms(config.preserved_english_terms)
+    terms = _preserved_terms(_preserved_source_terms(config))
     if not terms:
         return ProtectedTerms(text=text, replacements=())
 
@@ -449,6 +479,18 @@ def _protect_english_terms(text: str, config: AppConfig) -> ProtectedTerms:
     return ProtectedTerms(text=protected_text, replacements=tuple(replacements))
 
 
+def _preserve_source_terms_enabled(config: AppConfig) -> bool:
+    if hasattr(config, "preserve_source_terms"):
+        return bool(config.preserve_source_terms)
+    return bool(getattr(config, "preserve_english_terms", True))
+
+
+def _preserved_source_terms(config: AppConfig) -> str:
+    source_terms = str(getattr(config, "preserved_source_terms", "") or "")
+    legacy_terms = str(getattr(config, "preserved_english_terms", "") or "")
+    return "\n".join(part for part in (source_terms, legacy_terms) if part.strip())
+
+
 def _restore_english_terms(text: str, protected: ProtectedTerms) -> str:
     restored = text
     for placeholder, original in protected.replacements:
@@ -467,6 +509,51 @@ def _restore_english_terms(text: str, protected: ProtectedTerms) -> str:
         for variant in variants:
             restored = re.sub(re.escape(variant), original, restored, flags=re.IGNORECASE)
     return " ".join(restored.split())
+
+
+def _finalize_preserved_translations(
+    clean_texts: list[str],
+    protected_items: list[tuple[int, ProtectedTerms]],
+    translated_batch: list[str],
+) -> tuple[list[str], list[PreservedRetryItem]]:
+    results = list(clean_texts)
+    retry_items: list[PreservedRetryItem] = []
+    for (index, protected), translated in zip(protected_items, translated_batch, strict=False):
+        restored = _restore_english_terms(str(translated or "").strip(), protected)
+        results[index] = restored
+        if _needs_preserved_term_retry(restored, protected):
+            retry_items.append((index, clean_texts[index], protected, restored))
+    return results, retry_items
+
+
+def _select_preserved_translation(primary: str, retried: str, protected: ProtectedTerms) -> str:
+    retry_text = " ".join(str(retried or "").split())
+    if retry_text and not _needs_preserved_term_retry(retry_text, protected):
+        return retry_text
+    primary_text = " ".join(str(primary or "").split())
+    if primary_text and not _has_broken_placeholders(primary_text):
+        return primary_text
+    return retry_text or primary_text
+
+
+def _needs_preserved_term_retry(text: str, protected: ProtectedTerms) -> bool:
+    value = " ".join(str(text or "").split())
+    if _has_broken_placeholders(value):
+        return True
+    return not _contains_all_preserved_terms(value, protected)
+
+
+def _contains_all_preserved_terms(text: str, protected: ProtectedTerms) -> bool:
+    required: dict[str, int] = {}
+    originals: dict[str, str] = {}
+    for _placeholder, original in protected.replacements:
+        key = original.casefold()
+        required[key] = required.get(key, 0) + 1
+        originals[key] = original
+    for key, count in required.items():
+        if len(_term_pattern(originals[key]).findall(text)) < count:
+            return False
+    return True
 
 
 def _has_broken_placeholders(text: str) -> bool:

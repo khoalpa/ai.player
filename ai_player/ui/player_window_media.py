@@ -6,13 +6,11 @@ import json
 import subprocess
 import tempfile
 import time
-from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, QUrl
 from PySide6.QtGui import QPixmap
 
-from ai_player.core.config import write_preserved_terms_file
 from ai_player.services.ffmpeg import ffprobe_executable
 from ai_player.services.source_voice_filter import source_voice_filter_signature
 from ai_player.services.video_source import _cleanup_cache_root
@@ -359,17 +357,6 @@ class PlayerMediaMixin:
             return ""
         return f":{source_stat.st_mtime_ns}:{source_stat.st_size}"
 
-    def _save_preserved_terms(self) -> None:
-        terms = self._normalized_preserved_terms_text()
-        write_preserved_terms_file(terms)
-        self._preserved_terms_edit.setText(terms.replace("\n", ", "))
-        self._config = replace(self._config, preserved_english_terms=terms)
-
-    def _normalized_preserved_terms_text(self) -> str:
-        raw = self._preserved_terms_edit.text()
-        terms = [item.strip() for item in raw.replace(";", ",").replace("\n", ",").split(",") if item.strip()]
-        return "\n".join(dict.fromkeys(terms))
-
     def _set_document_mode(self, enabled: bool, duration_ms: int = 0, pages=None) -> None:
         self._document_mode = enabled
         self._document_elapsed_ms = 0
@@ -582,8 +569,10 @@ class PlayerMediaMixin:
         font_size = self._subtitle_font_size()
         color = self._subtitle_color()
         background_color = self._subtitle_background_color()
+        if hasattr(self._subtitle_overlay, "setSubtitleBackgroundColor"):
+            self._subtitle_overlay.setSubtitleBackgroundColor(background_color)
         self._subtitle_overlay.setStyleSheet(
-            f"background-color: {background_color};"
+            "background-color: transparent;"
             "border: none;"
             "outline: none;"
             f"color: {color};"
@@ -598,7 +587,11 @@ class PlayerMediaMixin:
         if not path or path == self._subtitle_entries_path:
             return
         try:
-            self._subtitle_entries = _load_transcript_entries(path, max(1, int(self._config.segment_seconds)))
+            self._subtitle_entries = _load_transcript_entries(
+                path,
+                max(1, int(self._config.segment_seconds)),
+                self._config.gui_language,
+            )
             self._subtitle_entries_path = path
         except Exception as exc:
             self._subtitle_entries = []

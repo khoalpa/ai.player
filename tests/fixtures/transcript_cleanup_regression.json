@@ -1,0 +1,30 @@
+[
+  {
+    "id": "fix_vietnamese_diacritics",
+    "category": "fix_correct",
+    "input": "toi muon export video voi transcript va phu de",
+    "candidate": "Tôi muốn xuất video với transcript và phụ đề",
+    "expected": "Tôi muốn xuất video với transcript và phụ đề"
+  },
+  {
+    "id": "canonicalize_openai_api",
+    "category": "fix_correct",
+    "input": "open ai api key khong nen de trong file cau hinh",
+    "candidate": "openai api key không nên để trong file cấu hình",
+    "expected": "OpenAI API key không nên để trong file cấu hình"
+  },
+  {
+    "id": "block_nllb_hallucination",
+    "category": "block_wrong_edit",
+    "input": "hom nay minh se demo n l l b",
+    "candidate": "hôm nay mình sẽ demo nói biểu",
+    "expected": "hom nay minh se demo NLLB"
+  },
+  {
+    "id": "keep_protected_terms_when_unchanged",
+    "category": "keep_correct",
+    "input": "OpenAI API dung NLLB cho ban dich",
+    "candidate": "OpenAI API dùng NLLB cho bản dịch",
+    "expected": "OpenAI API dùng NLLB cho bản dịch"
+  }
+]

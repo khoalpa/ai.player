@@ -16,6 +16,7 @@ from PySide6.QtCore import QThread, Signal
 
 from ai_player.core.config import PROJECT_ROOT, AppConfig
 from ai_player.core.gpu import ctranslate2_cuda_available, cuda_runtime_files_available
+from ai_player.core.i18n import ui_text
 from ai_player.core.offline_env import OfflineEnvironmentToken, pop_hf_offline_environment, push_hf_offline_environment
 from ai_player.core.performance import measure_stage
 from ai_player.pipeline.transcript_source import (
@@ -54,7 +55,12 @@ from ai_player.services.speaker_voice_selector import VoiceGenderSelector, selec
 from ai_player.services.subtitle_ocr import recognize_hard_subtitles
 from ai_player.services.transcript_cleanup import TranscriptCleaner
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
-from ai_player.services.tts import create_tts_provider, is_non_speech_tts_text, normalize_tts_provider
+from ai_player.services.tts import (
+    create_tts_provider,
+    is_pathological_tts_duration,
+    normalize_tts_provider,
+    prepare_tts_text,
+)
 from ai_player.services.whisper_runtime import (
     SharedWhisperModel,
     get_shared_whisper_model,
@@ -133,11 +139,19 @@ class DubbingWorker(QThread):
         self._stop_requested = True
         self._stop_active_audio()
 
+    def _tr(self, key: str, **kwargs: object) -> str:
+        return ui_text(key, self._config.gui_language, **kwargs)
+
+    def _emit_status(self, key: str, **kwargs: object) -> None:
+        self.status_changed.emit(self._tr(key, **kwargs))
+
     def run(self) -> None:
         offline_env: OfflineEnvironmentToken | None = None
         try:
             if self._config.audio_source not in SUPPORTED_AUDIO_SOURCES:
-                raise RuntimeError(_unsupported_audio_source_message(self._config.audio_source))
+                raise RuntimeError(
+                    _unsupported_audio_source_message(self._config.audio_source, self._config.gui_language)
+                )
             offline_env = self._configure_offline_environment()
             self._temp_dir = Path(tempfile.mkdtemp(prefix="ai-player-"))
             self._start_source_audio_cache()
@@ -146,7 +160,7 @@ class DubbingWorker(QThread):
                 return
 
             if self._config.audio_source != "subtitle":
-                self.status_changed.emit("\u0110ang t\u1ea3i Whisper...")
+                self._emit_status("worker_loading_whisper")
                 self._validate_whisper_model()
                 self._model = self._load_whisper_model()
             current = self._get_time_ms() / 1000.0
@@ -157,10 +171,10 @@ class DubbingWorker(QThread):
             self._covered_until = self._next_segment_start
             self._scheduled_audio_until = self._next_segment_start
             if self._is_live_capture_source():
-                self.status_changed.emit("\u0110ang capture ngu\u1ed3n live \u0111\u1ec3 l\u1ed3ng ti\u1ebfng...")
+                self._emit_status("worker_live_capture_starting")
             else:
-                self._request_pause("\u0110ang chu\u1ea9n b\u1ecb gi\u1ecdng Vi\u1ec7t...")
-            self.status_changed.emit("\u0110ang t\u1ea1o b\u1ed9 \u0111\u1ec7m l\u1ed3ng ti\u1ebfng Vi\u1ec7t...")
+                self._request_pause(self._tr("worker_preparing_target_voice"))
+            self._emit_status("worker_buffering_target_voice")
             if self._can_process_segments_async():
                 self._segment_executor = ThreadPoolExecutor(max_workers=self._segment_worker_count())
 
@@ -178,14 +192,14 @@ class DubbingWorker(QThread):
                 if self._is_playing():
                     if self._sync_hold_needed(current):
                         self._sync_hold_requested = True
-                        self._request_pause("Tạm dừng âm nguồn để âm đích bắt kịp...")
+                        self._request_pause(self._tr("worker_pause_for_target_sync"))
                         time.sleep(0.05)
                         continue
                     self._launch_due_audio(current)
                     ready_ahead = self._covered_until - current
                     if not self._is_live_capture_source() and ready_ahead < self._required_ready_ahead_seconds():
                         self._buffering = True
-                        self._request_pause("\u0110ang \u0111\u1ee3i gi\u1ecdng Vi\u1ec7t b\u1eaft k\u1ecbp...")
+                        self._request_pause(self._tr("worker_waiting_target_voice"))
 
                 lookahead_seconds = max(
                     self._config.segment_seconds * self._config.dubbing_lookahead_segments,
@@ -219,10 +233,14 @@ class DubbingWorker(QThread):
         return self._config.audio_source in {"original", "subtitle"}
 
     def _run_transcript_source(self) -> None:
-        entries = _load_transcript_entries(self._config.transcript_path, self._config.segment_seconds)
+        entries = _load_transcript_entries(
+            self._config.transcript_path,
+            self._config.segment_seconds,
+            self._config.gui_language,
+        )
         if not entries:
             self._buffering = False
-            self._request_resume("Transcript không có nội dung để đọc")
+            self._request_resume(self._tr("worker_transcript_empty"))
             while not self._stop_requested:
                 time.sleep(0.2)
             return
@@ -230,8 +248,8 @@ class DubbingWorker(QThread):
         self._next_segment_start = max(0.0, current + self._config.dubbing_start_delay_seconds)
         self._covered_until = self._next_segment_start
         self._scheduled_audio_until = self._next_segment_start
-        self._request_pause("\u0110ang chu\u1ea9n b\u1ecb transcript...")
-        self.status_changed.emit("\u0110ang t\u1ea1o gi\u1ecdng Vi\u1ec7t t\u1eeb transcript...")
+        self._request_pause(self._tr("worker_preparing_transcript"))
+        self._emit_status("worker_creating_voice_from_transcript")
 
         next_index = 0
         while next_index < len(entries):
@@ -290,7 +308,7 @@ class DubbingWorker(QThread):
                 break
         if self._buffering and prepared == 0:
             self._buffering = False
-            self._request_resume("L\u1ed3ng ti\u1ebfng Vi\u1ec7t t\u1eeb transcript \u0111\u00e3 s\u1eb5n s\u00e0ng")
+            self._request_resume(self._tr("worker_transcript_dubbing_ready"))
         return index
 
     def _prepare_transcript_entry(self, entry: TranscriptEntry, index: int) -> None:
@@ -303,7 +321,7 @@ class DubbingWorker(QThread):
         tts_suffix = "wav" if normalize_tts_provider(self._config.tts_provider) == "vieneu" else "mp3"
         tts_path = self._temp_dir / f"vi-transcript-{segment_ms}-{index}.{tts_suffix}"
 
-        self.status_changed.emit(f"\u0110ang d\u1ecbch transcript t\u1ea1i {_format_hhmmss(entry.start)}...")
+        self._emit_status("worker_translating_transcript_at", time=_format_hhmmss(entry.start))
         translated = self._translator.translate(original, self._selected_whisper_language())
         if _tts_disabled(self._config):
             self.segment_ready.emit(original, translated)
@@ -315,7 +333,8 @@ class DubbingWorker(QThread):
             return
         entry_end = entry.end if entry.end is not None else entry.start + self._config.segment_seconds
         duration = max(0.25, entry_end - entry.start)
-        if is_non_speech_tts_text(translated):
+        tts_text = prepare_tts_text(translated, self._config.target_language)
+        if not tts_text:
             self._queue_silent_audio(
                 entry.start,
                 duration,
@@ -324,8 +343,17 @@ class DubbingWorker(QThread):
                 translated,
             )
             return
-        self.status_changed.emit(f"\u0110ang t\u1ea1o gi\u1ecdng Vi\u1ec7t t\u1ea1i {_format_hhmmss(entry.start)}...")
-        self._tts_provider.synthesize(translated, tts_path, voice=self._config.tts_voice)
+        self._emit_status("worker_creating_target_voice_at", time=_format_hhmmss(entry.start))
+        self._tts_provider.synthesize(tts_text, tts_path, voice=self._config.tts_voice)
+        if is_pathological_tts_duration(tts_text, audio_duration_seconds(tts_path), duration):
+            self._queue_silent_audio(
+                entry.start,
+                duration,
+                tts_path.with_name(f"{tts_path.stem}-guard-silence.wav"),
+                original,
+                translated,
+            )
+            return
         final_path = tts_path if self._skip_tts_postprocess() else self._trim_leading_silence(tts_path)
         final_duration = audio_duration_seconds(final_path)
         self._queue_pending_audio(entry.start, final_duration, final_path, original, translated)
@@ -348,7 +376,7 @@ class DubbingWorker(QThread):
         self._last_wall_time = time.monotonic()
         self._voice_selector.reset()
         self._buffering = True
-        self._request_pause("\u0110ang \u0111\u1ed3ng b\u1ed9 l\u1ea1i gi\u1ecdng Vi\u1ec7t...")
+        self._request_pause(self._tr("worker_resyncing_target_voice"))
 
     def _submit_segment_work(self, target_seconds: float) -> None:
         if self._segment_executor is None:
@@ -436,10 +464,7 @@ class DubbingWorker(QThread):
             return
         model_path = Path(self._config.whisper_model)
         if not model_path.exists():
-            raise RuntimeError(
-                "Thi\u1ebfu model Whisper offline. Ch\u1ea1y scripts\\download_offline_models.ps1 "
-                "ho\u1eb7c scripts\\download_whisper_model.ps1 \u0111\u1ec3 t\u1ea3i models\\asr\\faster-whisper-base."
-            )
+            raise RuntimeError(self._tr("worker_missing_whisper_offline"))
 
     def _load_whisper_model(self) -> SharedWhisperModel:
         try:
@@ -451,11 +476,11 @@ class DubbingWorker(QThread):
             )
         except Exception as exc:
             if self._whisper_device == "cpu" and self._whisper_compute_type != "int8":
-                self.status_changed.emit("Whisper CPU không hỗ trợ float16, chuyển sang int8...")
+                self._emit_status("worker_whisper_cpu_float16_fallback")
                 return self._switch_whisper_to_cpu(exc)
             if self._whisper_device == "cpu":
                 raise
-            self.status_changed.emit("Whisper không chạy được CUDA/Auto, chuyển sang CPU...")
+            self._emit_status("worker_whisper_cuda_fallback")
             return self._switch_whisper_to_cpu(exc)
 
     def _switch_whisper_to_cpu(self, _cause: Exception | None = None) -> SharedWhisperModel:
@@ -477,12 +502,12 @@ class DubbingWorker(QThread):
             return self._model.transcribe(str(wav_path), **kwargs)
         except Exception as exc:
             if self._whisper_device == "cpu" and self._whisper_compute_type != "int8":
-                self.status_changed.emit("Whisper CPU không hỗ trợ compute hiện tại, chuyển sang int8...")
+                self._emit_status("worker_whisper_cpu_compute_fallback")
                 self._switch_whisper_to_cpu(exc)
                 return self._model.transcribe(str(wav_path), **kwargs)
             if self._whisper_device == "cpu":
                 raise
-            self.status_changed.emit("Whisper lỗi CUDA/CUBLAS, chuyển sang CPU...")
+            self._emit_status("worker_whisper_cublas_fallback")
             self._switch_whisper_to_cpu(exc)
             return self._model.transcribe(str(wav_path), **kwargs)
 
@@ -497,7 +522,7 @@ class DubbingWorker(QThread):
         if self._buffering and prepared_segments >= required_segments and ready_ahead >= required_ready_ahead:
             self._buffering = False
             self._launch_due_audio(current_seconds)
-            self._request_resume("L\u1ed3ng ti\u1ebfng Vi\u1ec7t \u0111\u00e3 s\u1eb5n s\u00e0ng")
+            self._request_resume(self._tr("worker_dubbing_ready"))
 
     def _required_ready_ahead_seconds(self) -> float:
         if self._config.audio_source in {"transcript", "document_editor"}:
@@ -523,7 +548,7 @@ class DubbingWorker(QThread):
             self._process_subtitle_segment(start_seconds, tts_suffix)
             return
 
-        self.status_changed.emit(f"\u0110ang nghe \u0111o\u1ea1n {_format_hhmmss(start_seconds)}...")
+        self._emit_status("worker_listening_segment_at", time=_format_hhmmss(start_seconds))
         with measure_stage("dubbing", "extract", start=f"{start_seconds:.3f}", source=self._config.audio_source):
             self._extract_audio(start_seconds, wav_path)
 
@@ -552,14 +577,15 @@ class DubbingWorker(QThread):
             matched_path = self._temp_dir / f"vi-{segment_ms}-{index}-matched.wav"
             needs_reference_audio = self._needs_reference_audio()
 
-            self.status_changed.emit(f"\u0110ang d\u1ecbch c\u00e2u t\u1ea1i {_format_hhmmss(absolute_start)}...")
+            self._emit_status("worker_translating_sentence_at", time=_format_hhmmss(absolute_start))
             with measure_stage("dubbing", "translate", start=f"{absolute_start:.3f}"):
                 translated = self._translator.translate(original, info.language)
             if _tts_disabled(self._config):
                 self.segment_ready.emit(original, translated)
                 self._remember_scheduled_text(original, absolute_start)
                 continue
-            if is_non_speech_tts_text(translated):
+            tts_text = prepare_tts_text(translated, self._config.target_language)
+            if not tts_text:
                 self._queue_silent_audio(
                     absolute_start,
                     speech_duration,
@@ -590,13 +616,21 @@ class DubbingWorker(QThread):
                     selector=self._voice_selector,
                 ).voice
 
-            self.status_changed.emit(
-                f"\u0110ang t\u1ea1o gi\u1ecdng Vi\u1ec7t t\u1ea1i {_format_hhmmss(absolute_start)}..."
-            )
+            self._emit_status("worker_creating_target_voice_at", time=_format_hhmmss(absolute_start))
             with measure_stage("dubbing", "tts", start=f"{absolute_start:.3f}"):
-                self._tts_provider.synthesize(translated, tts_path, voice=voice)
+                self._tts_provider.synthesize(tts_text, tts_path, voice=voice)
             if self._stop_requested:
                 return
+            if is_pathological_tts_duration(tts_text, audio_duration_seconds(tts_path), speech_duration):
+                self._queue_silent_audio(
+                    absolute_start,
+                    speech_duration,
+                    self._temp_dir / f"vi-{segment_ms}-{index}-guard-silence.wav",
+                    original,
+                    translated,
+                )
+                self._remember_scheduled_text(original, absolute_start)
+                continue
             with measure_stage("dubbing", "postprocess", start=f"{absolute_start:.3f}"):
                 if self._skip_tts_postprocess():
                     final_path = tts_path
@@ -623,9 +657,7 @@ class DubbingWorker(QThread):
     def _process_subtitle_segment(self, start_seconds: float, tts_suffix: str) -> None:
         if self._temp_dir is None:
             return
-        self.status_changed.emit(
-            f"\u0110ang OCR ph\u1ee5 \u0111\u1ec1 c\u1ee9ng t\u1ea1i {_format_hhmmss(start_seconds)}..."
-        )
+        self._emit_status("worker_ocr_subtitle_at", time=_format_hhmmss(start_seconds))
         subtitle_segments = recognize_hard_subtitles(
             self._video_path,
             start_seconds,
@@ -650,15 +682,14 @@ class DubbingWorker(QThread):
             segment_ms = int(absolute_start * 1000)
             tts_path = self._temp_dir / f"vi-subtitle-{segment_ms}-{index}.{tts_suffix}"
 
-            self.status_changed.emit(
-                f"\u0110ang d\u1ecbch ph\u1ee5 \u0111\u1ec1 t\u1ea1i {_format_hhmmss(absolute_start)}..."
-            )
+            self._emit_status("worker_translating_subtitle_at", time=_format_hhmmss(absolute_start))
             translated = self._translator.translate(original, self._selected_whisper_language())
             if _tts_disabled(self._config):
                 self.segment_ready.emit(original, translated)
                 self._remember_scheduled_text(original, absolute_start)
                 continue
-            if is_non_speech_tts_text(translated):
+            tts_text = prepare_tts_text(translated, self._config.target_language)
+            if not tts_text:
                 self._queue_silent_audio(
                     absolute_start,
                     duration,
@@ -668,10 +699,18 @@ class DubbingWorker(QThread):
                 )
                 self._remember_scheduled_text(original, absolute_start)
                 continue
-            self.status_changed.emit(
-                f"\u0110ang t\u1ea1o gi\u1ecdng Vi\u1ec7t t\u1ea1i {_format_hhmmss(absolute_start)}..."
-            )
-            self._tts_provider.synthesize(translated, tts_path, voice=self._config.tts_voice)
+            self._emit_status("worker_creating_target_voice_at", time=_format_hhmmss(absolute_start))
+            self._tts_provider.synthesize(tts_text, tts_path, voice=self._config.tts_voice)
+            if is_pathological_tts_duration(tts_text, audio_duration_seconds(tts_path), duration):
+                self._queue_silent_audio(
+                    absolute_start,
+                    duration,
+                    self._temp_dir / f"vi-subtitle-{segment_ms}-{index}-guard-silence.wav",
+                    original,
+                    translated,
+                )
+                self._remember_scheduled_text(original, absolute_start)
+                continue
             final_path = tts_path if self._skip_tts_postprocess() else self._trim_leading_silence(tts_path)
             final_duration = audio_duration_seconds(final_path)
             self._queue_pending_audio(
@@ -716,6 +755,7 @@ class DubbingWorker(QThread):
                 self._config.segment_seconds,
                 device_name=self._config.capture_system_device,
                 backend=self._config.capture_backend,
+                language_id=self._config.gui_language,
             )
             return
         if self._config.audio_source == "microphone":
@@ -724,6 +764,7 @@ class DubbingWorker(QThread):
                 self._config.segment_seconds,
                 device_name=self._config.capture_microphone_device,
                 backend=self._config.capture_backend,
+                language_id=self._config.gui_language,
             )
             return
         if self._config.audio_source == "system_microphone":
@@ -733,6 +774,7 @@ class DubbingWorker(QThread):
                 system_device_name=self._config.capture_system_device,
                 microphone_device_name=self._config.capture_microphone_device,
                 backend=self._config.capture_backend,
+                language_id=self._config.gui_language,
             )
             return
 
@@ -966,7 +1008,7 @@ class DubbingWorker(QThread):
             return
         self._sync_hold_requested = False
         if not self._buffering:
-            self._request_resume("Âm đích đã bắt kịp âm nguồn")
+            self._request_resume(self._tr("worker_target_audio_caught_up"))
 
     def _launch_due_audio(self, current_seconds: float) -> bool:
         if not self._overlap_playback_enabled() and any(
@@ -1003,7 +1045,7 @@ class DubbingWorker(QThread):
                     continue
                 self._pending_audio.remove(selected)
             _, display_start, audio_path, original, translated = selected
-            self.status_changed.emit("\u0110ang ph\u00e1t gi\u1ecdng ti\u1ebfng Vi\u1ec7t")
+            self._emit_status("worker_playing_target_voice")
             self.audio_started.emit(display_start)
             self.segment_ready.emit(original, translated)
             command = [
@@ -1084,10 +1126,10 @@ def _terminate_process(process: subprocess.Popen, timeout_seconds: float = 2.0) 
             pass
 
 
-def _unsupported_audio_source_message(value: str) -> str:
-    label = str(value or "ngu\u1ed3n n\u00e0y")
+def _unsupported_audio_source_message(value: str, language_id: str | None = None) -> str:
+    label = str(value or ui_text("worker_unknown_source", language_id))
     supported = ", ".join(sorted(SUPPORTED_AUDIO_SOURCES))
-    return f"Khong ho tro nguon '{label}'. Cac nguon hop le: {supported}."
+    return ui_text("worker_unsupported_audio_source", language_id, source=label, supported=supported)
 
 
 def _tts_disabled(config: AppConfig) -> bool:

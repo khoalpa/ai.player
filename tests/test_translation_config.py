@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_player.core.config import AppConfig
+from ai_player.core.config import DEFAULT_PRESERVED_SOURCE_TERMS, AppConfig
 from ai_player.services import translation
 
 
@@ -41,6 +41,74 @@ def test_protect_and_restore_preserved_english_terms() -> None:
 
     assert "OpenAI" in restored
     assert "AI" in restored
+
+
+def test_protect_and_restore_preserved_source_language_terms() -> None:
+    config = AppConfig(preserve_source_terms=True, preserved_source_terms="先生, 오빠, OpenAI")
+
+    protected = translation._protect_english_terms("先生 meets 오빠 at OpenAI.", config)
+    restored = translation._restore_english_terms(protected.text.upper(), protected)
+
+    assert "先生" in restored
+    assert "오빠" in restored
+    assert "OpenAI" in restored
+
+
+def test_legacy_english_terms_are_still_used_as_source_terms() -> None:
+    config = AppConfig(
+        preserve_source_terms=True,
+        preserved_source_terms="",
+        preserve_english_terms=True,
+        preserved_english_terms="LegacyTerm",
+    )
+
+    protected = translation._protect_english_terms("LegacyTerm should stay.", config)
+
+    assert protected.replacements == (("zxqterm0zxq", "LegacyTerm"),)
+
+
+def test_source_terms_flag_is_canonical_over_legacy_english_terms_flag() -> None:
+    config = AppConfig(
+        preserve_source_terms=True,
+        preserved_source_terms="OpenAI",
+        preserve_english_terms=False,
+        preserved_english_terms="OpenAI",
+    )
+
+    protected = translation._protect_english_terms("OpenAI should translate naturally.", config)
+
+    assert protected.replacements == (("zxqterm0zxq", "OpenAI"),)
+
+
+def test_preserved_source_default_does_not_include_single_cjk_terms() -> None:
+    terms = translation._preserved_terms(DEFAULT_PRESERVED_SOURCE_TERMS)
+
+    assert "道" not in terms
+    assert "气" not in terms
+
+
+def test_preserved_term_validator_requests_retry_for_broken_placeholder() -> None:
+    config = AppConfig(preserve_source_terms=True, preserved_source_terms="OpenAI")
+    protected = translation._protect_english_terms("OpenAI builds tools.", config)
+
+    assert translation._needs_preserved_term_retry("zxqterm99zxq xây dựng công cụ.", protected)
+
+
+def test_preserved_term_validator_requests_retry_for_missing_term() -> None:
+    config = AppConfig(preserve_source_terms=True, preserved_source_terms="OpenAI")
+    protected = translation._protect_english_terms("OpenAI builds tools.", config)
+
+    assert translation._needs_preserved_term_retry("Công ty xây dựng công cụ.", protected)
+
+
+def test_select_preserved_translation_prefers_valid_retry() -> None:
+    config = AppConfig(preserve_source_terms=True, preserved_source_terms="OpenAI")
+    protected = translation._protect_english_terms("OpenAI builds tools.", config)
+
+    assert (
+        translation._select_preserved_translation("Công ty xây dựng công cụ.", "OpenAI xây dựng công cụ.", protected)
+        == "OpenAI xây dựng công cụ."
+    )
 
 
 def test_ctranslate2_model_path_detection(tmp_path) -> None:
@@ -102,3 +170,45 @@ def test_ctranslate2_translator_preserves_empty_segments(monkeypatch) -> None:
 
     assert translator.translate_many(["Hello", "  ", "World"], "en") == ["Xin chao", "", "The gioi"]
     assert fake_translator.batches == [[["Hello"], ["World"]]]
+
+
+def test_ctranslate2_translator_retries_broken_preserved_terms(monkeypatch) -> None:
+    class FakeTokenizer:
+        src_lang = ""
+
+        def __call__(self, text, **_kwargs):
+            return SimpleNamespace(input_ids=[[text]])
+
+        def convert_ids_to_tokens(self, ids):
+            return ids
+
+        def convert_tokens_to_ids(self, tokens):
+            return tokens
+
+        def decode(self, tokens, skip_special_tokens=True):
+            return " ".join(tokens)
+
+    class FakeTranslator:
+        def __init__(self) -> None:
+            self.batches = []
+
+        def translate_batch(self, source_tokens_batch, **_kwargs):
+            self.batches.append(source_tokens_batch)
+            joined = [" ".join(tokens) for tokens in source_tokens_batch]
+            if any("zxqterm" in text for text in joined):
+                return [SimpleNamespace(hypotheses=[["vie_Latn", "zxqterm99zxq", "xây", "dựng"]])]
+            return [SimpleNamespace(hypotheses=[["vie_Latn", "OpenAI", "xây", "dựng"]])]
+
+    translator = translation.CTranslate2NllbTranslator(
+        AppConfig(preserve_source_terms=True, preserved_source_terms="OpenAI")
+    )
+    fake_translator = FakeTranslator()
+
+    def fake_load_model() -> None:
+        translator._tokenizer = FakeTokenizer()
+        translator._translator = fake_translator
+
+    monkeypatch.setattr(translator, "_load_model", fake_load_model)
+
+    assert translator.translate_many(["OpenAI builds"], "en") == ["OpenAI xây dựng"]
+    assert fake_translator.batches == [[["zxqterm0zxq builds"]], [["OpenAI builds"]]]

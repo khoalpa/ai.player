@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QScrollArea
 
 from ai_player.core.config import LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH, LOCAL_TRANSLATION_MODEL_PATH
@@ -83,7 +83,7 @@ def test_sidebar_header_stays_outside_scroll_area(qapp) -> None:
         assert isinstance(window._settings_tabs.widget(0), QScrollArea)
         assert window._settings_tabs.parentWidget() is window._settings_scroll
 
-        window._settings_tabs.setCurrentIndex(4)
+        window._settings_tabs.setCurrentIndex(5)
         qapp.processEvents()
 
         assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._runtime_tab_widget)
@@ -99,7 +99,7 @@ def test_offline_models_manager_tab_exists(qapp) -> None:
         assert "whisper" in window._offline_model_rows
         assert "backup" in window._offline_model_rows
         assert window._settings_tabs.count() == 6
-        window._settings_tabs.setCurrentIndex(5)
+        window._settings_tabs.setCurrentIndex(2)
         qapp.processEvents()
         assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._offline_models_tab_widget)
         window._settings_save_timer.stop()
@@ -189,6 +189,44 @@ def test_video_url_full_cache_is_below_auto_match_audio(qapp) -> None:
         ).y()
 
         assert full_cache_y > auto_match_y
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_video_url_forces_full_cache_when_source_filter_is_enabled(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window._video_url_full_cache_check.setChecked(False)
+        window._source_filter_check.setChecked(False)
+        qapp.processEvents()
+        assert window._effective_video_url_full_cache() is False
+        assert window._source_filter_forces_video_url_full_cache() is False
+
+        window._source_filter_check.setChecked(True)
+        qapp.processEvents()
+        assert window._effective_video_url_full_cache() is True
+        assert window._source_filter_forces_video_url_full_cache() is True
+
+        window._video_url_full_cache_check.setChecked(True)
+        qapp.processEvents()
+        assert window._effective_video_url_full_cache() is True
+        assert window._source_filter_forces_video_url_full_cache() is False
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_subtitle_background_combo_updates_overlay_style(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window._set_combo_data(window._subtitle_background_combo, "rgba(0, 0, 0, 160)")
+        qapp.processEvents()
+
+        assert window._subtitle_background_color() == "rgba(0, 0, 0, 160)"
+        assert window._subtitle_overlay.subtitleBackgroundColor().getRgb() == (0, 0, 0, 160)
+        assert "background-color: transparent" in window._subtitle_overlay.styleSheet()
+        assert window._subtitle_overlay.testAttribute(Qt.WA_StyledBackground)
         window._settings_save_timer.stop()
     finally:
         window.close()

@@ -20,7 +20,7 @@ def test_translation_runtime_key_normalizes_provider() -> None:
         ("local_translation_model", "other"),
         ("local_translation_device", "cpu"),
         ("translation_max_tokens", 99),
-        ("preserved_english_terms", "API"),
+        ("preserved_source_terms", "API"),
     ],
 )
 def test_translation_runtime_key_changes_for_cache_relevant_fields(field: str, value) -> None:

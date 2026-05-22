@@ -236,12 +236,61 @@ def is_non_speech_tts_text(value: object) -> bool:
     return all(token in _NON_SPEECH_TTS_TOKENS or _looks_like_drawn_out_vocalization(token) for token in tokens)
 
 
+def prepare_tts_text(value: object, target_language: object = "vi") -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    if _target_uses_latin_script(target_language):
+        text = _strip_non_latin_source_script(text)
+    return "" if is_non_speech_tts_text(text) else text
+
+
+def is_pathological_tts_duration(
+    text: object,
+    duration_seconds: float,
+    target_duration_seconds: float | None = None,
+) -> bool:
+    duration = float(duration_seconds or 0.0)
+    if duration <= 0:
+        return False
+    clean_text = prepare_tts_text(text)
+    if not clean_text:
+        return True
+
+    normalized = unicodedata.normalize("NFD", clean_text.lower())
+    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+    tokens = re.findall(r"[a-z0-9]+", normalized)
+    letter_count = sum(1 for ch in normalized if ch.isalpha())
+    token_count = len(tokens)
+    target_duration = max(0.0, float(target_duration_seconds or 0.0))
+
+    if letter_count <= 12:
+        short_ceiling = max(3.0, target_duration * 2.5)
+        return duration > short_ceiling
+
+    estimated_natural_duration = max(1.0, token_count * 0.45 + letter_count * 0.065)
+    ceiling = max(8.0, estimated_natural_duration * 2.8, target_duration * 2.8)
+    return duration > ceiling
+
+
 def _looks_like_drawn_out_vocalization(token: str) -> bool:
     if len(token) < 2 or len(token) > 10:
         return False
     if len(set(token)) == 1 and token[0] in {"a", "e", "h", "m", "o", "u"}:
         return True
     return bool(re.fullmatch(r"h*m+h*", token) or re.fullmatch(r"[auo]+h*", token))
+
+
+def _target_uses_latin_script(target_language: object) -> bool:
+    normalized = str(target_language or "vi").strip().lower().split("-", 1)[0]
+    return normalized in {"vi", "en", "de", "es", "fr", "id", "it", "pt", "tr"}
+
+
+def _strip_non_latin_source_script(value: str) -> str:
+    text = re.sub(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]+", " ", value)
+    text = re.sub(r"[\u0400-\u04ff\u0590-\u05ff\u0600-\u06ff\u0e00-\u0e7f]+", " ", text)
+    text = re.sub(r"\s+([,.!?;:])", r"\1", text)
+    return " ".join(text.split()).strip(" ,.;:!?")
 
 
 def normalize_vieneu_mode(value: object) -> str:
