@@ -326,8 +326,8 @@ class CTranslate2NllbTranslator(LocalNllbTranslator):
             target_prefixes.append([target_lang])
         translate_kwargs = {
             "target_prefix": target_prefixes,
-            "beam_size": max(1, int(self._config.translation_num_beams)),
-            "max_decoding_length": max(32, int(self._config.translation_max_tokens)),
+            "beam_size": _int_value(self._config.translation_num_beams, default=2, minimum=1),
+            "max_decoding_length": _int_value(self._config.translation_max_tokens, default=152, minimum=32),
             "batch_type": "tokens",
             "max_batch_size": _translation_batch_size(self._config),
         }
@@ -652,8 +652,16 @@ def _translation_batch_size(config: AppConfig) -> int:
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
+
+
+def _int_value(value: object, *, default: int, minimum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        number = default
+    return max(minimum, number)
 
 
 def _disable_unneeded_transformers_optional_imports() -> dict[str, object]:

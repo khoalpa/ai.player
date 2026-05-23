@@ -123,12 +123,14 @@ def _build_audio_match_plan(
     config: AppConfig,
 ) -> AudioMatchPlan:
     filters: list[str] = []
-    tempo = 1.0 + (config.dubbing_speed_percent / 100.0)
+    speed_percent = _finite_float(config.dubbing_speed_percent, 0.0)
+    target_duration = _finite_float(target_duration_seconds, 0.0)
+    tempo = 1.0 + (speed_percent / 100.0)
     tts_duration: float | None = None
     if config.dubbing_auto_match_audio:
         tts_duration = audio_duration_seconds(tts_path)
-        if tts_duration > 0.05 and target_duration_seconds > 0.05:
-            auto_tempo = tts_duration / target_duration_seconds
+        if tts_duration > 0.05 and target_duration > 0.05:
+            auto_tempo = tts_duration / target_duration
             auto_min, auto_max = _safe_auto_tempo_bounds(config)
             tempo *= max(auto_min, min(auto_max, auto_tempo))
     tempo = _clamp_natural_tempo(tempo)
@@ -143,7 +145,11 @@ def _build_audio_match_plan(
     gain: float | None = None
     if reference_volume is not None and tts_volume is not None:
         gain = reference_volume - tts_volume
-        gain = max(config.dubbing_volume_gain_min_db, min(config.dubbing_volume_gain_max_db, gain))
+        gain_min = _finite_float(config.dubbing_volume_gain_min_db, -12.0)
+        gain_max = _finite_float(config.dubbing_volume_gain_max_db, 12.0)
+        if gain_min > gain_max:
+            gain_min, gain_max = gain_max, gain_min
+        gain = max(gain_min, min(gain_max, gain))
         if abs(gain) >= 0.5:
             filters.append(_audio_format_filter(_MATCH_OUTPUT_SAMPLE_RATE, _MATCH_OUTPUT_CHANNELS))
             filters.append(f"volume={gain:.2f}dB")
@@ -158,11 +164,19 @@ def _build_audio_match_plan(
 
 
 def _safe_auto_tempo_bounds(config: AppConfig) -> tuple[float, float]:
-    lower = max(_NATURAL_TEMPO_MIN, min(1.0, float(config.dubbing_speed_min)))
-    upper = min(_NATURAL_TEMPO_MAX, max(1.0, float(config.dubbing_speed_max)))
+    lower = max(_NATURAL_TEMPO_MIN, min(1.0, _finite_float(config.dubbing_speed_min, _NATURAL_TEMPO_MIN)))
+    upper = min(_NATURAL_TEMPO_MAX, max(1.0, _finite_float(config.dubbing_speed_max, _NATURAL_TEMPO_MAX)))
     if lower > upper:
         return (_NATURAL_TEMPO_MIN, _NATURAL_TEMPO_MAX)
     return (lower, upper)
+
+
+def _finite_float(value: object, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return number if math.isfinite(number) else default
 
 
 def _clamp_natural_tempo(value: float) -> float:
@@ -235,11 +249,19 @@ def mean_volume_db(path: Path, *, sample_rate: int | None = None, channels: int 
 def _audio_format_filter(sample_rate: int | None, channels: int | None) -> str:
     args: list[str] = []
     if sample_rate is not None:
-        args.append(f"sample_rates={int(sample_rate)}")
+        args.append(f"sample_rates={_positive_int(sample_rate, default=_MATCH_OUTPUT_SAMPLE_RATE)}")
     if channels is not None:
-        channel_layout = "mono" if int(channels) == 1 else "stereo"
+        channel_layout = "mono" if _positive_int(channels, default=_MATCH_OUTPUT_CHANNELS) == 1 else "stereo"
         args.append(f"channel_layouts={channel_layout}")
     return f"aformat={':'.join(args)}" if args else "anull"
+
+
+def _positive_int(value: object, *, default: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        number = default
+    return max(1, number)
 
 
 def _median_pitch_hz(path: Path) -> float:

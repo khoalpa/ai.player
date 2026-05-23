@@ -200,6 +200,18 @@ def test_performance_presets_default_to_female_voice() -> None:
         assert tts.voice_gender(provider, voice) == "female"
 
 
+def test_vieneu_defaults_use_southern_voice() -> None:
+    config = AppConfig()
+    presets = catalog.load_performance_presets()
+
+    assert config.tts_voice == "Thục Đoan"
+    assert config.tts_female_voice == "Thục Đoan"
+    assert config.tts_male_voice == "Xuân Vĩnh"
+    assert presets["balanced"]["tts_voice"] == "Thục Đoan"
+    assert presets["balanced"]["tts_female_voice"] == "Thục Đoan"
+    assert presets["balanced"]["tts_male_voice"] == "Xuân Vĩnh"
+
+
 def test_performance_preset_comparison_orders_latency_and_quality() -> None:
     rows = {row.preset: row for row in compare_presets("en")}
 

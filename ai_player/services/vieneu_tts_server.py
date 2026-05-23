@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import traceback
@@ -70,8 +71,8 @@ def main() -> int:
             text = _clean_text(request.get("text"))
             output = Path(str(request.get("output") or ""))
             voice_id = str(request.get("voice") or "").strip()
-            temperature = float(request.get("temperature") or 0.6)
-            max_chars = max(1, int(request.get("max_chars") or 160))
+            temperature = _float_value(request.get("temperature"), default=0.6)
+            max_chars = _int_value(request.get("max_chars"), default=160, minimum=1)
 
             voice = engine.get_preset_voice(voice_id) if voice_id else None
             audio = engine.infer(
@@ -161,6 +162,22 @@ def _clean_message(value: object) -> str:
 def _clean_text(value: object) -> str:
     text = str(value or "").encode("utf-8", errors="replace").decode("utf-8", errors="replace")
     return " ".join(text.split())
+
+
+def _float_value(value: object, *, default: float) -> float:
+    try:
+        result = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return default
+    return result if math.isfinite(result) else default
+
+
+def _int_value(value: object, *, default: int, minimum: int) -> int:
+    try:
+        result = int(value)
+    except (OverflowError, TypeError, ValueError):
+        return default
+    return max(minimum, result)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import math
 import subprocess
 import tempfile
 import time
@@ -491,8 +492,8 @@ class PlayerMediaMixin:
         current_seconds = self._document_time_ms() / 1000.0
         page_index = 0
         for index, page in enumerate(self._document_pages):
-            start = float(page.start_seconds)
-            end = start + float(page.duration_seconds)
+            start = _document_seconds_value(page.start_seconds)
+            end = start + _document_seconds_value(page.duration_seconds)
             if start <= current_seconds < end:
                 page_index = index
                 break
@@ -657,7 +658,7 @@ class PlayerMediaMixin:
         page_index = max(0, min(page_index, len(self._document_pages) - 1))
         page = self._document_pages[page_index]
         self._document_audio_sync_active = False
-        self._document_elapsed_ms = int(float(page.start_seconds) * 1000)
+        self._document_elapsed_ms = _document_ms_value(page.start_seconds)
         self._document_started_at = None
         self._update_document_page(force=True)
         total = max(1, self._document_duration_ms)
@@ -675,7 +676,7 @@ class PlayerMediaMixin:
             return
         was_playing = self._document_started_at is not None
         self._document_audio_sync_active = True
-        self._document_elapsed_ms = max(0, int(float(start_seconds) * 1000))
+        self._document_elapsed_ms = _document_ms_value(start_seconds)
         self._document_started_at = time.monotonic() if was_playing else None
         self._update_document_page(force=True)
         self._update_subtitle_overlay()
@@ -998,3 +999,17 @@ class PlayerMediaMixin:
         if hours:
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         return f"{minutes:02d}:{seconds:02d}"
+
+
+def _document_ms_value(value: object) -> int:
+    return int(_document_seconds_value(value) * 1000)
+
+
+def _document_seconds_value(value: object) -> float:
+    try:
+        seconds = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(seconds):
+        return 0.0
+    return max(0.0, seconds)

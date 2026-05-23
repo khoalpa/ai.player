@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from PySide6.QtGui import QAction
@@ -19,7 +20,12 @@ from ai_player.core.config import AppConfig
 from ai_player.ui.export_progress_dialog import ExportProgressDialog
 from ai_player.ui.player_window_utils import repair_mojibake as _repair_mojibake
 from ai_player.ui.player_window_utils import safe_native_dubbing_config as _safe_native_dubbing_config
-from ai_player.workers.export_worker import DocumentReviewExportWorker, DubbingExportWorker, ExportRange
+from ai_player.workers.export_worker import (
+    DocumentReviewExportWorker,
+    DubbingExportWorker,
+    ExportRange,
+    StagedDubbingExportWorker,
+)
 
 
 class PlayerExportMixin:
@@ -28,19 +34,23 @@ class PlayerExportMixin:
         save_transcript = QAction(self._tr("export_menu_save_transcript"), self)
         export_audio = QAction(self._tr("export_menu_audio"), self)
         export_video = QAction(self._tr("export_menu_dubbed_video"), self)
+        export_staged = QAction(self._tr("export_menu_staged_dubbing"), self)
         export_review = QAction(self._tr("export_menu_document_video"), self)
         save_transcript.setToolTip(self._tr("export_menu_save_transcript"))
         export_audio.setToolTip(self._tr("export_menu_audio"))
         export_video.setToolTip(self._tr("export_menu_dubbed_video"))
+        export_staged.setToolTip(self._tr("export_menu_staged_dubbing"))
         export_review.setToolTip(self._tr("export_menu_document_video"))
         save_transcript.triggered.connect(self._save_transcript)
         export_audio.triggered.connect(lambda: self._export_dubbed_media("audio"))
         export_video.triggered.connect(lambda: self._export_dubbed_media("video"))
+        export_staged.triggered.connect(self._export_staged_dubbing)
         export_review.triggered.connect(self._export_high_quality_review)
         menu.addAction(save_transcript)
         menu.addSeparator()
         menu.addAction(export_audio)
         menu.addAction(export_video)
+        menu.addAction(export_staged)
         menu.addAction(export_review)
         menu.exec(self._export_button.mapToGlobal(self._export_button.rect().bottomLeft()))
 
@@ -105,6 +115,46 @@ class PlayerExportMixin:
             self._export_document_review()
             return
         self._export_dubbed_media("video")
+
+    def _export_staged_dubbing(self) -> None:
+        if self._document_mode:
+            QMessageBox.information(self, self._tr("app_title"), self._tr("msg_export_video_only"))
+            return
+        if not self._video_path:
+            QMessageBox.information(self, self._tr("app_title"), self._tr("msg_open_video_first"))
+            return
+        if self._export_worker is not None:
+            QMessageBox.information(self, self._tr("app_title"), self._tr("msg_export_running"))
+            return
+        self._save_settings()
+        export_config = _safe_native_dubbing_config(self._config)
+        if export_config.audio_source != "original":
+            QMessageBox.information(self, self._tr("app_title"), self._tr("msg_staged_export_source_unsupported"))
+            return
+        output_dir = QFileDialog.getExistingDirectory(
+            self,
+            self._tr("export_staged_title"),
+            str(Path.home() / "ai-player-staged-dubbing"),
+        )
+        if not output_dir:
+            return
+        export_range = self._choose_export_range()
+        if export_range is None:
+            return
+
+        self._pause_active_source()
+        self._stop_dubbing()
+        self._export_button.setEnabled(False)
+        self._show_export_progress_dialog(self._tr("export_staged_title"), output_dir, export_config)
+        worker = StagedDubbingExportWorker(
+            self._video_path,
+            output_dir,
+            export_config,
+            export_range,
+            self,
+        )
+        self._start_export_worker(worker)
+        self.statusBar().showMessage(self._tr("status_staged_export_running"))
 
     def _export_document_review(self) -> None:
         if not self._document_mode or not self._document_pages:
@@ -299,20 +349,28 @@ def _parse_time(value: str) -> float:
     parts = text.split(":")
     try:
         if len(parts) == 1:
-            return max(0.0, float(parts[0]))
+            return _finite_time_value(float(parts[0]))
         if len(parts) == 2:
             minutes, seconds = parts
-            return max(0.0, int(minutes) * 60 + float(seconds))
+            return _finite_time_value(int(minutes) * 60 + float(seconds))
         if len(parts) == 3:
             hours, minutes, seconds = parts
-            return max(0.0, int(hours) * 3600 + int(minutes) * 60 + float(seconds))
-    except ValueError as exc:
+            return _finite_time_value(int(hours) * 3600 + int(minutes) * 60 + float(seconds))
+    except (OverflowError, ValueError) as exc:
         raise ValueError("invalid time") from exc
     raise ValueError("invalid time")
 
 
 def _format_time(seconds_value: float) -> str:
+    if not math.isfinite(seconds_value):
+        seconds_value = 0.0
     total_seconds = max(0, int(round(seconds_value)))
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _finite_time_value(value: float) -> float:
+    if not math.isfinite(value):
+        raise ValueError("invalid time")
+    return max(0.0, value)

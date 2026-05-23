@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -230,10 +231,10 @@ def _call_ollama(prompt: str, config: AppConfig) -> str:
             "stream": False,
             "options": {"temperature": 0.1},
         },
-        timeout=max(1.0, float(config.transcript_cleanup_timeout_seconds)),
+        timeout=_timeout_seconds(config.transcript_cleanup_timeout_seconds),
     )
     response.raise_for_status()
-    data = response.json()
+    data = _response_json_object(response, "Ollama")
     return str(data.get("response") or "")
 
 
@@ -250,11 +251,11 @@ def _call_openai_compatible(prompt: str, config: AppConfig) -> str:
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
         },
-        timeout=max(1.0, float(config.transcript_cleanup_timeout_seconds)),
+        timeout=_timeout_seconds(config.transcript_cleanup_timeout_seconds),
     )
     response.raise_for_status()
-    data = response.json()
-    return str(data["choices"][0]["message"]["content"])
+    data = _response_json_object(response, "OpenAI-compatible cleanup")
+    return _chat_completion_content(data)
 
 
 def _call_headless_local(prompt: str, config: AppConfig) -> str:
@@ -267,6 +268,39 @@ def _call_headless_local(prompt: str, config: AppConfig) -> str:
     if model_path.is_dir():
         return _call_local_transformers(prompt, model_path, config)
     raise TranscriptCleanupError("Headless local cần Cleanup model là file .gguf hoặc thư mục model HuggingFace local.")
+
+
+def _timeout_seconds(value: object) -> float:
+    try:
+        seconds = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return 12.0
+    if not math.isfinite(seconds):
+        return 12.0
+    return max(1.0, seconds)
+
+
+def _response_json_object(response, provider_name: str) -> dict[str, Any]:
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise TranscriptCleanupError(f"{provider_name} trả về JSON không hợp lệ.") from exc
+    if not isinstance(data, dict):
+        raise TranscriptCleanupError(f"{provider_name} trả về dữ liệu không đúng định dạng.")
+    return data
+
+
+def _chat_completion_content(data: dict[str, Any]) -> str:
+    try:
+        choices = data["choices"]
+        first_choice = choices[0] if isinstance(choices, list) else {}
+        message = first_choice.get("message") if isinstance(first_choice, dict) else {}
+        content = message.get("content") if isinstance(message, dict) else None
+    except (IndexError, KeyError, TypeError) as exc:
+        raise TranscriptCleanupError("OpenAI-compatible cleanup trả về dữ liệu không đúng định dạng.") from exc
+    if content is None:
+        raise TranscriptCleanupError("OpenAI-compatible cleanup trả về dữ liệu không đúng định dạng.")
+    return str(content)
 
 
 def _call_local_gguf(prompt: str, model_path: Path, config: AppConfig) -> str:

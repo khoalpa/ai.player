@@ -30,6 +30,15 @@ def test_translation_runtime_key_changes_for_cache_relevant_fields(field: str, v
     assert translation_runtime.translation_runtime_key(base) != translation_runtime.translation_runtime_key(changed)
 
 
+def test_translation_runtime_key_sanitizes_invalid_numeric_fields() -> None:
+    key = translation_runtime.translation_runtime_key(
+        replace(AppConfig(), translation_max_tokens=float("nan"), translation_num_beams="bad")
+    )
+
+    assert key.max_tokens == 152
+    assert key.beams == 2
+
+
 def test_none_provider_returns_passthrough() -> None:
     translator = translation_runtime.get_shared_vietnamese_translator(AppConfig(translator_provider="none"))
 

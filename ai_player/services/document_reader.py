@@ -279,7 +279,11 @@ def _read_csv(path: Path) -> list[str]:
 
 
 def _read_json(path: Path) -> list[str]:
-    data = json.loads(path.read_text(encoding="utf-8-sig", errors="replace"))
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text.splitlines()
     return _json_text_blocks(data)
 
 

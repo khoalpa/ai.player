@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import fields, replace
 from typing import Any
@@ -40,6 +41,7 @@ def load_app_config(base: AppConfig | None = None) -> AppConfig:
     _migrate_removed_local_models(data)
     _migrate_preserved_source_flags(data)
     _migrate_runtime_warmup_flags(data)
+    _migrate_default_vieneu_voices(data)
 
     values: dict[str, Any] = {}
     field_map = {field.name: field for field in fields(AppConfig)}
@@ -100,6 +102,19 @@ def _migrate_runtime_warmup_flags(data: dict[str, Any]) -> None:
         data.pop("runtime_warmup_tts", None)
 
 
+def _migrate_default_vieneu_voices(data: dict[str, Any]) -> None:
+    if str(data.get("tts_provider") or "vieneu").strip().lower() not in {"", "vieneu"}:
+        return
+    replacements = {
+        "tts_voice": ({"Bích Ngọc", "Bich Ngoc"}, "Thục Đoan"),
+        "tts_female_voice": ({"Bích Ngọc", "Bich Ngoc"}, "Thục Đoan"),
+        "tts_male_voice": ({"Phạm Tuyên", "Pham Tuyen"}, "Xuân Vĩnh"),
+    }
+    for key, (old_voices, new_voice) in replacements.items():
+        if str(data.get(key) or "") in old_voices:
+            data[key] = new_voice
+
+
 def save_app_config(config: AppConfig) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     data = {field.name: getattr(config, field.name) for field in fields(AppConfig) if field.name not in SECRET_SETTINGS}
@@ -135,7 +150,8 @@ def _coerce_value(value: Any, current: Any) -> Any:
             return current
     if isinstance(current, float):
         try:
-            return float(value)
+            number = float(value)
         except Exception:
             return current
+        return number if math.isfinite(number) else current
     return str(value) if isinstance(current, str) else value

@@ -102,9 +102,9 @@
         "asr_provider": "faster_whisper",
         "ocr_provider": "tesseract",
         "ocr_model": "${PROJECT_ROOT}\\models\\ocr\\tessdata",
-        "tts_female_voice": "Bích Ngọc",
-        "tts_male_voice": "Phạm Tuyên",
-        "tts_voice": "Bích Ngọc"
+        "tts_female_voice": "Thục Đoan",
+        "tts_male_voice": "Xuân Vĩnh",
+        "tts_voice": "Thục Đoan"
       },
       "label": "Offline nhẹ"
     },
@@ -156,9 +156,9 @@
         "asr_provider": "faster_whisper",
         "ocr_provider": "tesseract",
         "ocr_model": "${PROJECT_ROOT}\\models\\ocr\\tessdata",
-        "tts_female_voice": "Bích Ngọc",
-        "tts_male_voice": "Phạm Tuyên",
-        "tts_voice": "Bích Ngọc"
+        "tts_female_voice": "Thục Đoan",
+        "tts_male_voice": "Xuân Vĩnh",
+        "tts_voice": "Thục Đoan"
       },
       "label": "Cân bằng"
     },
@@ -211,7 +211,7 @@
         "ocr_provider": "tesseract",
         "ocr_model": "${PROJECT_ROOT}\\models\\ocr\\tessdata",
         "tts_female_voice": "Doan",
-        "tts_male_voice": "Binh",
+        "tts_male_voice": "Vinh",
         "tts_voice": "Doan"
       },
       "label": "Chất lượng / Xuất bản"

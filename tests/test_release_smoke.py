@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -70,3 +71,50 @@ def test_release_smoke_exports_sample_media_with_transcript_tts(monkeypatch, qap
     assert failures == []
     assert output_path.exists()
     assert probe_duration_seconds(output_path) >= 0.5
+
+
+def test_release_smoke_exports_staged_sample_media(monkeypatch, qapp, tmp_path) -> None:
+    sample_video = Path("samples/demo-video.mp4")
+    if not sample_video.exists():
+        pytest.skip("sample video is not available")
+
+    config = AppConfig(
+        audio_source="original",
+        translator_provider="none",
+        local_translation_offline=False,
+        tts_provider="vieneu",
+        vieneu_tts_offline=False,
+        original_audio_voice_filter=True,
+        original_audio_voice_filter_mode="fast",
+        export_video_quality="compact",
+    )
+    worker = export_worker.StagedDubbingExportWorker(
+        str(sample_video),
+        str(tmp_path),
+        config,
+        export_worker.ExportRange(0.0, 1.2),
+    )
+    failures: list[str] = []
+    finished: list[str] = []
+    worker.failed.connect(failures.append)
+    worker.export_finished.connect(finished.append)
+    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: _SilentTTSProvider())
+    monkeypatch.setattr(
+        export_worker,
+        "get_shared_vietnamese_translator",
+        lambda _config: type("Translator", (), {"translate_many": lambda self, texts, _language: list(texts)})(),
+    )
+    worker._validate_whisper_model = lambda: None
+    worker._transcribe_staged = lambda _source_audio: (
+        [type("Segment", (), {"text": "hello", "start": 0.0, "end": 0.8, "words": []})()],
+        type("Info", (), {"language": "en"})(),
+    )
+
+    worker.run()
+
+    assert failures == []
+    assert finished == [str(tmp_path)]
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "complete"
+    assert probe_duration_seconds(tmp_path / "audio" / "final_mix.wav") >= 0.5
+    assert probe_duration_seconds(tmp_path / "dubbed_video.mp4") >= 0.5

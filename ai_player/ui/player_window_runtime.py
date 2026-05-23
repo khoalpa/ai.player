@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import math
 import os
 import platform
 import shutil
@@ -208,12 +209,17 @@ class PlayerRuntimeMixin:
     def _format_media_probe(self, path: Path, data: dict) -> str:
         streams = data.get("streams") if isinstance(data, dict) else []
         streams = streams if isinstance(streams, list) else []
+        streams = [item for item in streams if isinstance(item, dict)]
         fmt = data.get("format") if isinstance(data, dict) else {}
         fmt = fmt if isinstance(fmt, dict) else {}
         video = next((item for item in streams if item.get("codec_type") == "video"), {})
         audio_streams = [item for item in streams if item.get("codec_type") == "audio"]
         subtitle_count = sum(1 for item in streams if item.get("codec_type") == "subtitle")
         unknown = self._tr("runtime_unknown")
+        try:
+            file_size = path.stat().st_size
+        except OSError:
+            file_size = None
 
         lines = [
             f"File: {path.name}",
@@ -221,7 +227,7 @@ class PlayerRuntimeMixin:
             self._tr("runtime_container").format(
                 container=fmt.get("format_long_name") or fmt.get("format_name") or path.suffix.lstrip(".") or unknown
             ),
-            self._tr("runtime_size").format(size=self._format_bytes(path.stat().st_size)),
+            self._tr("runtime_size").format(size=self._format_bytes(file_size)),
             self._tr("runtime_duration").format(duration=self._format_seconds(_float_value(fmt.get("duration")))),
             self._tr("runtime_total_bitrate").format(bitrate=_format_bitrate(fmt.get("bit_rate"), unknown)),
         ]
@@ -427,7 +433,13 @@ class PlayerRuntimeMixin:
     def _format_seconds(self, value: float | None) -> str:
         if value is None:
             return self._tr("runtime_unknown")
-        seconds_total = max(0, int(round(float(value))))
+        try:
+            seconds = float(value)
+        except (OverflowError, TypeError, ValueError):
+            return self._tr("runtime_unknown")
+        if not math.isfinite(seconds):
+            return self._tr("runtime_unknown")
+        seconds_total = max(0, int(round(seconds)))
         hours, remainder = divmod(seconds_total, 3600)
         minutes, seconds = divmod(remainder, 60)
         if hours:
@@ -435,7 +447,13 @@ class PlayerRuntimeMixin:
         return f"{minutes:02d}:{seconds:02d}"
 
     def _format_bytes(self, value: int) -> str:
-        amount = float(value)
+        try:
+            amount = float(value)
+        except (OverflowError, TypeError, ValueError):
+            return self._tr("runtime_unknown")
+        if not math.isfinite(amount):
+            return self._tr("runtime_unknown")
+        amount = max(0.0, amount)
         for unit in ("B", "KB", "MB", "GB", "TB"):
             if amount < 1024 or unit == "TB":
                 return f"{amount:.1f} {unit}" if unit != "B" else f"{int(amount)} B"

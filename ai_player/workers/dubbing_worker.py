@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
@@ -134,6 +135,7 @@ class DubbingWorker(QThread):
         self._source_audio_cache_ready = False
         self._source_audio_cache_cancel = False
         self._source_audio_cache_thread: threading.Thread | None = None
+        self._realtime_cleanup_skip_warned = False
 
     def stop(self) -> None:
         self._stop_requested = True
@@ -166,7 +168,7 @@ class DubbingWorker(QThread):
             current = self._get_time_ms() / 1000.0
             self._next_segment_start = max(
                 0.0,
-                current + self._config.dubbing_start_delay_seconds,
+                current + self._start_delay_seconds(),
             )
             self._covered_until = self._next_segment_start
             self._scheduled_audio_until = self._next_segment_start
@@ -181,7 +183,7 @@ class DubbingWorker(QThread):
             while not self._stop_requested:
                 current = self._get_time_ms() / 1000.0
                 if self._playback_position_jumped(current):
-                    self._reset_schedule(current + self._config.dubbing_start_delay_seconds)
+                    self._reset_schedule(current + self._start_delay_seconds())
                     time.sleep(0.1)
                     continue
 
@@ -201,14 +203,15 @@ class DubbingWorker(QThread):
                         self._buffering = True
                         self._request_pause(self._tr("worker_waiting_target_voice"))
 
+                segment_seconds = self._segment_seconds()
                 lookahead_seconds = max(
-                    self._config.segment_seconds * self._config.dubbing_lookahead_segments,
-                    self._config.dubbing_min_ready_ahead_seconds + self._config.segment_seconds,
+                    segment_seconds * _positive_int(self._config.dubbing_lookahead_segments, default=1),
+                    self._min_ready_ahead_seconds() + segment_seconds,
                 )
                 if self._next_segment_start <= current + lookahead_seconds:
                     if self._segment_executor is None:
                         self._process_segment(self._next_segment_start)
-                        self._next_segment_start += self._config.segment_seconds
+                        self._next_segment_start += segment_seconds
                         self._covered_until = max(self._covered_until, self._next_segment_start)
                     else:
                         self._submit_segment_work(current + lookahead_seconds)
@@ -229,13 +232,22 @@ class DubbingWorker(QThread):
     def _is_live_capture_source(self) -> bool:
         return self._config.audio_source in {"system", "microphone", "system_microphone"}
 
+    def _segment_seconds(self) -> float:
+        return max(0.25, _finite_seconds(self._config.segment_seconds, 5.0))
+
+    def _min_ready_ahead_seconds(self) -> float:
+        return max(0.0, _finite_seconds(self._config.dubbing_min_ready_ahead_seconds, 0.0))
+
+    def _start_delay_seconds(self) -> float:
+        return max(0.0, _finite_seconds(self._config.dubbing_start_delay_seconds, 0.0))
+
     def _can_process_segments_async(self) -> bool:
         return self._config.audio_source in {"original", "subtitle"}
 
     def _run_transcript_source(self) -> None:
         entries = _load_transcript_entries(
             self._config.transcript_path,
-            self._config.segment_seconds,
+            self._segment_seconds(),
             self._config.gui_language,
         )
         if not entries:
@@ -245,7 +257,7 @@ class DubbingWorker(QThread):
                 time.sleep(0.2)
             return
         current = self._get_time_ms() / 1000.0
-        self._next_segment_start = max(0.0, current + self._config.dubbing_start_delay_seconds)
+        self._next_segment_start = max(0.0, current + self._start_delay_seconds())
         self._covered_until = self._next_segment_start
         self._scheduled_audio_until = self._next_segment_start
         self._request_pause(self._tr("worker_preparing_transcript"))
@@ -267,10 +279,7 @@ class DubbingWorker(QThread):
                 self._launch_due_audio(current)
             if next_index < len(entries):
                 ready_ahead = self._covered_until - current
-                target_ahead = max(
-                    float(self._config.segment_seconds),
-                    float(self._config.dubbing_min_ready_ahead_seconds),
-                )
+                target_ahead = max(self._segment_seconds(), self._min_ready_ahead_seconds())
                 with self._state_lock:
                     pending_audio_count = len(self._pending_audio)
                 if ready_ahead <= target_ahead or pending_audio_count <= 1:
@@ -291,13 +300,12 @@ class DubbingWorker(QThread):
                 return index
             entry = entries[index]
             index += 1
-            if entry.end is not None and entry.end < current:
+            entry_start = max(0.0, _finite_seconds(entry.start, 0.0))
+            entry_end = self._transcript_entry_end(entry, entry_start)
+            if entry.end is not None and entry_end < current:
                 continue
             self._prepare_transcript_entry(entry, index - 1)
-            self._covered_until = max(
-                self._covered_until,
-                entry.end if entry.end is not None else entry.start + self._config.segment_seconds,
-            )
+            self._covered_until = max(self._covered_until, entry_end)
             self._prepared_segments += 1
             prepared += 1
             current = self._get_time_ms() / 1000.0
@@ -314,40 +322,38 @@ class DubbingWorker(QThread):
     def _prepare_transcript_entry(self, entry: TranscriptEntry, index: int) -> None:
         if self._temp_dir is None:
             return
-        original = self._clean_transcript_text(entry.text.strip(), self._selected_whisper_language())
+        entry_start = max(0.0, _finite_seconds(entry.start, 0.0))
+        entry_end = self._transcript_entry_end(entry, entry_start)
+        original = self._clean_transcript_text(_clean_worker_text(entry.text), self._selected_whisper_language())
         if not original:
             return
-        segment_ms = int(entry.start * 1000)
+        segment_ms = int(entry_start * 1000)
         tts_suffix = "wav" if normalize_tts_provider(self._config.tts_provider) == "vieneu" else "mp3"
         tts_path = self._temp_dir / f"vi-transcript-{segment_ms}-{index}.{tts_suffix}"
 
-        self._emit_status("worker_translating_transcript_at", time=_format_hhmmss(entry.start))
+        self._emit_status("worker_translating_transcript_at", time=_format_hhmmss(entry_start))
         translated = self._translator.translate(original, self._selected_whisper_language())
         if _tts_disabled(self._config):
             self.segment_ready.emit(original, translated)
             with self._state_lock:
-                self._scheduled_audio_until = max(
-                    self._scheduled_audio_until,
-                    entry.end if entry.end is not None else entry.start + self._config.segment_seconds,
-                )
+                self._scheduled_audio_until = max(self._scheduled_audio_until, entry_end)
             return
-        entry_end = entry.end if entry.end is not None else entry.start + self._config.segment_seconds
-        duration = max(0.25, entry_end - entry.start)
+        duration = max(0.25, entry_end - entry_start)
         tts_text = prepare_tts_text(translated, self._config.target_language)
         if not tts_text:
             self._queue_silent_audio(
-                entry.start,
+                entry_start,
                 duration,
                 tts_path.with_name(f"{tts_path.stem}-silence.wav"),
                 original,
                 translated,
             )
             return
-        self._emit_status("worker_creating_target_voice_at", time=_format_hhmmss(entry.start))
+        self._emit_status("worker_creating_target_voice_at", time=_format_hhmmss(entry_start))
         self._tts_provider.synthesize(tts_text, tts_path, voice=self._config.tts_voice)
         if is_pathological_tts_duration(tts_text, audio_duration_seconds(tts_path), duration):
             self._queue_silent_audio(
-                entry.start,
+                entry_start,
                 duration,
                 tts_path.with_name(f"{tts_path.stem}-guard-silence.wav"),
                 original,
@@ -356,7 +362,12 @@ class DubbingWorker(QThread):
             return
         final_path = tts_path if self._skip_tts_postprocess() else self._trim_leading_silence(tts_path)
         final_duration = audio_duration_seconds(final_path)
-        self._queue_pending_audio(entry.start, final_duration, final_path, original, translated)
+        self._queue_pending_audio(entry_start, final_duration, final_path, original, translated)
+
+    def _transcript_entry_end(self, entry: TranscriptEntry, entry_start: float) -> float:
+        if entry.end is None:
+            return entry_start + self._segment_seconds()
+        return max(entry_start + 0.25, _finite_seconds(entry.end, entry_start + self._segment_seconds()))
 
     def _reset_schedule(self, start_seconds: float) -> None:
         self._stop_active_audio()
@@ -381,7 +392,7 @@ class DubbingWorker(QThread):
     def _submit_segment_work(self, target_seconds: float) -> None:
         if self._segment_executor is None:
             return
-        max_pending = max(1, int(self._config.dubbing_lookahead_segments))
+        max_pending = _positive_int(self._config.dubbing_lookahead_segments, default=1)
         while (
             not self._stop_requested
             and len(self._segment_futures) < max_pending
@@ -390,7 +401,7 @@ class DubbingWorker(QThread):
             start_seconds = self._next_segment_start
             future = self._segment_executor.submit(self._process_segment, start_seconds)
             self._segment_futures[future] = start_seconds
-            self._next_segment_start += self._config.segment_seconds
+            self._next_segment_start += self._segment_seconds()
 
     def _collect_segment_futures(self, current_seconds: float) -> None:
         completed = [future for future in self._segment_futures if future.done()]
@@ -410,17 +421,17 @@ class DubbingWorker(QThread):
     def _advance_covered_until(self) -> None:
         while _segment_start_key(self._covered_until) in self._completed_segment_starts:
             self._completed_segment_starts.remove(_segment_start_key(self._covered_until))
-            self._covered_until += self._config.segment_seconds
+            self._covered_until += self._segment_seconds()
 
     def _segment_worker_count(self) -> int:
         configured = os.getenv("AI_PLAYER_DUBBING_SEGMENT_WORKERS", "").strip()
         if configured:
             try:
                 return max(1, min(8, int(configured)))
-            except ValueError:
+            except (OverflowError, ValueError):
                 pass
         cpu_count = os.cpu_count() or 2
-        return max(1, min(4, cpu_count // 2, int(self._config.dubbing_lookahead_segments or 1)))
+        return max(1, min(4, cpu_count // 2, _positive_int(self._config.dubbing_lookahead_segments, default=1)))
 
     def _shutdown_segment_executor(self) -> None:
         self._cancel_segment_futures()
@@ -445,7 +456,7 @@ class DubbingWorker(QThread):
 
         delta = current_seconds - previous
         elapsed_wall = max(0.0, now - previous_wall)
-        allowed_forward_jump = elapsed_wall + max(5.0, self._config.segment_seconds)
+        allowed_forward_jump = elapsed_wall + max(5.0, self._segment_seconds())
         if delta < -1.0:
             return True
         return delta > allowed_forward_jump
@@ -513,7 +524,7 @@ class DubbingWorker(QThread):
 
     def _resume_if_buffer_ready(self, current_seconds: float) -> None:
         ready_ahead = self._covered_until - current_seconds
-        required_segments = self._config.dubbing_prebuffer_segments
+        required_segments = _positive_int(self._config.dubbing_prebuffer_segments, default=1)
         required_ready_ahead = self._required_ready_ahead_seconds()
         if self._config.audio_source in {"transcript", "document_editor"}:
             required_segments = 1
@@ -527,10 +538,10 @@ class DubbingWorker(QThread):
     def _required_ready_ahead_seconds(self) -> float:
         if self._config.audio_source in {"transcript", "document_editor"}:
             return 0.5
-        configured_ready_ahead = max(0.0, float(self._config.dubbing_min_ready_ahead_seconds))
+        configured_ready_ahead = self._min_ready_ahead_seconds()
         segment_ready_ahead = max(
             0.5,
-            float(self._config.segment_seconds) * max(1, self._config.dubbing_prebuffer_segments),
+            self._segment_seconds() * _positive_int(self._config.dubbing_prebuffer_segments, default=1),
         )
         return min(configured_ready_ahead, segment_ready_ahead)
 
@@ -540,6 +551,7 @@ class DubbingWorker(QThread):
         if self._config.audio_source != "subtitle" and self._model is None:
             return
 
+        start_seconds = max(0.0, _finite_seconds(start_seconds, 0.0))
         safe_start = int(start_seconds * 1000)
         wav_path = self._temp_dir / f"source-{safe_start}.wav"
         tts_suffix = "wav" if normalize_tts_provider(self._config.tts_provider) == "vieneu" else "mp3"
@@ -554,7 +566,9 @@ class DubbingWorker(QThread):
 
         with measure_stage("dubbing", "asr", start=f"{start_seconds:.3f}"):
             segments, info = self._transcribe_with_fallback(wav_path)
-            recognized_segments = [segment for segment in segments if segment.text and segment.text.strip()]
+            recognized_segments = [
+                segment for segment in segments if _clean_worker_text(getattr(segment, "text", ""))
+            ]
         if not recognized_segments:
             with self._state_lock:
                 self._prepared_segments += 1
@@ -564,12 +578,19 @@ class DubbingWorker(QThread):
             if self._stop_requested:
                 return
 
-            original = self._clean_transcript_text(speech_segment.text.strip(), getattr(info, "language", None))
-            absolute_start = start_seconds + max(0.0, float(speech_segment.start or 0.0))
+            source_language = _clean_language(getattr(info, "language", None))
+            original = self._clean_transcript_text(
+                _clean_worker_text(getattr(speech_segment, "text", "")),
+                source_language,
+            )
+            speech_start = max(0.0, _finite_seconds(getattr(speech_segment, "start", 0.0), 0.0))
+            absolute_start = start_seconds + speech_start
             if self._is_duplicate_nearby_text(original, absolute_start):
                 continue
-            speech_start = max(0.0, float(speech_segment.start or 0.0))
-            speech_end = max(speech_start + 0.25, float(speech_segment.end or speech_start + 0.25))
+            speech_end = max(
+                speech_start + 0.25,
+                _finite_seconds(getattr(speech_segment, "end", None), speech_start + 0.25),
+            )
             speech_duration = max(0.25, speech_end - speech_start)
             segment_ms = int(absolute_start * 1000)
             tts_path = self._temp_dir / f"vi-{segment_ms}-{index}.{tts_suffix}"
@@ -579,7 +600,7 @@ class DubbingWorker(QThread):
 
             self._emit_status("worker_translating_sentence_at", time=_format_hhmmss(absolute_start))
             with measure_stage("dubbing", "translate", start=f"{absolute_start:.3f}"):
-                translated = self._translator.translate(original, info.language)
+                translated = self._translator.translate(original, source_language)
             if _tts_disabled(self._config):
                 self.segment_ready.emit(original, translated)
                 self._remember_scheduled_text(original, absolute_start)
@@ -657,11 +678,12 @@ class DubbingWorker(QThread):
     def _process_subtitle_segment(self, start_seconds: float, tts_suffix: str) -> None:
         if self._temp_dir is None:
             return
+        start_seconds = max(0.0, _finite_seconds(start_seconds, 0.0))
         self._emit_status("worker_ocr_subtitle_at", time=_format_hhmmss(start_seconds))
         subtitle_segments = recognize_hard_subtitles(
             self._video_path,
             start_seconds,
-            self._config.segment_seconds,
+            self._segment_seconds(),
             self._temp_dir,
             self._config.source_language,
             config=self._config,
@@ -674,11 +696,18 @@ class DubbingWorker(QThread):
         for index, subtitle_segment in enumerate(subtitle_segments):
             if self._stop_requested:
                 return
-            original = self._clean_transcript_text(subtitle_segment.text.strip(), self._selected_whisper_language())
-            absolute_start = subtitle_segment.start
+            original = self._clean_transcript_text(
+                _clean_worker_text(getattr(subtitle_segment, "text", "")),
+                self._selected_whisper_language(),
+            )
+            absolute_start = max(0.0, _finite_seconds(getattr(subtitle_segment, "start", 0.0), 0.0))
             if self._is_duplicate_nearby_text(original, absolute_start):
                 continue
-            duration = max(0.5, subtitle_segment.end - subtitle_segment.start)
+            subtitle_end = max(
+                absolute_start + 0.5,
+                _finite_seconds(getattr(subtitle_segment, "end", None), absolute_start + 0.5),
+            )
+            duration = max(0.5, subtitle_end - absolute_start)
             segment_ms = int(absolute_start * 1000)
             tts_path = self._temp_dir / f"vi-subtitle-{segment_ms}-{index}.{tts_suffix}"
 
@@ -730,20 +759,23 @@ class DubbingWorker(QThread):
         key = _text_key(text)
         if not key:
             return False
-        window_seconds = max(30.0, self._config.segment_seconds * 3.0)
+        start_seconds = max(0.0, _finite_seconds(start_seconds, 0.0))
+        window_seconds = max(30.0, self._segment_seconds() * 3.0)
         with self._state_lock:
             self._scheduled_text_keys = [
                 (known_key, known_start)
                 for known_key, known_start in self._scheduled_text_keys
-                if start_seconds - known_start <= window_seconds
+                if start_seconds - _finite_seconds(known_start, 0.0) <= window_seconds
             ]
             return any(
-                abs(start_seconds - known_start) <= window_seconds and _text_keys_similar(known_key, key)
+                abs(start_seconds - _finite_seconds(known_start, 0.0)) <= window_seconds
+                and _text_keys_similar(known_key, key)
                 for known_key, known_start in self._scheduled_text_keys
             )
 
     def _remember_scheduled_text(self, text: str, start_seconds: float) -> None:
         key = _text_key(text)
+        start_seconds = max(0.0, _finite_seconds(start_seconds, 0.0))
         if key:
             with self._state_lock:
                 self._scheduled_text_keys.append((key, start_seconds))
@@ -752,7 +784,7 @@ class DubbingWorker(QThread):
         if self._config.audio_source == "system":
             capture_system_audio(
                 wav_path,
-                self._config.segment_seconds,
+                self._segment_seconds(),
                 device_name=self._config.capture_system_device,
                 backend=self._config.capture_backend,
                 language_id=self._config.gui_language,
@@ -761,7 +793,7 @@ class DubbingWorker(QThread):
         if self._config.audio_source == "microphone":
             capture_microphone_audio(
                 wav_path,
-                self._config.segment_seconds,
+                self._segment_seconds(),
                 device_name=self._config.capture_microphone_device,
                 backend=self._config.capture_backend,
                 language_id=self._config.gui_language,
@@ -770,7 +802,7 @@ class DubbingWorker(QThread):
         if self._config.audio_source == "system_microphone":
             capture_system_microphone_audio(
                 wav_path,
-                self._config.segment_seconds,
+                self._segment_seconds(),
                 system_device_name=self._config.capture_system_device,
                 microphone_device_name=self._config.capture_microphone_device,
                 backend=self._config.capture_backend,
@@ -783,7 +815,7 @@ class DubbingWorker(QThread):
             extract_audio_range(
                 cached_source,
                 start_seconds,
-                self._config.segment_seconds,
+                self._segment_seconds(),
                 wav_path,
                 cancel_callback=self._is_stop_requested,
             )
@@ -806,7 +838,7 @@ class DubbingWorker(QThread):
                 "-ss",
                 f"{start_seconds:.3f}",
                 "-t",
-                str(self._config.segment_seconds),
+                str(self._segment_seconds()),
                 "-i",
                 self._video_path,
                 "-map",
@@ -894,7 +926,24 @@ class DubbingWorker(QThread):
         return self._stop_requested or self._source_audio_cache_cancel
 
     def _clean_transcript_text(self, text: str, source_language: str | None = None) -> str:
-        return self._transcript_cleaner.clean(text, source_language)
+        clean_text = _clean_worker_text(text)
+        if not clean_text:
+            return clean_text
+        if self._skip_realtime_local_cleanup():
+            if not self._realtime_cleanup_skip_warned:
+                self._realtime_cleanup_skip_warned = True
+                self._emit_status("worker_skipping_realtime_local_cleanup")
+            return clean_text
+        if self._transcript_cleaner.enabled:
+            self._emit_status("worker_cleaning_transcript")
+        return self._transcript_cleaner.clean(clean_text, source_language)
+
+    def _skip_realtime_local_cleanup(self) -> bool:
+        if not self._transcript_cleaner.enabled:
+            return False
+        if str(self._config.transcript_cleanup_provider or "").strip().lower() != "local":
+            return False
+        return self._config.audio_source in {"original", "system", "microphone", "system_microphone", "subtitle"}
 
     def _needs_reference_audio(self) -> bool:
         return bool(self._config.dubbing_auto_voice_gender or self._config.dubbing_auto_match_audio)
@@ -907,8 +956,8 @@ class DubbingWorker(QThread):
         original: str,
         translated: str,
     ) -> None:
-        source_start = max(0.0, float(source_start_seconds))
-        duration = max(0.05, float(duration_seconds or 0.0))
+        source_start = max(0.0, _finite_seconds(source_start_seconds, 0.0))
+        duration = max(0.05, _finite_seconds(duration_seconds, 0.05))
         with self._state_lock:
             scheduled_start, self._scheduled_audio_until = schedule_timeline_start(
                 source_start_seconds=source_start,
@@ -940,7 +989,7 @@ class DubbingWorker(QThread):
         return (
             str(self._config.performance_preset or "").strip().lower() == "low_latency"
             and not self._config.dubbing_auto_match_audio
-            and int(self._config.dubbing_speed_percent or 0) == 0
+            and _int_value(self._config.dubbing_speed_percent, default=0) == 0
         )
 
     def _trim_leading_silence(self, audio_path: Path) -> Path:
@@ -1055,7 +1104,7 @@ class DubbingWorker(QThread):
                 "-loglevel",
                 "quiet",
                 "-volume",
-                str(max(0, min(100, int(self._config.dubbing_voice_volume)))),
+                str(_clamped_int(self._config.dubbing_voice_volume, default=100, minimum=0, maximum=100)),
                 str(audio_path),
             ]
             startupinfo = None
@@ -1136,8 +1185,21 @@ def _tts_disabled(config: AppConfig) -> bool:
     return normalize_tts_provider(config.tts_provider) == "none"
 
 
-def _text_key(value: str) -> str:
-    text = str(value or "").strip().casefold()
+def _clean_worker_text(value: object) -> str:
+    if isinstance(value, bytes):
+        text = value.decode("utf-8", errors="replace")
+    else:
+        text = str(value or "")
+    return " ".join(text.split())
+
+
+def _clean_language(value: object) -> str | None:
+    language = _clean_worker_text(value).strip().lower()
+    return language or None
+
+
+def _text_key(value: object) -> str:
+    text = _clean_worker_text(value).casefold()
     text = re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
     return " ".join(text.split())
 
@@ -1154,7 +1216,33 @@ def _text_keys_similar(left: str, right: str) -> bool:
 
 
 def _segment_start_key(value: float) -> int:
-    return int(round(float(value or 0.0) * 1000))
+    return int(round(_finite_seconds(value, 0.0) * 1000))
+
+
+def _finite_seconds(value: object, default: float) -> float:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(seconds):
+        return default
+    return seconds
+
+
+def _positive_int(value: object, default: int) -> int:
+    number = _int_value(value, default=default)
+    return max(1, number)
+
+
+def _int_value(value: object, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _clamped_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
+    return max(minimum, min(maximum, _int_value(value, default=default)))
 
 
 def _effective_whisper_device(value: str) -> str:

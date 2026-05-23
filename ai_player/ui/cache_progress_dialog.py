@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 from pathlib import Path
 
@@ -116,14 +117,21 @@ def _float_value(value) -> float | None:
     try:
         if value is None:
             return None
-        return float(value)
+        number = float(value)
     except Exception:
         return None
+    return number if math.isfinite(number) else None
 
 
 def _format_bytes(value: float) -> str:
     units = ("B", "KB", "MB", "GB", "TB")
-    size = float(max(0.0, value))
+    try:
+        size = float(value)
+    except (OverflowError, TypeError, ValueError):
+        size = 0.0
+    if not math.isfinite(size):
+        size = 0.0
+    size = max(0.0, size)
     for unit in units:
         if size < 1024 or unit == units[-1]:
             return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
@@ -132,7 +140,13 @@ def _format_bytes(value: float) -> str:
 
 
 def _format_seconds(value: float) -> str:
-    seconds = max(0, int(value))
+    try:
+        numeric = float(value)
+    except (OverflowError, TypeError, ValueError):
+        numeric = 0.0
+    if not math.isfinite(numeric):
+        numeric = 0.0
+    seconds = max(0, int(numeric))
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
     if hours:

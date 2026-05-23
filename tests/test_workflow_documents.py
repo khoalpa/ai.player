@@ -50,3 +50,10 @@ def test_read_json_file_returns_text_blocks(tmp_path) -> None:
     path.write_text(json.dumps({"a": ["b", "c"]}), encoding="utf-8")
 
     assert docs._read_json(path) == ["a: b", "a: c"]
+
+
+def test_read_json_file_falls_back_to_text_when_invalid(tmp_path) -> None:
+    path = tmp_path / "broken.json"
+    path.write_text("{not-json\nsecond line", encoding="utf-8")
+
+    assert docs._read_json(path) == ["{not-json", "second line"]

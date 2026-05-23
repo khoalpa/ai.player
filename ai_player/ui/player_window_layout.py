@@ -77,7 +77,7 @@ def _subtitle_qcolor(value: str) -> QColor:
             try:
                 red, green, blue, alpha = [max(0, min(255, int(float(part)))) for part in parts]
                 return QColor(red, green, blue, alpha)
-            except ValueError:
+            except (OverflowError, ValueError):
                 pass
     color = QColor(text)
     return color if color.isValid() else QColor(0, 0, 0, 0)

@@ -72,6 +72,7 @@ def normalize_source_voice_filter_model(model: str) -> str:
         "default": SOURCE_VOICE_FILTER_DEFAULT_MODEL,
         "demucs": SOURCE_VOICE_FILTER_DEFAULT_MODEL,
         "ai": SOURCE_VOICE_FILTER_DEFAULT_MODEL,
+        "mdx": "mdx_extra",
     }
     value = aliases.get(value, value)
     return value if value in SOURCE_VOICE_FILTER_DEMUCS_MODELS else SOURCE_VOICE_FILTER_DEFAULT_MODEL
@@ -267,7 +268,7 @@ def _create_demucs_filtered_video(
             ]
         )
         no_vocals = temp_dir / selected_model / demucs_input.stem / "no_vocals.wav"
-        if not no_vocals.exists():
+        if not _nonempty_file(no_vocals):
             raise DemucsSeparationError(f"Demucs did not create expected file: {no_vocals}")
         runner(
             [
@@ -398,6 +399,13 @@ def _remove_partial_output(output_path: Path) -> None:
             output_path.unlink()
     except OSError:
         pass
+
+
+def _nonempty_file(path: Path) -> bool:
+    try:
+        return path.exists() and path.stat().st_size > 0
+    except OSError:
+        return False
 
 
 def _exception_summary(exc: Exception, max_length: int = 240) -> str:

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from ai_player.core.i18n import ui_text
+
+_MAX_TRANSCRIPT_SECONDS = 30 * 24 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -45,10 +48,11 @@ def parse_timed_transcript(text: str) -> list[TranscriptEntry]:
             continue
         start_text, end_text = [part.strip() for part in lines[time_index].split("-->", 1)]
         start = parse_timestamp(start_text)
-        end = parse_timestamp(end_text)
+        raw_end = parse_timestamp(end_text)
         body = " ".join(lines[time_index + 1 :]).strip()
         body = re.sub(r"<[^>]+>", "", body).strip()
         if start is not None and body:
+            end = max(start + 0.25, raw_end if raw_end is not None else start + 5.0)
             entries.append(TranscriptEntry(start=start, end=end, text=body))
     return entries
 
@@ -68,42 +72,59 @@ def parse_bracket_timed_transcript(text: str) -> list[TranscriptEntry]:
 
 def parse_plain_transcript(text: str, segment_seconds: int) -> list[TranscriptEntry]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    step = max(1.0, float(segment_seconds))
+    step = max(1.0, _finite_seconds(segment_seconds, default=5.0))
     return [TranscriptEntry(start=index * step, end=(index + 1) * step, text=line) for index, line in enumerate(lines)]
 
 
 def fill_missing_transcript_ends(entries: list[TranscriptEntry]) -> list[TranscriptEntry]:
     filled: list[TranscriptEntry] = []
     for index, entry in enumerate(entries):
-        next_start = entries[index + 1].start if index + 1 < len(entries) else entry.start + 5.0
-        filled.append(TranscriptEntry(start=entry.start, end=max(entry.start + 0.25, next_start), text=entry.text))
+        start = _finite_seconds(entry.start, default=0.0)
+        next_start = (
+            _finite_seconds(entries[index + 1].start, default=start + 5.0)
+            if index + 1 < len(entries)
+            else start + 5.0
+        )
+        filled.append(TranscriptEntry(start=start, end=max(start + 0.25, next_start), text=entry.text))
     return filled
 
 
 def parse_timestamp(value: str) -> float | None:
-    head = str(value or "").strip().split()[0].replace(",", ".")
+    tokens = str(value or "").strip().split()
+    if not tokens:
+        return None
+    head = tokens[0].replace(",", ".")
     parts = head.split(":")
     try:
         if len(parts) == 2:
             minutes = float(parts[0])
             seconds = float(parts[1])
-            return minutes * 60 + seconds
+            return _finite_seconds(minutes * 60 + seconds, default=None)
         if len(parts) == 3:
             hours = float(parts[0])
             minutes = float(parts[1])
             seconds = float(parts[2])
-            return hours * 3600 + minutes * 60 + seconds
-    except ValueError:
+            return _finite_seconds(hours * 3600 + minutes * 60 + seconds, default=None)
+    except (ValueError, OverflowError):
         return None
     return None
 
 
 def format_hhmmss(value: object) -> str:
-    try:
-        seconds_value = float(value or 0)
-    except Exception:
-        seconds_value = 0.0
-    total_seconds = max(0, int(seconds_value))
+    seconds_value = _finite_seconds(value, default=0.0)
+    total_seconds = int(seconds_value)
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _finite_seconds(value: object, *, default: float | None) -> float | None:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(seconds):
+        return default
+    if seconds > _MAX_TRANSCRIPT_SECONDS:
+        return default
+    return max(0.0, seconds)

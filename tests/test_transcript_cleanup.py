@@ -141,6 +141,28 @@ def test_cleanup_aliases(value: str, expected: str) -> None:
     assert normalizer(value) == expected
 
 
+def test_timeout_seconds_rejects_non_finite_values() -> None:
+    assert transcript_cleanup._timeout_seconds(float("nan")) == 12.0
+    assert transcript_cleanup._timeout_seconds(float("inf")) == 12.0
+    assert transcript_cleanup._timeout_seconds("bad") == 12.0
+    assert transcript_cleanup._timeout_seconds(0.5) == 1.0
+    assert transcript_cleanup._timeout_seconds(3) == 3
+
+
+def test_response_json_object_rejects_malformed_provider_response() -> None:
+    class FakeResponse:
+        def json(self):
+            return []
+
+    with pytest.raises(transcript_cleanup.TranscriptCleanupError, match="không đúng định dạng"):
+        transcript_cleanup._response_json_object(FakeResponse(), "Provider")
+
+
+def test_chat_completion_content_rejects_malformed_provider_response() -> None:
+    with pytest.raises(transcript_cleanup.TranscriptCleanupError, match="không đúng định dạng"):
+        transcript_cleanup._chat_completion_content({"choices": [{"message": {}}]})
+
+
 def test_local_transformers_kwargs_use_dtype_not_deprecated_torch_dtype(monkeypatch) -> None:
     monkeypatch.setattr(transcript_cleanup.importlib.util, "find_spec", lambda _name: None)
     torch = SimpleNamespace(

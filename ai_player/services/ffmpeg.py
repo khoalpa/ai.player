@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import subprocess
@@ -178,15 +179,17 @@ def make_silence(
     sample_rate: int = 44100,
     channels: int = 2,
 ) -> None:
-    channel_layout = "mono" if channels == 1 else "stereo"
+    sample_rate_value = _positive_int(sample_rate, default=44100)
+    channels_value = _positive_int(channels, default=2)
+    channel_layout = "mono" if channels_value == 1 else "stereo"
     run_ffmpeg(
         [
             "-f",
             "lavfi",
             "-i",
-            f"anullsrc=channel_layout={channel_layout}:sample_rate={int(sample_rate)}",
+            f"anullsrc=channel_layout={channel_layout}:sample_rate={sample_rate_value}",
             "-t",
-            f"{max(0.0, duration_seconds):.3f}",
+            f"{_seconds_value(duration_seconds, default=0.0):.3f}",
             "-c:a",
             "pcm_s16le",
             "-y",
@@ -202,14 +205,16 @@ def to_wav(
     sample_rate: int = 44100,
     channels: int = 2,
 ) -> None:
+    sample_rate_value = _positive_int(sample_rate, default=44100)
+    channels_value = _positive_int(channels, default=2)
     run_ffmpeg(
         [
             "-i",
             input_path,
             "-ar",
-            int(sample_rate),
+            sample_rate_value,
             "-ac",
-            int(channels),
+            channels_value,
             "-c:a",
             "pcm_s16le",
             "-y",
@@ -246,18 +251,22 @@ def extract_audio_range(
     channels: int = 1,
     cancel_callback: Callable[[], bool] | None = None,
 ) -> None:
+    start = _seconds_value(start_seconds, default=0.0)
+    duration = max(0.05, _seconds_value(duration_seconds, default=0.05))
+    sample_rate_value = _positive_int(sample_rate, default=16000)
+    channels_value = _positive_int(channels, default=1)
     args = [
         "-ss",
-        f"{max(0.0, start_seconds):.3f}",
+        f"{start:.3f}",
         "-t",
-        f"{max(0.05, duration_seconds):.3f}",
+        f"{duration:.3f}",
         "-i",
         source_path,
         "-vn",
         "-ac",
-        int(channels),
+        channels_value,
         "-ar",
-        int(sample_rate),
+        sample_rate_value,
         "-y",
         output_path,
     ]
@@ -322,7 +331,20 @@ def safe_float(value: object) -> float | None:
         parsed = float(text)
     except Exception:
         return None
-    return parsed if parsed >= 0 else None
+    return parsed if math.isfinite(parsed) and parsed >= 0 else None
+
+
+def _seconds_value(value: object, *, default: float) -> float:
+    parsed = safe_float(value)
+    return default if parsed is None else parsed
+
+
+def _positive_int(value: object, *, default: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        number = default
+    return max(1, number)
 
 
 def _probe_duration_cache_key(path: Path) -> tuple[str, int, int] | None:

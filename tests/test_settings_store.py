@@ -82,6 +82,67 @@ def test_load_app_config_allows_env_to_enable_tts_warmup(tmp_path, monkeypatch) 
     assert config.runtime_warmup_tts is True
 
 
+def test_load_app_config_migrates_old_default_vieneu_voices_to_southern(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(
+        json.dumps(
+            {
+                "tts_provider": "vieneu",
+                "tts_voice": "Bích Ngọc",
+                "tts_female_voice": "Bích Ngọc",
+                "tts_male_voice": "Phạm Tuyên",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+    monkeypatch.setattr(settings_store, "read_preserved_source_terms_file", lambda: "OpenAI")
+
+    config = settings_store.load_app_config(AppConfig())
+
+    assert config.tts_voice == "Thục Đoan"
+    assert config.tts_female_voice == "Thục Đoan"
+    assert config.tts_male_voice == "Xuân Vĩnh"
+
+
+def test_load_app_config_migrates_ascii_old_default_vieneu_voices_to_southern(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(
+        json.dumps(
+            {
+                "tts_provider": "vieneu",
+                "tts_voice": "Bich Ngoc",
+                "tts_female_voice": "Bich Ngoc",
+                "tts_male_voice": "Pham Tuyen",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+    monkeypatch.setattr(settings_store, "read_preserved_source_terms_file", lambda: "OpenAI")
+
+    config = settings_store.load_app_config(AppConfig())
+
+    assert config.tts_voice == "Thục Đoan"
+    assert config.tts_female_voice == "Thục Đoan"
+    assert config.tts_male_voice == "Xuân Vĩnh"
+
+
+def test_load_app_config_keeps_custom_vieneu_voice(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(
+        json.dumps({"tts_provider": "vieneu", "tts_voice": "Ngọc"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+    monkeypatch.setattr(settings_store, "read_preserved_source_terms_file", lambda: "OpenAI")
+
+    config = settings_store.load_app_config(AppConfig())
+
+    assert config.tts_voice == "Ngọc"
+
+
 def test_load_app_config_coerces_numeric_values(tmp_path, monkeypatch) -> None:
     settings_file = tmp_path / "settings.json"
     settings_file.write_text(
@@ -94,6 +155,20 @@ def test_load_app_config_coerces_numeric_values(tmp_path, monkeypatch) -> None:
 
     assert config.translation_max_tokens == 42
     assert config.dubbing_speed_min == 0.85
+
+
+def test_load_app_config_ignores_non_finite_float_values(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(
+        json.dumps({"dubbing_speed_min": "nan", "vieneu_tts_temperature": "inf"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+
+    config = settings_store.load_app_config(AppConfig())
+
+    assert config.dubbing_speed_min == AppConfig().dubbing_speed_min
+    assert config.vieneu_tts_temperature == AppConfig().vieneu_tts_temperature
 
 
 def test_load_app_config_reads_preserved_source_terms_from_file_not_settings(tmp_path, monkeypatch) -> None:

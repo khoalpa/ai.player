@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 from dataclasses import dataclass, field, fields
@@ -101,15 +102,16 @@ def _terms_text(value: str) -> str:
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         return default
 
 
 def _env_float(name: str, default: float) -> float:
     try:
-        return float(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
+        value = float(os.getenv(name, str(default)))
+    except (OverflowError, TypeError, ValueError):
         return default
+    return value if math.isfinite(value) else default
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -201,9 +203,9 @@ class AppConfig:
     original_audio_playback_delay_seconds: int = 6
     dubbing_enabled_by_default: bool = False
     tts_provider: str = "vieneu"
-    tts_voice: str = "Bích Ngọc"
-    tts_male_voice: str = "Phạm Tuyên"
-    tts_female_voice: str = "Bích Ngọc"
+    tts_voice: str = "Thục Đoan"
+    tts_male_voice: str = "Xuân Vĩnh"
+    tts_female_voice: str = "Thục Đoan"
     vieneu_tts_path: str = INTERNAL_VIENEU_TTS_PATH
     vieneu_tts_runtime: str = "subprocess"
     vieneu_tts_python: str = field(default_factory=lambda: sys.executable)

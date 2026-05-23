@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QFrame, QScrollArea
 
 from ai_player.core.config import LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH, LOCAL_TRANSLATION_MODEL_PATH
 from ai_player.services.document_reader import DocumentPage
 from ai_player.ui.player_window import PlayerWindow
+from ai_player.ui.player_window_layout import _subtitle_qcolor
+from ai_player.ui.player_window_media import _document_ms_value, _document_seconds_value
 
 
 def test_player_window_constructs_offscreen(qapp) -> None:
@@ -21,8 +25,43 @@ def test_player_window_runtime_format_helpers(qapp) -> None:
     try:
         assert window._format_seconds(65) == "01:05"
         assert window._format_bytes(1024) == "1.0 KB"
+        assert window._format_seconds(float("inf")) == window._tr("runtime_unknown")
+        assert window._format_seconds(float("nan")) == window._tr("runtime_unknown")
+        assert window._format_bytes(float("inf")) == window._tr("runtime_unknown")
     finally:
         window.close()
+
+
+def test_player_window_media_probe_ignores_non_dict_streams(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        text = window._format_media_probe(
+            Path("demo.mp4"),
+            {"streams": ["bad", {"codec_type": "video", "codec_name": "h264"}], "format": {}},
+        )
+
+        assert "demo.mp4" in text
+    finally:
+        window.close()
+
+
+def test_document_ms_value_sanitizes_invalid_times() -> None:
+    assert _document_ms_value(float("inf")) == 0
+    assert _document_ms_value(float("nan")) == 0
+    assert _document_ms_value("bad") == 0
+    assert _document_ms_value(1.25) == 1250
+    assert _document_seconds_value(float("inf")) == 0.0
+    assert _document_seconds_value(float("nan")) == 0.0
+
+
+def test_subtitle_qcolor_ignores_non_finite_rgba_parts() -> None:
+    assert _subtitle_qcolor("rgba(inf, 0, 0, 1)").alpha() == 0
+
+
+def test_player_window_scaled_preset_value_ignores_bad_numbers() -> None:
+    assert PlayerWindow._scaled_preset_value(float("nan"), fallback=0.55, scale=100) == 55
+    assert PlayerWindow._scaled_preset_value(float("inf"), fallback=0.55, scale=100) == 55
+    assert PlayerWindow._scaled_preset_value("bad", fallback=0.55, scale=100) == 55
 
 
 def test_player_window_event_loop_smoke(qapp) -> None:

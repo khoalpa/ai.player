@@ -32,6 +32,16 @@ def test_app_config_from_env_overlays_static_defaults(monkeypatch) -> None:
     assert config.dubbing_auto_match_audio is False
 
 
+def test_app_config_from_env_ignores_non_finite_float_values(monkeypatch) -> None:
+    monkeypatch.setenv("AI_PLAYER_VIENEU_TTS_TEMPERATURE", "inf")
+    monkeypatch.setenv("AI_PLAYER_DUBBING_SPEED_MIN", "nan")
+
+    config = AppConfig.from_env()
+
+    assert config.vieneu_tts_temperature == AppConfig().vieneu_tts_temperature
+    assert config.dubbing_speed_min == AppConfig().dubbing_speed_min
+
+
 def test_runtime_diagnostics_collects_required_sections() -> None:
     report = collect_runtime_diagnostics(include_audio_devices=False)
 

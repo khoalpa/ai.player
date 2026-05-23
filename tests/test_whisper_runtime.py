@@ -48,7 +48,10 @@ def test_normalize_model_path_resolves_existing_path(tmp_path) -> None:
     assert whisper_runtime._normalize_model_path(str(tmp_path)) == str(tmp_path.resolve())
 
 
-@pytest.mark.parametrize(("value", "expected"), [(0, 1), (1, 1), (5, 5), (99, 8), ("bad", 1)])
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(0, 1), (1, 1), (5, 5), (99, 8), ("bad", 1), (float("nan"), 1), (float("inf"), 1)],
+)
 def test_effective_whisper_beam_size_clamps(value, expected: int) -> None:
     assert whisper_runtime.effective_whisper_beam_size(value) == expected
 

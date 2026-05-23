@@ -26,6 +26,7 @@ def test_normalize_source_voice_filter_mode_aliases() -> None:
     assert filter_service.normalize_source_voice_filter_mode("ffmpeg") == "fast"
     assert filter_service.normalize_source_voice_filter_mode("demucs") == "ai"
     assert filter_service.normalize_source_voice_filter_mode("unexpected") == "fast"
+    assert filter_service.normalize_source_voice_filter_model("mdx") == "mdx_extra"
 
 
 def test_fast_source_voice_filter_uses_ffmpeg(tmp_path) -> None:
@@ -155,6 +156,28 @@ def test_ai_source_voice_filter_runs_demucs_then_muxes_no_vocals(tmp_path, monke
     assert str(source) in commands[0]
     assert commands[1][-1].endswith("source-audio.wav")
     assert "1:a:0" in commands[2]
+
+
+def test_ai_source_voice_filter_rejects_empty_no_vocals(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(filter_service, "demucs_available", lambda: True)
+    source = tmp_path / "demo.mp4"
+    output = tmp_path / "filtered.mp4"
+    source.write_bytes(b"source")
+
+    def runner(command: list[str]) -> None:
+        if command[0] == "ffmpeg" and "pcm_s16le" in command:
+            Path(command[-1]).write_bytes(b"wav")
+        if command[0] == "demucs":
+            output_root = Path(command[command.index("-o") + 1])
+            demucs_input = Path(command[-1])
+            no_vocals = (
+                output_root / filter_service.SOURCE_VOICE_FILTER_DEMUCS_MODEL / demucs_input.stem / "no_vocals.wav"
+            )
+            no_vocals.parent.mkdir(parents=True, exist_ok=True)
+            no_vocals.write_bytes(b"")
+
+    with pytest.raises(filter_service.DemucsSeparationError, match="Demucs did not create expected file"):
+        filter_service.apply_source_voice_filter(source, output, mode="ai", process_runner=runner)
 
 
 def test_ai_source_voice_filter_copies_safe_h264_video(tmp_path, monkeypatch) -> None:

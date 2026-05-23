@@ -33,6 +33,21 @@ def test_ocr_video_filter_uses_configurable_sampling_window() -> None:
     )
 
 
+def test_ocr_video_filter_sanitizes_non_finite_config() -> None:
+    config = AppConfig(
+        ocr_fps=float("nan"),
+        ocr_crop_top_ratio=float("inf"),
+        ocr_crop_height_ratio=float("nan"),
+        ocr_scale=float("inf"),
+    )
+
+    assert subtitle_ocr._ocr_video_filter(config) == "fps=0.2,crop=iw:ih*0.0500:0:ih*0.0000,scale=iw*1:ih*1,format=gray"
+
+
+def test_ocr_psm_sanitizes_non_finite_config() -> None:
+    assert subtitle_ocr._ocr_psm(AppConfig(ocr_psm=float("inf"))) == 6
+
+
 def test_parse_tesseract_tsv_keeps_text_and_confidence() -> None:
     result = subtitle_ocr._parse_tesseract_tsv("level\tconf\ttext\n5\t91.5\tHELLO\n5\t82.0\tWORLD\n5\t-1\t\n")
 
@@ -92,3 +107,29 @@ def test_recognize_hard_subtitles_merges_similar_frames(monkeypatch, tmp_path) -
     )
 
     assert result == [subtitle_ocr.OcrSubtitleSegment(start=0.0, end=3, text="Xin chao Viet Nam.")]
+
+
+def test_recognize_hard_subtitles_sanitizes_non_finite_timing(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_extract(_video_path, start_seconds, duration_seconds, output_pattern, *, config=None) -> None:
+        captured["start"] = start_seconds
+        captured["duration"] = duration_seconds
+        output_pattern.parent.mkdir(parents=True, exist_ok=True)
+        (output_pattern.parent / "frame-001.png").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(subtitle_ocr, "_tesseract_executable", lambda: Path("tesseract"))
+    monkeypatch.setattr(subtitle_ocr, "_extract_subtitle_frames", fake_extract)
+    monkeypatch.setattr(subtitle_ocr, "_ocr_frame", lambda *_args, **_kwargs: subtitle_ocr.OcrFrameResult("Hello", 90))
+
+    result = subtitle_ocr.recognize_hard_subtitles(
+        "video.mp4",
+        float("inf"),
+        float("nan"),
+        tmp_path,
+        "en",
+        AppConfig(ocr_fps=2),
+    )
+
+    assert captured == {"start": 0.0, "duration": 1.0}
+    assert result == [subtitle_ocr.OcrSubtitleSegment(start=0.0, end=1.0, text="Hello")]

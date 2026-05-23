@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 
 from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QLineEdit, QPushButton, QSlider, QWidget
@@ -473,7 +474,11 @@ class PlayerSettingsMixin:
         self._set_checkbox(self._vieneu_offline_check, preset.get("vieneu_tts_offline"))
         self._set_slider_value(
             self._vieneu_temperature_slider,
-            int(float(preset.get("vieneu_tts_temperature", self._config.vieneu_tts_temperature)) * 100),
+            self._scaled_preset_value(
+                preset.get("vieneu_tts_temperature"),
+                fallback=self._config.vieneu_tts_temperature,
+                scale=100,
+            ),
         )
         self._set_slider_value(self._vieneu_max_chars_slider, preset.get("vieneu_tts_max_chars_chunk"))
 
@@ -510,11 +515,19 @@ class PlayerSettingsMixin:
         self._set_combo_data(self._export_video_quality_combo, preset.get("export_video_quality"))
         self._set_slider_value(
             self._speed_min_slider,
-            int(float(preset.get("dubbing_speed_min", self._config.dubbing_speed_min)) * 100),
+            self._scaled_preset_value(
+                preset.get("dubbing_speed_min"),
+                fallback=self._config.dubbing_speed_min,
+                scale=100,
+            ),
         )
         self._set_slider_value(
             self._speed_max_slider,
-            int(float(preset.get("dubbing_speed_max", self._config.dubbing_speed_max)) * 100),
+            self._scaled_preset_value(
+                preset.get("dubbing_speed_max"),
+                fallback=self._config.dubbing_speed_max,
+                scale=100,
+            ),
         )
         self._set_slider_value(self._volume_gain_min_slider, preset.get("dubbing_volume_gain_min_db"))
         self._set_slider_value(self._volume_gain_max_slider, preset.get("dubbing_volume_gain_max_db"))
@@ -826,8 +839,27 @@ class PlayerSettingsMixin:
 
     @staticmethod
     def _set_slider_value(slider: QSlider, value) -> None:
-        if value is not None:
+        if value is None:
+            return
+        try:
             slider.setValue(int(value))
+        except (OverflowError, TypeError, ValueError):
+            return
+
+    @staticmethod
+    def _scaled_preset_value(value, *, fallback: float, scale: int) -> int:
+        try:
+            number = float(fallback if value is None else value)
+        except (OverflowError, TypeError, ValueError):
+            number = float(fallback)
+        if not math.isfinite(number):
+            try:
+                number = float(fallback)
+            except (OverflowError, TypeError, ValueError):
+                number = 0.0
+        if not math.isfinite(number):
+            number = 0.0
+        return int(number * scale)
 
     @staticmethod
     def _set_checkbox(checkbox: QCheckBox, value) -> None:

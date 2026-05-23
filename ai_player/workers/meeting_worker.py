@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import queue
 import shutil
 import subprocess
@@ -99,7 +100,7 @@ class MeetingWorker(QThread):
             transcript_lock = threading.Lock()
             processor_errors: list[Exception] = []
             work_queue: queue.Queue[tuple[Path, float, int] | None] = queue.Queue()
-            chunk_seconds = max(3, min(10, int(self._config.segment_seconds or 6)))
+            chunk_seconds = _clamped_int(self._config.segment_seconds, default=6, minimum=3, maximum=10)
             offset_seconds = 0.0
 
             def process_chunks() -> None:
@@ -229,14 +230,21 @@ class MeetingWorker(QThread):
         with measure_stage("meeting", "asr", chunk=chunk_index):
             segments, info = self._transcribe_segments(audio_path)
         lines = []
+        offset_seconds = _finite_seconds(offset_seconds, 0.0)
+        detected_language = _clean_language(getattr(info, "language", None))
         for segment_index, segment in enumerate(segments):
-            text = self._transcript_cleaner.clean((segment.text or "").strip(), getattr(info, "language", None))
+            text = self._transcript_cleaner.clean(_clean_text(getattr(segment, "text", "")), detected_language)
             if not text:
                 continue
-            start = offset_seconds + float(segment.start or 0.0)
-            end = offset_seconds + float(segment.end or segment.start or 0.0)
+            segment_start = _finite_seconds(getattr(segment, "start", 0.0), 0.0)
+            segment_end = max(
+                segment_start + 0.25,
+                _finite_seconds(getattr(segment, "end", None), segment_start + 0.25),
+            )
+            start = offset_seconds + segment_start
+            end = offset_seconds + segment_end
             with measure_stage("meeting", "translate", chunk=chunk_index, segment=segment_index):
-                translated = self._translate(text, getattr(info, "language", None))
+                translated = self._translate(text, detected_language)
             self.segment_ready.emit(text, translated)
             if _tts_disabled(self._config):
                 lines.append(self._transcript_line(start, end, text, translated))
@@ -321,7 +329,7 @@ class MeetingWorker(QThread):
             "-loglevel",
             "quiet",
             "-volume",
-            str(max(0, min(100, int(self._config.dubbing_voice_volume)))),
+            str(_clamped_int(self._config.dubbing_voice_volume, default=100, minimum=0, maximum=100)),
             str(output_path),
         ]
         try:
@@ -393,14 +401,45 @@ def _ffmpeg_escape(path: Path) -> str:
 
 
 def _format_elapsed(elapsed_seconds: float) -> str:
-    elapsed = max(0, int(elapsed_seconds))
+    elapsed = max(0, int(_finite_seconds(elapsed_seconds, 0.0)))
     minutes, seconds = divmod(elapsed, 60)
     hours, minutes = divmod(minutes, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 def _format_timestamp(value: object) -> str:
-    seconds_total = max(0, int(round(float(value or 0.0))))
+    seconds_total = max(0, int(round(_finite_seconds(value, 0.0))))
     hours, remainder = divmod(seconds_total, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _clean_text(value: object) -> str:
+    if isinstance(value, bytes):
+        text = value.decode("utf-8", errors="replace")
+    else:
+        text = str(value or "")
+    return " ".join(text.split())
+
+
+def _clean_language(value: object) -> str | None:
+    language = _clean_text(value).lower()
+    return language or None
+
+
+def _finite_seconds(value: object, default: float) -> float:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(seconds):
+        return default
+    return max(0.0, seconds)
+
+
+def _clamped_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        number = default
+    return max(minimum, min(maximum, number))

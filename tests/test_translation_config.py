@@ -172,6 +172,46 @@ def test_ctranslate2_translator_preserves_empty_segments(monkeypatch) -> None:
     assert fake_translator.batches == [[["Hello"], ["World"]]]
 
 
+def test_ctranslate2_translator_sanitizes_invalid_numeric_config(monkeypatch) -> None:
+    class FakeTokenizer:
+        src_lang = ""
+
+        def __call__(self, text, **_kwargs):
+            return SimpleNamespace(input_ids=[[text]])
+
+        def convert_ids_to_tokens(self, ids):
+            return ids
+
+        def convert_tokens_to_ids(self, tokens):
+            return tokens
+
+        def decode(self, tokens, skip_special_tokens=True):
+            return " ".join(tokens)
+
+    class FakeTranslator:
+        def __init__(self) -> None:
+            self.kwargs = None
+
+        def translate_batch(self, _source_tokens_batch, **kwargs):
+            self.kwargs = kwargs
+            return [SimpleNamespace(hypotheses=[["vie_Latn", "Xin"]])]
+
+    translator = translation.CTranslate2NllbTranslator(
+        AppConfig(translation_num_beams="bad", translation_max_tokens=float("nan"))
+    )
+    fake_translator = FakeTranslator()
+
+    def fake_load_model() -> None:
+        translator._tokenizer = FakeTokenizer()
+        translator._translator = fake_translator
+
+    monkeypatch.setattr(translator, "_load_model", fake_load_model)
+
+    assert translator.translate_many(["Hello"], "en") == ["Xin"]
+    assert fake_translator.kwargs["beam_size"] == 2
+    assert fake_translator.kwargs["max_decoding_length"] == 152
+
+
 def test_ctranslate2_translator_retries_broken_preserved_terms(monkeypatch) -> None:
     class FakeTokenizer:
         src_lang = ""

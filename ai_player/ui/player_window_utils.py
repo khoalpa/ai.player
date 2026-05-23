@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import math
 import os
 import tempfile
 from dataclasses import replace
@@ -57,9 +58,10 @@ def dropdown_options(folder_name: str, language_id: str | None = None) -> list[t
 
 def float_value(value) -> float | None:
     try:
-        return float(value)
+        number = float(value)
     except Exception:
         return None
+    return number if math.isfinite(number) else None
 
 
 def format_bitrate(value, unknown: str = "không rõ") -> str:
@@ -79,9 +81,10 @@ def format_rate(value, unknown: str = "không rõ") -> str:
         numerator, denominator = text.split("/", 1)
         try:
             den = float(denominator)
-            if den == 0:
+            num = float(numerator)
+            if den == 0 or not math.isfinite(den) or not math.isfinite(num):
                 return unknown
-            return f"{float(numerator) / den:.2f}"
+            return f"{num / den:.2f}"
         except Exception:
             return text
     return text

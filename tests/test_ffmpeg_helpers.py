@@ -24,6 +24,8 @@ def test_safe_float() -> None:
     assert safe_float("1.25") == 1.25
     assert safe_float("N/A") is None
     assert safe_float("-1") is None
+    assert safe_float("inf") is None
+    assert safe_float("nan") is None
 
 
 def test_probe_duration_seconds_caches_by_file_stat(monkeypatch, tmp_path) -> None:
@@ -45,6 +47,41 @@ def test_probe_duration_seconds_caches_by_file_stat(monkeypatch, tmp_path) -> No
         ffmpeg_service.clear_probe_duration_cache()
 
     assert len(calls) == 1
+
+
+def test_audio_helpers_sanitize_non_finite_args(monkeypatch, tmp_path) -> None:
+    calls: list[list[object]] = []
+    monkeypatch.setattr(ffmpeg_service, "run_ffmpeg", lambda args, **_kwargs: calls.append(args))
+
+    ffmpeg_service.make_silence(
+        float("nan"),
+        tmp_path / "silence.wav",
+        sample_rate=float("inf"),
+        channels="bad",
+    )
+    ffmpeg_service.to_wav(
+        tmp_path / "in.wav",
+        tmp_path / "out.wav",
+        sample_rate="bad",
+        channels=float("nan"),
+    )
+    ffmpeg_service.extract_audio_range(
+        tmp_path / "source.wav",
+        float("inf"),
+        float("nan"),
+        tmp_path / "range.wav",
+        sample_rate="bad",
+        channels="bad",
+    )
+
+    assert "sample_rate=44100" in calls[0][calls[0].index("-i") + 1]
+    assert calls[0][calls[0].index("-t") + 1] == "0.000"
+    assert calls[1][calls[1].index("-ar") + 1] == 44100
+    assert calls[1][calls[1].index("-ac") + 1] == 2
+    assert calls[2][calls[2].index("-ss") + 1] == "0.000"
+    assert calls[2][calls[2].index("-t") + 1] == "0.050"
+    assert calls[2][calls[2].index("-ac") + 1] == 1
+    assert calls[2][calls[2].index("-ar") + 1] == 16000
 
 
 def test_media_executable_prefers_configured_path(monkeypatch, tmp_path) -> None:

@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import inspect
 import json
+import math
 import os
 import queue
 import re
@@ -250,7 +251,7 @@ def is_pathological_tts_duration(
     duration_seconds: float,
     target_duration_seconds: float | None = None,
 ) -> bool:
-    duration = float(duration_seconds or 0.0)
+    duration = _finite_duration(duration_seconds)
     if duration <= 0:
         return False
     clean_text = prepare_tts_text(text)
@@ -262,7 +263,7 @@ def is_pathological_tts_duration(
     tokens = re.findall(r"[a-z0-9]+", normalized)
     letter_count = sum(1 for ch in normalized if ch.isalpha())
     token_count = len(tokens)
-    target_duration = max(0.0, float(target_duration_seconds or 0.0))
+    target_duration = _finite_duration(target_duration_seconds)
 
     if letter_count <= 12:
         short_ceiling = max(3.0, target_duration * 2.5)
@@ -271,6 +272,16 @@ def is_pathological_tts_duration(
     estimated_natural_duration = max(1.0, token_count * 0.45 + letter_count * 0.065)
     ceiling = max(8.0, estimated_natural_duration * 2.8, target_duration * 2.8)
     return duration > ceiling
+
+
+def _finite_duration(value: object) -> float:
+    try:
+        duration = float(value or 0.0)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    if not math.isfinite(duration):
+        return 0.0
+    return max(0.0, duration)
 
 
 def _looks_like_drawn_out_vocalization(token: str) -> bool:
@@ -668,7 +679,19 @@ class VieNeuServerClient:
             clean_line = line.replace("\x00", "")
             marker_index = clean_line.find(marker)
             if marker_index >= 0:
-                return json.loads(clean_line[marker_index + len(marker) :])
+                payload_text = clean_line[marker_index + len(marker) :]
+                try:
+                    payload = json.loads(payload_text)
+                except (TypeError, ValueError) as exc:
+                    raise TTSError(
+                        f"VieNeu subprocess returned invalid JSON. Last output: {_clean_message(last_line.strip())}"
+                    ) from exc
+                if not isinstance(payload, dict):
+                    raise TTSError(
+                        "VieNeu subprocess returned invalid JSON payload. "
+                        f"Last output: {_clean_message(last_line.strip())}"
+                    )
+                return payload
         self._terminate_current_process()
         raise TTSError(f"Timeout waiting for VieNeu subprocess. Last output: {_clean_message(last_line.strip())}")
 
@@ -1098,8 +1121,8 @@ def _build_vieneu_infer_kwargs(
     kwargs: dict[str, Any] = {
         "text": text,
         "voice": voice,
-        "temperature": float(temperature),
-        "max_chars": max(1, int(max_chars)),
+        "temperature": _finite_float(temperature, default=0.6),
+        "max_chars": _int_value(max_chars, default=160, minimum=1),
     }
     infer = getattr(engine, "infer", None)
     try:
@@ -1174,8 +1197,8 @@ def _tts_cache_path(provider: str, config: AppConfig, text: str, voice: str, out
         "vieneu_codec": str(config.vieneu_tts_standard_codec_path),
         "vieneu_device": str(config.vieneu_tts_device),
         "vieneu_backend": str(config.vieneu_tts_backend),
-        "vieneu_temperature": float(config.vieneu_tts_temperature),
-        "vieneu_max_chars": int(config.vieneu_tts_max_chars_chunk),
+        "vieneu_temperature": _finite_float(config.vieneu_tts_temperature, default=0.6),
+        "vieneu_max_chars": _int_value(config.vieneu_tts_max_chars_chunk, default=160, minimum=1),
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")).hexdigest()
     return RUNTIME_DIR / "tts-cache" / f"{digest}{suffix}"
@@ -1185,6 +1208,22 @@ def _cache_text(value: object) -> str:
     text = _clean_text(value)
     text = unicodedata.normalize("NFC", text)
     return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+
+
+def _finite_float(value: object, *, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return number if math.isfinite(number) else default
+
+
+def _int_value(value: object, *, default: int, minimum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        number = default
+    return max(minimum, number)
 
 
 def _preferred_voice_ids(provider: str, config: AppConfig, gender: str) -> tuple[str, ...]:
@@ -1197,9 +1236,9 @@ def _preferred_voice_ids(provider: str, config: AppConfig, gender: str) -> tuple
         config.vieneu_tts_device,
     )
     if mode == "standard":
-        return ("Binh", "Tuyen", "Vinh") if gender == "male" else ("Doan", "Ngoc", "Ly")
+        return ("Vinh", "Binh", "Tuyen") if gender == "male" else ("Doan", "Ngoc", "Ly")
     return (
-        ("Phạm Tuyên", "Xuân Vĩnh", "Pham Tuyen", "Xuan Vinh")
+        ("Xuân Vĩnh", "Phạm Tuyên", "Xuan Vinh", "Pham Tuyen")
         if gender == "male"
         else ("Thục Đoan", "Bích Ngọc", "Thuc Doan", "Bich Ngoc")
     )

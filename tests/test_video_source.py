@@ -158,6 +158,34 @@ def test_clean_download_error_removes_bare_ansi_codes() -> None:
     assert message == "[youtube] demo: unavailable"
 
 
+def test_downloaded_file_path_ignores_malformed_requested_downloads(tmp_path) -> None:
+    downloaded = tmp_path / "demo.mp4"
+    downloaded.write_text("video", encoding="utf-8")
+
+    assert (
+        video_source._downloaded_file_path(
+            {"requested_downloads": ["bad", {"filepath": str(downloaded)}]},
+            tmp_path,
+        )
+        == str(downloaded)
+    )
+
+
+def test_stream_playback_url_ignores_malformed_format_items() -> None:
+    assert (
+        video_source._stream_playback_url(
+            {
+                "requested_formats": ["bad"],
+                "formats": [
+                    "bad",
+                    {"url": "https://cdn.example.test/video.mp4", "vcodec": "h264", "acodec": "aac"},
+                ],
+            }
+        )
+        == "https://cdn.example.test/video.mp4"
+    )
+
+
 def test_buomtv_url_without_full_cache_uses_pwa_stream(monkeypatch) -> None:
     class FakeResponse:
         def __init__(self, payload):
@@ -244,6 +272,48 @@ def test_buomtv_url_wraps_invalid_json(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "requests", SimpleNamespace(Session=FakeSession))
 
     with pytest.raises(video_source.VideoSourceError, match="BuomTV token API không trả JSON hợp lệ"):
+        video_source.resolve_video_source("https://buomtv.life/movie/SSIS-245/106746", full_cache=False)
+
+
+def test_buomtv_url_handles_malformed_token_response(monkeypatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"status": {"code": 200}, "response": "bad"}
+
+    class FakeSession:
+        def post(self, url, data, headers, timeout):
+            return FakeResponse()
+
+    monkeypatch.setitem(sys.modules, "requests", SimpleNamespace(Session=FakeSession))
+
+    with pytest.raises(video_source.VideoSourceError, match="token"):
+        video_source.resolve_video_source("https://buomtv.life/movie/SSIS-245/106746", full_cache=False)
+
+
+def test_buomtv_url_handles_malformed_status_response(monkeypatch) -> None:
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class FakeSession:
+        def post(self, url, data, headers, timeout):
+            return FakeResponse({"status": {"code": 200}, "response": {"token": "demo"}})
+
+        def get(self, url, headers, timeout):
+            return FakeResponse({"status": "bad", "response": {}})
+
+    monkeypatch.setitem(sys.modules, "requests", SimpleNamespace(Session=FakeSession))
+
+    with pytest.raises(video_source.VideoSourceError):
         video_source.resolve_video_source("https://buomtv.life/movie/SSIS-245/106746", full_cache=False)
 
 

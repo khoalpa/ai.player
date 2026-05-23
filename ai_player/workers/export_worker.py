@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import math
 import os
 import shutil
 import tempfile
@@ -39,20 +41,28 @@ from ai_player.pipeline.export_plan import (
     scale_filter as _scale_filter,
 )
 from ai_player.pipeline.export_plan import (
+    staged_background_voice_mix_args as _staged_background_voice_mix_args,
+)
+from ai_player.pipeline.export_plan import (
     timeline_mix_args as _timeline_mix_args,
 )
 from ai_player.pipeline.export_plan import (
     video_quality_settings as _video_quality_settings,
 )
+from ai_player.pipeline.export_plan import (
+    write_srt_cues as _write_srt_cues,
+)
 from ai_player.pipeline.transcript_source import load_transcript_entries as _load_transcript_entries
 from ai_player.services.audio_matcher import extract_audio_range, match_tts_to_reference
 from ai_player.services.audio_timeline import schedule_timeline_start
+from ai_player.services.demucs_separation import DemucsSeparationError, demucs_available, demucs_command
 from ai_player.services.document_reader import DocumentPage
 from ai_player.services.ffmpeg import (
     ProcessCancelled,
     concat_escape,
     concat_file_line,
     probe_duration_seconds,
+    run_cancelable_process,
     run_ffmpeg_cancelable,
     safe_float,
 )
@@ -64,6 +74,10 @@ from ai_player.services.ffmpeg import (
 )
 from ai_player.services.ffmpeg import (
     trim_leading_silence as ffmpeg_trim_leading_silence,
+)
+from ai_player.services.source_voice_filter import (
+    normalize_source_voice_filter_mode,
+    normalize_source_voice_filter_model,
 )
 from ai_player.services.speaker_voice_selector import VoiceGenderSelector
 from ai_player.services.transcript_cleanup import TranscriptCleaner
@@ -83,12 +97,14 @@ __all__ = [
     "DubbingExportWorker",
     "ExportCue",
     "ExportRange",
+    "StagedDubbingExportWorker",
     "TranscriptCue",
     "VideoQualitySettings",
     "_document_scale_filter",
     "_parse_srt_time",
     "_read_srt_cues",
     "_scale_filter",
+    "_staged_background_voice_mix_args",
     "_timeline_mix_args",
     "_video_quality_settings",
 ]
@@ -143,7 +159,7 @@ class DubbingExportWorker(QThread):
         return self._stop_requested and not self._keep_partial_requested
 
     def _set_progress(self, value: int) -> None:
-        self.progress_percent.emit(max(0, min(100, int(value))))
+        self.progress_percent.emit(_percent_value(value))
 
     def _set_range_progress(self, start: int, end: int, index: int, total: int) -> None:
         if total <= 0:
@@ -243,9 +259,10 @@ class DubbingExportWorker(QThread):
         if self._temp_dir is None:
             return []
 
+        segment_seconds = _duration_value(self._config.segment_seconds, default=5.0, minimum=0.25)
         entries = _load_transcript_entries(
             self._config.transcript_path,
-            self._config.segment_seconds,
+            segment_seconds,
             self._config.gui_language,
         )
         tts_suffix = "wav" if normalize_tts_provider(self._config.tts_provider) == "vieneu" else "mp3"
@@ -253,32 +270,35 @@ class DubbingExportWorker(QThread):
         for index, entry in enumerate(entries):
             if self._should_abort():
                 break
-            entry_end = entry.end or entry.start + self._config.segment_seconds
-            if not self._export_range.overlaps(entry.start, entry_end):
+            entry_start, entry_end = _entry_time_bounds(entry, segment_seconds)
+            if not self._export_range.overlaps(entry_start, entry_end):
                 continue
-            original = " ".join(str(entry.text or "").split())
+            original = _json_text(getattr(entry, "text", ""), default="") or ""
             if not original:
                 continue
-            raw_items.append((index, entry, original))
+            raw_items.append((index, entry, original, entry_start, entry_end))
         cleaned_items = _clean_transcript_many(
             self._transcript_cleaner,
             [item[2] for item in raw_items],
             self._selected_whisper_language(),
         )
         items = [
-            (index, entry, original)
-            for (index, entry, _raw), original in zip(raw_items, cleaned_items, strict=False)
+            (index, entry, original, entry_start, entry_end)
+            for (index, entry, _raw, entry_start, entry_end), original in zip(raw_items, cleaned_items, strict=False)
             if original
         ]
         if not items:
             return []
 
         with measure_stage("export", "translate_batch", cues=len(items)):
-            translated_items = self._translator.translate_many(
+            translated_items = _translate_texts(
+                self._translator,
                 [item[2] for item in items],
                 self._selected_whisper_language(),
             )
-        for (_index, _entry, original), translated in zip(items, translated_items, strict=False):
+        for (_index, _entry, original, _entry_start, _entry_end), translated in zip(
+            items, translated_items, strict=False
+        ):
             self.segment_ready.emit(original, translated)
 
         futures = []
@@ -292,6 +312,8 @@ class DubbingExportWorker(QThread):
                         item[1],
                         item[2],
                         translated,
+                        item[3],
+                        item[4],
                         tts_suffix,
                     )
                 )
@@ -309,16 +331,18 @@ class DubbingExportWorker(QThread):
         entry,
         original: str,
         translated: str,
+        entry_start: float,
+        entry_end: float,
         tts_suffix: str,
     ) -> ExportCue:
         assert self._temp_dir is not None
         tts_path = self._temp_dir / f"transcript-cue-{index:05d}.{tts_suffix}"
         wav_path = self._temp_dir / f"transcript-cue-{index:05d}.wav"
+        duration = max(0.25, entry_end - entry_start)
         if _tts_disabled(self._config) or is_non_speech_tts_text(translated):
-            duration = max(0.25, (entry.end or entry.start + self._config.segment_seconds) - entry.start)
             self._make_silence(duration, wav_path)
             return ExportCue(
-                start_seconds=self._export_range.shift(float(entry.start)),
+                start_seconds=self._export_range.shift(entry_start),
                 original=original,
                 translated=translated,
                 audio_path=wav_path,
@@ -331,7 +355,7 @@ class DubbingExportWorker(QThread):
             self._to_wav(self._trim_leading_silence(tts_path), wav_path)
             duration = _probe_duration_seconds(wav_path)
         return ExportCue(
-            start_seconds=self._export_range.shift(float(entry.start)),
+            start_seconds=self._export_range.shift(entry_start),
             original=original,
             translated=translated,
             audio_path=wav_path,
@@ -358,20 +382,22 @@ class DubbingExportWorker(QThread):
         self._set_progress(34)
         tts_suffix = "wav" if normalize_tts_provider(self._config.tts_provider) == "vieneu" else "mp3"
         raw_items = []
+        source_language = _json_text(getattr(info, "language", None), default=None)
         for index, segment in enumerate(segments):
             if self._should_abort():
                 break
-            original = " ".join(str(segment.text or "").split())
+            original = _json_text(getattr(segment, "text", ""), default="") or ""
             if not original:
                 continue
-            start_seconds = max(0.0, float(segment.start or 0.0))
-            end_seconds = max(start_seconds + 0.25, float(segment.end or start_seconds + 0.25))
+            start_seconds = max(0.0, _json_number(getattr(segment, "start", 0.0), default=0.0) or 0.0)
+            end_value = _json_number(getattr(segment, "end", None), default=None)
+            end_seconds = max(start_seconds + 0.25, end_value if end_value is not None else start_seconds + 0.25)
             duration_seconds = max(0.25, end_seconds - start_seconds)
             raw_items.append((index, original, start_seconds, duration_seconds))
         cleaned_items = _clean_transcript_many(
             self._transcript_cleaner,
             [item[1] for item in raw_items],
-            getattr(info, "language", None),
+            source_language,
         )
         items = [
             (index, original, start_seconds, duration_seconds)
@@ -382,7 +408,7 @@ class DubbingExportWorker(QThread):
             return []
 
         with measure_stage("export", "translate_batch", cues=len(items)):
-            translated_items = self._translator.translate_many([item[1] for item in items], info.language)
+            translated_items = _translate_texts(self._translator, [item[1] for item in items], source_language)
 
         for (_index, original, _start_seconds, _duration_seconds), translated in zip(
             items, translated_items, strict=False
@@ -571,6 +597,7 @@ class DubbingExportWorker(QThread):
         )
 
     def _make_silence(self, duration_seconds: float, output_path: Path) -> None:
+        duration = _duration_value(duration_seconds, default=0.0)
         self._run_ffmpeg(
             [
                 "-f",
@@ -578,7 +605,7 @@ class DubbingExportWorker(QThread):
                 "-i",
                 "anullsrc=channel_layout=stereo:sample_rate=44100",
                 "-t",
-                f"{max(0.0, duration_seconds):.3f}",
+                f"{duration:.3f}",
                 "-c:a",
                 "pcm_s16le",
                 "-y",
@@ -706,6 +733,587 @@ class DubbingExportWorker(QThread):
         return self._stop_requested
 
 
+class StagedDubbingExportWorker(DubbingExportWorker):
+    def __init__(
+        self,
+        video_path: str,
+        output_dir: str,
+        config: AppConfig,
+        export_range: ExportRange | None = None,
+        parent=None,
+    ) -> None:
+        output_root = Path(output_dir)
+        super().__init__(
+            video_path,
+            str(output_root / "dubbed_video.mp4"),
+            "video",
+            config,
+            export_range,
+            parent,
+        )
+        self._output_dir = output_root
+        self._audio_dir = output_root / "audio"
+        self._subtitle_dir = output_root / "subtitles"
+        self._tts_dir = output_root / "tts"
+
+    def run(self) -> None:
+        offline_env: OfflineEnvironmentToken | None = None
+        artifacts: dict[str, str] | None = None
+        manifest_path: Path | None = None
+        staged_manifest_stage = "initializing"
+        separation_backend = ""
+        try:
+            offline_env = self._configure_offline_environment()
+            self._voice_selector.reset()
+            self._set_progress(0)
+            self._emit_progress("staged_export_progress_initializing")
+            self._tts_provider = create_tts_provider(self._config)
+            self._translator = get_shared_vietnamese_translator(self._config)
+            if self._config.audio_source != "original":
+                raise RuntimeError(self._tr("staged_export_error_source_unsupported"))
+            self._validate_whisper_model()
+
+            self._temp_dir = self._output_dir / ".work"
+            source_full = self._audio_dir / "source_full.wav"
+            source_srt = self._subtitle_dir / "source.srt"
+            words_json = self._subtitle_dir / "source.words.json"
+            target_srt = self._subtitle_dir / "target.srt"
+            source_voice = self._audio_dir / "source_voice.wav"
+            background = self._audio_dir / "background_no_voice.wav"
+            target_voice = self._audio_dir / "target_voice.wav"
+            final_mix = self._audio_dir / "final_mix.wav"
+            final_video = self._output_dir / "dubbed_video.mp4"
+            manifest_path = self._output_dir / "manifest.json"
+            self._prepare_staged_output_dir(final_video, manifest_path)
+            artifacts = self._staged_artifacts(
+                source_full=source_full,
+                source_srt=source_srt,
+                words_json=words_json,
+                target_srt=target_srt,
+                source_voice=source_voice,
+                background=background,
+                target_voice=target_voice,
+                final_mix=final_mix,
+                final_video=final_video,
+            )
+            self._write_staged_manifest(
+                manifest_path,
+                artifacts,
+                status="running",
+                stage="initialized",
+            )
+            staged_manifest_stage = "initialized"
+
+            self._emit_progress("staged_export_progress_extracting_audio")
+            self._set_progress(8)
+            self._extract_full_quality_audio(source_full)
+            if self._stop_after_staged_checkpoint(manifest_path, artifacts, "source_audio_extracted"):
+                return
+            staged_manifest_stage = "source_audio_extracted"
+
+            self._emit_progress("staged_export_progress_transcribing")
+            self._set_progress(18)
+            segments, info = self._transcribe_staged(source_full)
+            segments = list(segments)
+            source_cues = self._source_cues_from_segments(segments, getattr(info, "language", None))
+            _write_srt_cues(source_srt, source_cues)
+            words_json.write_text(
+                json.dumps(_segments_words_payload(segments, info), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            if not source_cues:
+                raise RuntimeError(self._tr("export_error_no_dialogue"))
+            if self._stop_after_staged_checkpoint(manifest_path, artifacts, "source_transcribed"):
+                return
+            staged_manifest_stage = "source_transcribed"
+
+            self._emit_progress("staged_export_progress_translating")
+            self._set_progress(34)
+            target_cues = self._translate_source_cues(source_cues, getattr(info, "language", None))
+            _write_srt_cues(target_srt, target_cues)
+            if self._stop_after_staged_checkpoint(manifest_path, artifacts, "target_subtitles_ready"):
+                return
+            staged_manifest_stage = "target_subtitles_ready"
+
+            self._emit_progress("staged_export_progress_filtering_source")
+            self._set_progress(48)
+            separation_backend = self._create_source_audio_stems(source_full, background, source_voice)
+            if self._stop_after_staged_checkpoint(
+                manifest_path,
+                artifacts,
+                "source_voice_filtered",
+                separation_backend=separation_backend,
+            ):
+                return
+            staged_manifest_stage = "source_voice_filtered"
+
+            self._emit_progress("staged_export_progress_creating_voice")
+            self._set_progress(62)
+            audio_cues = self._build_target_voice_cues(source_voice, source_cues, target_cues)
+            if self._stop_after_staged_checkpoint(
+                manifest_path,
+                artifacts,
+                "target_voice_segments_ready",
+                separation_backend=separation_backend,
+            ):
+                return
+            staged_manifest_stage = "target_voice_segments_ready"
+
+            self._emit_progress("staged_export_progress_aligning_voice")
+            self._set_progress(78)
+            self._build_aligned_audio(audio_cues, target_voice)
+            if self._stop_after_staged_checkpoint(
+                manifest_path,
+                artifacts,
+                "target_voice_aligned",
+                separation_backend=separation_backend,
+            ):
+                return
+            staged_manifest_stage = "target_voice_aligned"
+
+            self._emit_progress("staged_export_progress_mixing_final")
+            self._set_progress(88)
+            self._run_ffmpeg(
+                _staged_background_voice_mix_args(
+                    background,
+                    target_voice,
+                    final_mix,
+                    voice_volume_percent=self._config.dubbing_voice_volume,
+                )
+            )
+            if self._stop_after_staged_checkpoint(
+                manifest_path,
+                artifacts,
+                "final_mix_ready",
+                separation_backend=separation_backend,
+            ):
+                return
+            staged_manifest_stage = "final_mix_ready"
+
+            self._emit_progress("staged_export_progress_writing_mp4")
+            self._set_progress(94)
+            self._mux_video(final_mix, output_path=final_video, cancel_strategy="quit")
+
+            self._write_staged_manifest(
+                manifest_path,
+                artifacts,
+                status="complete",
+                stage="dubbed_video_ready",
+                separation_backend=separation_backend,
+            )
+            self._set_progress(100)
+            self.export_finished.emit(str(self._output_dir))
+        except ProcessCancelled:
+            if self._keep_partial_requested:
+                if manifest_path is not None and artifacts is not None:
+                    self._write_staged_manifest(
+                        manifest_path,
+                        artifacts,
+                        status="partial",
+                        stage=staged_manifest_stage,
+                        separation_backend=separation_backend,
+                    )
+                self.partial_finished.emit(str(self._output_dir))
+            elif manifest_path is not None and artifacts is not None:
+                self._write_staged_manifest(
+                    manifest_path,
+                    artifacts,
+                    status="cancelled",
+                    stage=staged_manifest_stage,
+                    separation_backend=separation_backend,
+                )
+        except Exception as exc:
+            if self._stop_requested:
+                if manifest_path is not None and artifacts is not None:
+                    self._write_staged_manifest(
+                        manifest_path,
+                        artifacts,
+                        status="partial" if self._keep_partial_requested else "cancelled",
+                        stage=staged_manifest_stage,
+                        separation_backend=separation_backend,
+                    )
+                if self._keep_partial_requested:
+                    self.partial_finished.emit(str(self._output_dir))
+            else:
+                self.failed.emit(_clean_message(exc))
+        finally:
+            if self._tts_provider is not None:
+                self._tts_provider.close()
+            if self._temp_dir and self._temp_dir.exists():
+                shutil.rmtree(self._temp_dir, ignore_errors=True)
+            self._temp_dir = None
+            if offline_env is not None:
+                pop_hf_offline_environment(offline_env)
+
+    def _prepare_staged_output_dir(self, final_video: Path, manifest_path: Path) -> None:
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+        for directory in (self._audio_dir, self._subtitle_dir, self._tts_dir, self._temp_dir):
+            self._remove_managed_path(directory)
+        for file_path in (final_video, manifest_path):
+            self._remove_managed_path(file_path)
+        self._audio_dir.mkdir(parents=True, exist_ok=True)
+        self._subtitle_dir.mkdir(parents=True, exist_ok=True)
+        self._tts_dir.mkdir(parents=True, exist_ok=True)
+        self._temp_dir.mkdir(parents=True, exist_ok=True)
+
+    def _write_staged_manifest(
+        self,
+        manifest_path: Path,
+        artifacts: dict[str, str],
+        *,
+        status: str,
+        stage: str,
+        separation_backend: str = "",
+    ) -> None:
+        manifest = {
+            "version": 1,
+            "status": _json_text(status, default=""),
+            "stage": _json_text(stage, default=""),
+            "source_video": _json_text(self._video_path, default=""),
+            "range": {
+                "start_seconds": _json_number(self._export_range.start_seconds, default=0.0),
+                "end_seconds": _json_number(self._export_range.end_seconds, default=None),
+            },
+            "artifacts": artifacts,
+            "source_voice_filter": {
+                "enabled": bool(self._config.original_audio_voice_filter),
+                "mode": normalize_source_voice_filter_mode(self._config.original_audio_voice_filter_mode),
+                "model": normalize_source_voice_filter_model(self._config.original_audio_voice_filter_model),
+                "backend": _json_text(separation_backend, default=""),
+            },
+        }
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+
+    def _staged_artifacts(
+        self,
+        *,
+        source_full: Path,
+        source_srt: Path,
+        words_json: Path,
+        target_srt: Path,
+        source_voice: Path,
+        background: Path,
+        target_voice: Path,
+        final_mix: Path,
+        final_video: Path,
+    ) -> dict[str, str]:
+        return {
+            "source_full_wav": self._manifest_relative_path(source_full),
+            "source_srt": self._manifest_relative_path(source_srt),
+            "source_words_json": self._manifest_relative_path(words_json),
+            "target_srt": self._manifest_relative_path(target_srt),
+            "source_voice_wav": self._manifest_relative_path(source_voice),
+            "background_no_voice_wav": self._manifest_relative_path(background),
+            "target_voice_wav": self._manifest_relative_path(target_voice),
+            "final_mix_wav": self._manifest_relative_path(final_mix),
+            "dubbed_video_mp4": self._manifest_relative_path(final_video),
+        }
+
+    def _manifest_relative_path(self, path: Path) -> str:
+        return Path(path).resolve().relative_to(self._output_dir.resolve()).as_posix()
+
+    def _remove_managed_path(self, path: Path) -> None:
+        try:
+            if path.parent.resolve() != self._output_dir.resolve():
+                return
+        except OSError:
+            return
+        if not path.exists() and not path.is_symlink():
+            return
+        if path.is_symlink() or path.is_file():
+            path.unlink(missing_ok=True)
+        elif path.is_dir():
+            shutil.rmtree(path)
+
+    def _stop_after_staged_checkpoint(
+        self,
+        manifest_path: Path,
+        artifacts: dict[str, str],
+        stage: str,
+        *,
+        separation_backend: str = "",
+    ) -> bool:
+        if self._should_abort():
+            self._write_staged_manifest(
+                manifest_path,
+                artifacts,
+                status="cancelled",
+                stage=stage,
+                separation_backend=separation_backend,
+            )
+            return True
+        self._write_staged_manifest(
+            manifest_path,
+            artifacts,
+            status="running",
+            stage=stage,
+            separation_backend=separation_backend,
+        )
+        if self._stop_requested and self._keep_partial_requested:
+            self._write_staged_manifest(
+                manifest_path,
+                artifacts,
+                status="partial",
+                stage=stage,
+                separation_backend=separation_backend,
+            )
+            self.partial_finished.emit(str(self._output_dir))
+            return True
+        return False
+
+    def _extract_full_quality_audio(self, output_path: Path) -> None:
+        args: list[object] = []
+        if self._export_range.start_seconds > 0.0:
+            args.extend(["-ss", _format_seconds_arg(self._export_range.start_seconds)])
+        args.extend(["-i", self._video_path])
+        if self._export_range.duration_seconds is not None:
+            args.extend(["-t", _format_seconds_arg(self._export_range.duration_seconds)])
+        args.extend(
+            [
+                "-map",
+                "0:a:0",
+                "-vn",
+                "-sn",
+                "-dn",
+                "-ac",
+                "2",
+                "-ar",
+                "48000",
+                "-c:a",
+                "pcm_s16le",
+                "-y",
+                str(output_path),
+            ]
+        )
+        self._run_ffmpeg(args)
+
+    def _transcribe_staged(self, source_audio: Path):
+        model = self._load_whisper_model()
+        kwargs = whisper_transcribe_kwargs(self._config, self._selected_whisper_language())
+        kwargs["word_timestamps"] = True
+        try:
+            return model.transcribe(str(source_audio), **kwargs)
+        except TypeError:
+            kwargs.pop("word_timestamps", None)
+            return self._transcribe_staged_with_fallback(model, source_audio, kwargs)
+        except Exception as exc:
+            if self._whisper_device == "cpu" and self._whisper_compute_type != "int8":
+                self._emit_progress("worker_whisper_cpu_compute_fallback")
+                model = self._switch_whisper_to_cpu(exc)
+                return model.transcribe(str(source_audio), **kwargs)
+            if self._whisper_device == "cpu":
+                raise
+            self._emit_progress("worker_whisper_cublas_fallback")
+            model = self._switch_whisper_to_cpu(exc)
+            return model.transcribe(str(source_audio), **kwargs)
+
+    def _transcribe_staged_with_fallback(
+        self,
+        model: SharedWhisperModel,
+        source_audio: Path,
+        kwargs: dict[str, object],
+    ):
+        try:
+            return model.transcribe(str(source_audio), **kwargs)
+        except Exception as exc:
+            if self._whisper_device == "cpu" and self._whisper_compute_type != "int8":
+                self._emit_progress("worker_whisper_cpu_compute_fallback")
+                model = self._switch_whisper_to_cpu(exc)
+                return model.transcribe(str(source_audio), **kwargs)
+            if self._whisper_device == "cpu":
+                raise
+            self._emit_progress("worker_whisper_cublas_fallback")
+            model = self._switch_whisper_to_cpu(exc)
+            return model.transcribe(str(source_audio), **kwargs)
+
+    def _source_cues_from_segments(self, segments: list[object], source_language: str | None) -> list[TranscriptCue]:
+        raw_items: list[tuple[float, float, str]] = []
+        for segment in segments:
+            original = _json_text(getattr(segment, "text", ""), default="") or ""
+            if not original:
+                continue
+            start_seconds = max(0.0, _json_number(getattr(segment, "start", 0.0), default=0.0) or 0.0)
+            end_value = _json_number(getattr(segment, "end", None), default=None)
+            end_seconds = max(start_seconds + 0.25, end_value if end_value is not None else start_seconds + 0.25)
+            raw_items.append((start_seconds, end_seconds, original))
+        cleaned = _clean_transcript_many(self._transcript_cleaner, [item[2] for item in raw_items], source_language)
+        cues = []
+        for (start_seconds, end_seconds, _raw), text in zip(raw_items, cleaned, strict=False):
+            clean_text = _json_text(text, default="")
+            if clean_text:
+                cues.append(TranscriptCue(start_seconds, end_seconds, clean_text))
+        return cues
+
+    def _translate_source_cues(
+        self,
+        source_cues: list[TranscriptCue],
+        source_language: str | None,
+    ) -> list[TranscriptCue]:
+        with measure_stage("staged_export", "translate_batch", cues=len(source_cues)):
+            translated_items = _translate_texts(self._translator, [cue.text for cue in source_cues], source_language)
+        target_cues: list[TranscriptCue] = []
+        for index, source_cue in enumerate(source_cues):
+            target_text = translated_items[index]
+            self.segment_ready.emit(source_cue.text, target_text)
+            target_cues.append(TranscriptCue(source_cue.start_seconds, source_cue.end_seconds, target_text))
+        return target_cues
+
+    def _create_source_audio_stems(self, source_audio: Path, background_path: Path, voice_path: Path) -> str:
+        if not self._config.original_audio_voice_filter:
+            shutil.copyfile(source_audio, background_path)
+            shutil.copyfile(source_audio, voice_path)
+            return "disabled"
+        mode = normalize_source_voice_filter_mode(self._config.original_audio_voice_filter_mode)
+        if mode == "ai":
+            if not demucs_available():
+                raise DemucsSeparationError("Demucs is not installed. Install the audio-separation extra first.")
+            return self._create_demucs_stems(source_audio, background_path, voice_path)
+        self._create_fast_stems(source_audio, background_path, voice_path)
+        return "fast"
+
+    def _create_demucs_stems(self, source_audio: Path, background_path: Path, voice_path: Path) -> str:
+        if self._temp_dir is None:
+            raise RuntimeError(self._tr("document_export_error_temp_missing"))
+        model = normalize_source_voice_filter_model(self._config.original_audio_voice_filter_model)
+        stems_dir = self._temp_dir / "demucs"
+        run_cancelable_process(
+            [
+                *demucs_command(),
+                "-n",
+                model,
+                "--two-stems",
+                "vocals",
+                "-o",
+                str(stems_dir),
+                str(source_audio),
+            ],
+            cancel_callback=self._is_stop_requested,
+        )
+        stem_root = stems_dir / model / source_audio.stem
+        no_vocals = stem_root / "no_vocals.wav"
+        vocals = stem_root / "vocals.wav"
+        if not _nonempty_file(no_vocals):
+            raise RuntimeError(f"Demucs did not create expected file: {no_vocals}")
+        self._to_wav(no_vocals, background_path)
+        if _nonempty_file(vocals):
+            self._to_wav(vocals, voice_path)
+        else:
+            shutil.copyfile(source_audio, voice_path)
+        return "ai"
+
+    def _create_fast_stems(self, source_audio: Path, background_path: Path, voice_path: Path) -> None:
+        self._run_ffmpeg(
+            [
+                "-i",
+                source_audio,
+                "-af",
+                "aformat=channel_layouts=stereo,"
+                "pan=stereo|c0=0.70*c0-0.55*c1|c1=0.70*c1-0.55*c0,"
+                "volume=1.4,alimiter=limit=0.95",
+                "-ar",
+                "48000",
+                "-ac",
+                "2",
+                "-c:a",
+                "pcm_s16le",
+                "-y",
+                background_path,
+            ]
+        )
+        self._run_ffmpeg(
+            [
+                "-i",
+                source_audio,
+                "-af",
+                "aformat=channel_layouts=stereo,"
+                "pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1,"
+                "alimiter=limit=0.95",
+                "-ar",
+                "48000",
+                "-ac",
+                "2",
+                "-c:a",
+                "pcm_s16le",
+                "-y",
+                voice_path,
+            ]
+        )
+
+    def _build_target_voice_cues(
+        self,
+        source_voice: Path,
+        source_cues: list[TranscriptCue],
+        target_cues: list[TranscriptCue],
+    ) -> list[ExportCue]:
+        if self._temp_dir is None:
+            return []
+        tts_suffix = "wav" if normalize_tts_provider(self._config.tts_provider) == "vieneu" else "mp3"
+        cues: list[ExportCue] = []
+        total = max(1, len(target_cues))
+        for index, (source_cue, target_cue) in enumerate(zip(source_cues, target_cues, strict=False)):
+            if self._stop_requested:
+                break
+            self._set_range_progress(62, 78, index, total)
+            duration = max(0.25, target_cue.end_seconds - target_cue.start_seconds)
+            reference_path = self._temp_dir / f"reference-{index:05d}.wav"
+            extract_audio_range(
+                source_voice,
+                target_cue.start_seconds,
+                duration,
+                reference_path,
+                cancel_callback=self._is_stop_requested,
+            )
+            voice = self._config.tts_voice
+            if self._config.dubbing_auto_voice_gender and not _tts_disabled(self._config):
+                voice = self._voice_selector.select_voice(
+                    reference_path,
+                    provider=self._config.tts_provider,
+                    config=self._config,
+                ).voice
+            audio_path = self._build_target_voice_cue(index, target_cue, reference_path, voice, tts_suffix)
+            cues.append(
+                ExportCue(
+                    start_seconds=target_cue.start_seconds,
+                    original=source_cue.text,
+                    translated=target_cue.text,
+                    audio_path=audio_path,
+                    duration_seconds=_probe_duration_seconds(audio_path) or duration,
+                )
+            )
+            self._emit_progress("export_progress_creating_voice_at", time=_format_hhmmss(target_cue.start_seconds))
+        return cues
+
+    def _build_target_voice_cue(
+        self,
+        index: int,
+        target_cue: TranscriptCue,
+        reference_path: Path,
+        voice: str,
+        tts_suffix: str,
+    ) -> Path:
+        duration = max(0.25, target_cue.end_seconds - target_cue.start_seconds)
+        raw_path = self._tts_dir / f"{index + 1:04d}.{tts_suffix}"
+        final_path = self._tts_dir / f"{index + 1:04d}-aligned.wav"
+        if _tts_disabled(self._config) or not target_cue.text.strip() or is_non_speech_tts_text(target_cue.text):
+            self._make_silence(duration, final_path)
+            return final_path
+        with self._tts_lock:
+            with measure_stage("staged_export", "tts", cue=index):
+                self._tts_provider.synthesize(target_cue.text, raw_path, voice=voice)
+        with measure_stage("staged_export", "postprocess", cue=index):
+            matched_path = match_tts_to_reference(
+                reference_path=reference_path,
+                tts_path=self._trim_leading_silence(raw_path),
+                output_path=final_path,
+                target_duration_seconds=duration,
+                config=self._config,
+                cancel_callback=self._is_stop_requested,
+            )
+        if matched_path != final_path:
+            self._to_wav(matched_path, final_path)
+        return final_path if final_path.exists() and final_path.stat().st_size > 0 else matched_path
+
+
 class DocumentReviewExportWorker(QThread):
     progress_changed = Signal(str)
     progress_percent = Signal(int)
@@ -750,7 +1358,7 @@ class DocumentReviewExportWorker(QThread):
         return self._stop_requested and not getattr(self, "_keep_partial_requested", False)
 
     def _set_progress(self, value: int) -> None:
-        self.progress_percent.emit(max(0, min(100, int(value))))
+        self.progress_percent.emit(_percent_value(value))
 
     def _set_range_progress(self, start: int, end: int, index: int, total: int) -> None:
         if total <= 0:
@@ -841,7 +1449,10 @@ class DocumentReviewExportWorker(QThread):
         for index, cue in enumerate(transcript_cues):
             if self._should_abort():
                 break
-            original = self._transcript_cleaner.clean(cue.text.strip(), self._selected_source_language())
+            original = self._transcript_cleaner.clean(
+                _json_text(getattr(cue, "text", ""), default="") or "",
+                self._selected_source_language(),
+            )
             if not original:
                 continue
             items.append((index, cue, original))
@@ -849,7 +1460,8 @@ class DocumentReviewExportWorker(QThread):
             return []
 
         with measure_stage("document_export", "translate_batch", cues=len(items)):
-            translated_items = self._translator.translate_many(
+            translated_items = _translate_texts(
+                self._translator,
                 [item[2] for item in items],
                 self._selected_source_language(),
             )
@@ -894,11 +1506,12 @@ class DocumentReviewExportWorker(QThread):
         assert self._temp_dir is not None
         tts_path = self._temp_dir / f"document-cue-{index:05d}.{tts_suffix}"
         wav_path = self._temp_dir / f"document-cue-{index:05d}.wav"
+        cue_start, cue_end = _cue_time_bounds(cue)
+        duration = max(0.25, cue_end - cue_start)
         if _tts_disabled(self._config) or is_non_speech_tts_text(translated):
-            duration = max(0.25, cue.end_seconds - cue.start_seconds)
             self._make_silence(duration, wav_path)
             return ExportCue(
-                start_seconds=max(0.0, cue.start_seconds),
+                start_seconds=cue_start,
                 original=original,
                 translated=translated,
                 audio_path=wav_path,
@@ -911,7 +1524,7 @@ class DocumentReviewExportWorker(QThread):
             self._to_wav(self._trim_leading_silence(tts_path), wav_path)
             duration = _probe_duration_seconds(wav_path)
         return ExportCue(
-            start_seconds=max(0.0, cue.start_seconds),
+            start_seconds=cue_start,
             original=original,
             translated=translated,
             audio_path=wav_path,
@@ -957,12 +1570,14 @@ class DocumentReviewExportWorker(QThread):
             return
         quality = _video_quality_settings(self._config.export_video_quality)
         image_paths = [self._page_image(page, index) for index, page in enumerate(self._pages, start=1)]
-        total_page_duration = sum(max(0.5, float(page.duration_seconds)) for page in self._pages)
-        extra_duration = max(0.0, audio_duration_seconds - total_page_duration)
+        total_page_duration = sum(
+            _duration_value(page.duration_seconds, default=0.5, minimum=0.5) for page in self._pages
+        )
+        extra_duration = max(0.0, _duration_value(audio_duration_seconds, default=0.0) - total_page_duration)
         concat_file = self._temp_dir / "document-video-concat.txt"
         lines: list[str] = []
         for index, (page, image_path) in enumerate(zip(self._pages, image_paths, strict=True)):
-            duration = max(0.5, float(page.duration_seconds))
+            duration = _duration_value(page.duration_seconds, default=0.5, minimum=0.5)
             if index == len(self._pages) - 1:
                 duration += extra_duration
             lines.append(concat_file_line(image_path))
@@ -1054,6 +1669,7 @@ class DocumentReviewExportWorker(QThread):
         self.partial_finished.emit(str(self._output_path))
 
     def _make_silence(self, duration_seconds: float, output_path: Path) -> None:
+        duration = _duration_value(duration_seconds, default=0.0)
         self._run_ffmpeg(
             [
                 "-f",
@@ -1061,7 +1677,7 @@ class DocumentReviewExportWorker(QThread):
                 "-i",
                 "anullsrc=channel_layout=stereo:sample_rate=44100",
                 "-t",
-                f"{max(0.0, duration_seconds):.3f}",
+                f"{duration:.3f}",
                 "-c:a",
                 "pcm_s16le",
                 "-y",
@@ -1123,7 +1739,7 @@ def _ffmpeg_escape(path: Path) -> str:
 
 
 def _make_silence(duration_seconds: float, output_path: Path) -> None:
-    ffmpeg_make_silence(duration_seconds, output_path)
+    ffmpeg_make_silence(_duration_value(duration_seconds, default=0.0), output_path)
 
 
 def _to_wav(input_path: Path, output_path: Path) -> None:
@@ -1135,15 +1751,47 @@ def _trim_leading_silence(audio_path: Path) -> Path:
 
 
 def _duration_seconds(path: Path) -> float:
-    return probe_duration_seconds(path)
+    return _probe_duration_seconds(path)
 
 
 def _probe_duration_seconds(path: Path) -> float:
-    return probe_duration_seconds(path)
+    return _duration_value(probe_duration_seconds(path), default=0.0)
 
 
 def _safe_float(value: object) -> float | None:
     return safe_float(value)
+
+
+def _duration_value(value: object, *, default: float, minimum: float = 0.0) -> float:
+    number = _safe_float(value)
+    if number is None or not math.isfinite(number):
+        number = default
+    return max(minimum, number)
+
+
+def _percent_value(value: object) -> int:
+    return max(0, min(100, int(round(_duration_value(value, default=0.0)))))
+
+
+def _entry_time_bounds(entry: object, segment_seconds: float) -> tuple[float, float]:
+    start_seconds = _duration_value(getattr(entry, "start", 0.0), default=0.0)
+    fallback_end = start_seconds + max(0.25, segment_seconds)
+    end_value = getattr(entry, "end", None)
+    end_seconds = fallback_end if end_value is None else _duration_value(end_value, default=fallback_end)
+    return start_seconds, max(start_seconds + 0.25, end_seconds)
+
+
+def _cue_time_bounds(cue: object) -> tuple[float, float]:
+    start_seconds = _duration_value(getattr(cue, "start_seconds", 0.0), default=0.0)
+    end_seconds = _duration_value(getattr(cue, "end_seconds", None), default=start_seconds + 0.25)
+    return start_seconds, max(start_seconds + 0.25, end_seconds)
+
+
+def _nonempty_file(path: Path) -> bool:
+    try:
+        return path.exists() and path.stat().st_size > 0
+    except OSError:
+        return False
 
 
 def _format_hhmmss(value: object) -> str:
@@ -1202,18 +1850,102 @@ def _wrap_text(text: str, font, max_width: int, draw) -> list[str]:
     return lines
 
 
+def _segments_words_payload(
+    segments: list[object],
+    info: object,
+) -> dict[str, object]:
+    payload_segments: list[dict[str, object]] = []
+    for segment in segments:
+        words_payload: list[dict[str, object]] = []
+        for word in getattr(segment, "words", None) or []:
+            words_payload.append(
+                {
+                    "start": _json_number(getattr(word, "start", 0.0), default=0.0),
+                    "end": _json_number(getattr(word, "end", 0.0), default=0.0),
+                    "word": _json_text(getattr(word, "word", ""), default=""),
+                    "probability": _json_number(getattr(word, "probability", 0.0), default=0.0),
+                }
+            )
+        payload_segments.append(
+            {
+                "start": _json_number(getattr(segment, "start", 0.0), default=0.0),
+                "end": _json_number(getattr(segment, "end", 0.0), default=0.0),
+                "text": _json_text(getattr(segment, "text", ""), default=""),
+                "words": words_payload,
+            }
+        )
+    return {
+        "language": _json_text(getattr(info, "language", None), default=None),
+        "language_probability": _json_number(getattr(info, "language_probability", None), default=None),
+        "segments": payload_segments,
+    }
+
+
+def _json_number(value: object, *, default: float | None) -> float | None:
+    try:
+        number = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return default
+    if not math.isfinite(number):
+        return default
+    return number
+
+
+def _json_text(value: object, *, default: str | None) -> str | None:
+    if value is None:
+        return default
+    if isinstance(value, bytes):
+        text = value.decode("utf-8", errors="replace")
+    else:
+        text = str(value)
+    text = " ".join(text.split())
+    return text or default
+
+
 def _clean_message(value: object) -> str:
     return str(value or "").encode("utf-8", errors="replace").decode("utf-8", errors="replace")
 
 
 def _clean_transcript_many(cleaner, texts: list[str], source_language: str | None) -> list[str]:
+    fallback_texts = [_json_text(text, default="") or "" for text in texts]
     clean_many = getattr(cleaner, "clean_many", None)
     if callable(clean_many):
-        return list(clean_many(texts, source_language))
+        return _align_text_results(fallback_texts, clean_many(texts, source_language))
     clean_one = getattr(cleaner, "clean", None)
     if callable(clean_one):
-        return [clean_one(text, source_language) for text in texts]
-    return texts
+        return _align_text_results(fallback_texts, [clean_one(text, source_language) for text in texts])
+    return fallback_texts
+
+
+def _translate_texts(translator, texts: list[str], source_language: str | None) -> list[str]:
+    fallback_texts = [_json_text(text, default="") or "" for text in texts]
+    translate_many = getattr(translator, "translate_many", None)
+    if callable(translate_many):
+        return _align_text_results(fallback_texts, translate_many(fallback_texts, source_language))
+    translate_one = getattr(translator, "translate", None)
+    if callable(translate_one):
+        return _align_text_results(fallback_texts, [translate_one(text, source_language) for text in fallback_texts])
+    return fallback_texts
+
+
+def _align_text_results(fallback_texts: list[str], results: object) -> list[str]:
+    if isinstance(results, str | bytes):
+        result_items = []
+    else:
+        try:
+            result_items = list(results)
+        except TypeError:
+            result_items = []
+    aligned: list[str] = []
+    for index, fallback in enumerate(fallback_texts):
+        cleaned = result_items[index] if index < len(result_items) else fallback
+        if isinstance(cleaned, bytes):
+            cleaned = cleaned.decode("utf-8", errors="replace")
+        elif not isinstance(cleaned, str):
+            cleaned = fallback
+        cleaned_text = _json_text(cleaned, default="") or ""
+        aligned.append(cleaned_text or fallback)
+    return aligned
 
 
 def _tts_disabled(config: AppConfig) -> bool:
@@ -1229,7 +1961,7 @@ def _export_worker_count() -> int:
     if configured:
         try:
             return max(1, min(16, int(configured)))
-        except ValueError:
+        except (OverflowError, ValueError):
             pass
     cpu_count = os.cpu_count() or 2
     return max(1, min(8, max(4, cpu_count // 2)))

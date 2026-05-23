@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 import subprocess
@@ -31,11 +32,12 @@ def capture_microphone_audio(
 ) -> None:
     backend = _normalize_capture_backend(backend)
     device = (
-        device_name.strip()
+        str(device_name or "").strip()
         or os.getenv("AI_PLAYER_CAPTURE_MICROPHONE_DEVICE", "").strip()
         or os.getenv("AI_PLAYER_MICROPHONE_DEVICE", "").strip()
     )
-    if backend in {"auto", "soundcard"} and _capture_soundcard_microphone(output_path, duration_seconds, device):
+    duration = _duration_seconds(duration_seconds)
+    if backend in {"auto", "soundcard"} and _capture_soundcard_microphone(output_path, duration, device):
         return
     if backend == "soundcard":
         raise RuntimeError(ui_text("capture_soundcard_microphone_failed", language_id))
@@ -47,7 +49,7 @@ def capture_microphone_audio(
     _capture_dshow_audio(
         device,
         output_path,
-        duration_seconds,
+        duration,
         ui_text("capture_label_microphone", language_id),
         language_id,
     )
@@ -62,11 +64,12 @@ def capture_system_audio(
 ) -> None:
     backend = _normalize_capture_backend(backend)
     device = (
-        device_name.strip()
+        str(device_name or "").strip()
         or os.getenv("AI_PLAYER_CAPTURE_SYSTEM_DEVICE", "").strip()
         or os.getenv("AI_PLAYER_SYSTEM_AUDIO_DEVICE", "").strip()
     )
-    if backend in {"auto", "soundcard"} and _capture_soundcard_loopback(output_path, duration_seconds, device):
+    duration = _duration_seconds(duration_seconds)
+    if backend in {"auto", "soundcard"} and _capture_soundcard_loopback(output_path, duration, device):
         return
     if backend == "soundcard":
         raise RuntimeError(ui_text("capture_soundcard_system_failed", language_id))
@@ -78,7 +81,7 @@ def capture_system_audio(
     _capture_dshow_audio(
         device,
         output_path,
-        duration_seconds,
+        duration,
         ui_text("capture_label_system_audio", language_id),
         language_id,
     )
@@ -113,7 +116,8 @@ def capture_system_microphone_audio(
     language_id: str | None = None,
 ) -> None:
     stop_event = threading.Event()
-    timer = threading.Timer(max(1, int(duration_seconds)), stop_event.set)
+    duration = _duration_seconds(duration_seconds)
+    timer = threading.Timer(duration, stop_event.set)
     timer.start()
     try:
         capture_meeting_audio_until_stopped(
@@ -192,6 +196,7 @@ def _capture_dshow_audio(
     label: str,
     language_id: str | None = None,
 ) -> None:
+    duration = _duration_seconds(duration_seconds)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     command = [
         ffmpeg_executable(),
@@ -201,7 +206,7 @@ def _capture_dshow_audio(
         "-f",
         "dshow",
         "-t",
-        str(max(1, int(duration_seconds))),
+        str(duration),
         "-i",
         f"audio={device}",
         "-ac",
@@ -269,7 +274,7 @@ def _soundcard_microphone(sc, device_name: str):
 
 def _record_soundcard_microphone(microphone, output_path: Path, duration_seconds: int) -> None:
     sample_rate = 16000
-    frames = sample_rate * max(1, int(duration_seconds))
+    frames = sample_rate * _duration_seconds(duration_seconds)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with microphone.recorder(samplerate=sample_rate, channels=1) as recorder:
         data = _soundcard_record_without_discontinuity_warning(recorder, frames)
@@ -279,6 +284,16 @@ def _record_soundcard_microphone(microphone, output_path: Path, duration_seconds
     sf.write(str(output_path), data, sample_rate)
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise RuntimeError("Soundcard capture không tạo được file audio.")
+
+
+def _duration_seconds(value: object) -> int:
+    try:
+        duration = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return 1
+    if not math.isfinite(duration):
+        return 1
+    return max(1, int(duration))
 
 
 def _soundcard_record_without_discontinuity_warning(recorder, frames: int):
@@ -299,8 +314,8 @@ def _capture_soundcard_meeting(
     try:
         import soundcard as sc
 
-        speaker = _soundcard_speaker(sc, system_device_name.strip())
-        microphone = _soundcard_microphone(sc, microphone_device_name.strip())
+        speaker = _soundcard_speaker(sc, str(system_device_name or "").strip())
+        microphone = _soundcard_microphone(sc, str(microphone_device_name or "").strip())
         if speaker is None or microphone is None:
             return False
         loopback = sc.get_microphone(speaker.name, include_loopback=True)
@@ -352,8 +367,10 @@ def _capture_ffmpeg_meeting(
     import tempfile
 
     devices = list_dshow_audio_devices()
-    system_device = system_device_name.strip() or os.getenv("AI_PLAYER_SYSTEM_AUDIO_DEVICE", "").strip()
-    microphone_device = microphone_device_name.strip() or os.getenv("AI_PLAYER_MICROPHONE_DEVICE", "").strip()
+    system_device = str(system_device_name or "").strip() or os.getenv("AI_PLAYER_SYSTEM_AUDIO_DEVICE", "").strip()
+    microphone_device = (
+        str(microphone_device_name or "").strip() or os.getenv("AI_PLAYER_MICROPHONE_DEVICE", "").strip()
+    )
     if not system_device:
         system_device = _preferred_system_audio_device(devices)
     if not microphone_device:

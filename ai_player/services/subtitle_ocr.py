@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 import shutil
 import subprocess
@@ -45,10 +46,12 @@ def recognize_hard_subtitles(
             "hoặc chuyển Nguồn sang Âm gốc/Transcript."
         )
 
-    frame_dir = work_dir / f"subtitle-{int(start_seconds * 1000)}"
+    safe_start = _seconds_value(start_seconds, default=0.0)
+    safe_duration = _duration_value(duration_seconds, default=1.0)
+    frame_dir = work_dir / f"subtitle-{int(safe_start * 1000)}"
     frame_dir.mkdir(parents=True, exist_ok=True)
     pattern = frame_dir / "frame-%03d.png"
-    _extract_subtitle_frames(video_path, start_seconds, duration_seconds, pattern, config=config)
+    _extract_subtitle_frames(video_path, safe_start, safe_duration, pattern, config=config)
 
     lang = _tesseract_language(source_language)
     entries: list[tuple[OcrSubtitleSegment, float | None]] = []
@@ -59,8 +62,8 @@ def recognize_hard_subtitles(
         key = _text_key(text)
         if not key:
             continue
-        frame_start = start_seconds + index * frame_step
-        frame_end = min(start_seconds + duration_seconds, frame_start + 2.0)
+        frame_start = safe_start + index * frame_step
+        frame_end = min(safe_start + safe_duration, frame_start + 2.0)
         if entries and _same_subtitle(entries[-1][0].text, text, _ocr_merge_similarity(config)):
             previous, previous_confidence = entries[-1]
             best_text = _best_text(previous.text, previous_confidence, text, result.confidence)
@@ -88,9 +91,9 @@ def _extract_subtitle_frames(
         "-loglevel",
         "error",
         "-ss",
-        f"{start_seconds:.3f}",
+        f"{_seconds_value(start_seconds, default=0.0):.3f}",
         "-t",
-        str(max(1, int(duration_seconds))),
+        str(int(_duration_value(duration_seconds, default=1.0))),
         "-i",
         video_path,
         "-vf",
@@ -344,7 +347,7 @@ def _ocr_fps(config: AppConfig | None) -> float:
 def _ocr_psm(config: AppConfig | None) -> int:
     try:
         psm = int(getattr(config, "ocr_psm", 6))
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         psm = 6
     return max(3, min(13, psm))
 
@@ -364,6 +367,22 @@ def _ocr_merge_similarity(config: AppConfig | None) -> float:
 def _clamp_float(value: object, minimum: float, maximum: float) -> float:
     try:
         numeric = float(value)
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
+        return minimum
+    if not math.isfinite(numeric):
         return minimum
     return max(minimum, min(maximum, numeric))
+
+
+def _seconds_value(value: object, *, default: float) -> float:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(seconds):
+        return default
+    return max(0.0, seconds)
+
+
+def _duration_value(value: object, *, default: float) -> float:
+    return max(1.0, _seconds_value(value, default=default))

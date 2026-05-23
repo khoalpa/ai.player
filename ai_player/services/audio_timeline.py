@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 OVERLAP_POLICY_STRICT_START = "strict_start"
 OVERLAP_POLICY_AVOID_OVERLAP = "avoid_overlap"
 OVERLAP_POLICY_SMART = "smart"
@@ -31,9 +33,9 @@ def schedule_timeline_start(
     policy: object,
     force_avoid_overlap: bool = False,
 ) -> tuple[float, float]:
-    source_start = max(0.0, float(source_start_seconds or 0.0))
-    duration = max(0.05, float(duration_seconds or 0.0))
-    scheduled_until = max(0.0, float(scheduled_until_seconds or 0.0))
+    source_start = max(0.0, _finite_seconds(source_start_seconds, 0.0))
+    duration = max(0.05, _finite_seconds(duration_seconds, 0.05))
+    scheduled_until = max(0.0, _finite_seconds(scheduled_until_seconds, 0.0))
     normalized_policy = normalize_overlap_policy(policy)
 
     if force_avoid_overlap or normalized_policy == OVERLAP_POLICY_AVOID_OVERLAP:
@@ -48,3 +50,11 @@ def schedule_timeline_start(
             scheduled_start = min(scheduled_until, source_start + SMART_MAX_START_DELAY_SECONDS)
 
     return scheduled_start, max(scheduled_until, scheduled_start + duration)
+
+
+def _finite_seconds(value: object, default: float) -> float:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return seconds if math.isfinite(seconds) else default

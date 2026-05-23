@@ -104,9 +104,10 @@ def effective_whisper_compute_type(value: str, device: str) -> str:
 
 def effective_whisper_beam_size(value: object) -> int:
     try:
-        return max(1, min(8, int(value)))
-    except (TypeError, ValueError):
+        beam_size = int(value)
+    except (OverflowError, TypeError, ValueError):
         return 1
+    return max(1, min(8, beam_size))
 
 
 def whisper_transcribe_kwargs(config: AppConfig, language: str | None) -> dict[str, object]:
@@ -158,9 +159,10 @@ def _cuda_runtime_available() -> bool:
 
 def _env_int(name: str, default: int) -> int:
     try:
-        return int(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
+        value = int(os.getenv(name, str(default)))
+    except (OverflowError, TypeError, ValueError):
         return default
+    return value
 
 
 def _whisper_cpu_threads() -> int:

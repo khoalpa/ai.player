@@ -149,3 +149,42 @@ def test_audio_match_plan_limits_manual_speed_even_when_auto_match_is_off(monkey
 
     assert plan.tempo == pytest.approx(1.12)
     assert plan.filters == ("atempo=1.1200",)
+
+
+def test_audio_match_plan_sanitizes_invalid_speed_and_gain(monkeypatch, tmp_path) -> None:
+    reference_path = tmp_path / "reference.wav"
+    tts_path = tmp_path / "tts.wav"
+    monkeypatch.setattr(audio_matcher, "audio_duration_seconds", lambda _path: float("inf"))
+    monkeypatch.setattr(
+        audio_matcher,
+        "mean_volume_db",
+        lambda path, **_kwargs: -20.0 if path == reference_path else -40.0,
+    )
+    config = AppConfig(
+        dubbing_auto_match_audio=True,
+        dubbing_speed_percent="bad",
+        dubbing_speed_min=float("nan"),
+        dubbing_speed_max=float("inf"),
+        dubbing_volume_gain_min_db=float("nan"),
+        dubbing_volume_gain_max_db="bad",
+    )
+
+    plan = audio_matcher._build_audio_match_plan(
+        reference_path=reference_path,
+        tts_path=tts_path,
+        target_duration_seconds=float("nan"),
+        config=config,
+    )
+
+    assert plan.tempo == pytest.approx(1.0)
+    assert plan.gain_db == 12.0
+    assert plan.filters == (
+        "aformat=sample_rates=44100:channel_layouts=stereo",
+        "volume=12.00dB",
+    )
+
+
+def test_audio_format_filter_sanitizes_invalid_format_values() -> None:
+    assert audio_matcher._audio_format_filter(float("nan"), "bad") == (
+        "aformat=sample_rates=44100:channel_layouts=stereo"
+    )

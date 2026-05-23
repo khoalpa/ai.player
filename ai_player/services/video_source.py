@@ -504,7 +504,7 @@ def _fetch_buomtv_video_info(url: str, language_id: str | None = None) -> dict:
     except Exception as exc:
         raise VideoSourceError(ui_text("video_error_buomtv_token_api_failed", language_id, detail=exc)) from exc
     token_payload = _buomtv_response_json(token_response, "token", language_id)
-    token = str((token_payload.get("response") or {}).get("token") or "")
+    token = str(_dict_value(token_payload.get("response")).get("token") or "")
     if not token:
         raise VideoSourceError(ui_text("video_error_buomtv_token_missing", language_id))
 
@@ -517,12 +517,11 @@ def _fetch_buomtv_video_info(url: str, language_id: str | None = None) -> dict:
     except Exception as exc:
         raise VideoSourceError(ui_text("video_error_buomtv_video_api_failed", language_id, detail=exc)) from exc
     payload = _buomtv_response_json(info_response, "video", language_id)
-    status = payload.get("status") or {}
+    status = _dict_value(payload.get("status"))
     if status.get("code") != 200:
         message = str(status.get("message") or ui_text("video_error_unknown", language_id))
         raise VideoSourceError(ui_text("video_error_buomtv_status", language_id, detail=message))
-    response = payload.get("response") or {}
-    return response if isinstance(response, dict) else {}
+    return _dict_value(payload.get("response"))
 
 
 def _buomtv_response_json(response, context: str, language_id: str | None = None) -> dict:
@@ -538,6 +537,10 @@ def _buomtv_response_json(response, context: str, language_id: str | None = None
     if not isinstance(payload, dict):
         raise VideoSourceError(ui_text("video_error_buomtv_invalid_data", language_id, context=context))
     return payload
+
+
+def _dict_value(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
 
 
 def _parse_buomtv_video_path(path: str, language_id: str | None = None) -> tuple[str, str]:
@@ -667,7 +670,10 @@ def _remove_empty_dirs(root: Path) -> None:
 def _downloaded_file_path(info: dict, cache_dir: Path) -> str:
     candidates = []
     requested_downloads = info.get("requested_downloads") or []
-    candidates.extend(download.get("filepath") for download in requested_downloads)
+    if isinstance(requested_downloads, list):
+        candidates.extend(
+            download.get("filepath") for download in requested_downloads if isinstance(download, dict)
+        )
     candidates.extend([info.get("_filename"), info.get("filepath")])
 
     for candidate in candidates:
@@ -700,10 +706,16 @@ def _stream_playback_url(info: dict) -> str:
         return direct_url
 
     requested_formats = info.get("requested_formats") or []
+    requested_formats = (
+        [item for item in requested_formats if isinstance(item, dict)]
+        if isinstance(requested_formats, list)
+        else []
+    )
     if len(requested_formats) == 1:
         return str(requested_formats[0].get("url") or "").strip()
 
     formats = info.get("formats") or []
+    formats = [item for item in formats if isinstance(item, dict)] if isinstance(formats, list) else []
     playable_formats = [
         video_format
         for video_format in formats

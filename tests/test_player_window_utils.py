@@ -17,10 +17,14 @@ def test_html_with_breaks_escapes_and_preserves_lines() -> None:
 
 def test_format_bitrate_for_mbps() -> None:
     assert utils.format_bitrate(2_500_000) == "2.50 Mbps"
+    assert utils.format_bitrate(float("inf"), unknown="unknown") == "unknown"
+    assert utils.format_bitrate(float("nan"), unknown="unknown") == "unknown"
 
 
 def test_format_rate_fraction() -> None:
     assert utils.format_rate("30000/1001") == "29.97"
+    assert utils.format_rate("inf/1", unknown="unknown") == "unknown"
+    assert utils.format_rate("1/inf", unknown="unknown") == "unknown"
 
 
 def test_safe_native_dubbing_config_forces_cpu_when_cuda_is_disabled(monkeypatch) -> None:

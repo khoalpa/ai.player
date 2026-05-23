@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import threading
@@ -111,7 +112,7 @@ def _start_soundcard_wav_playback(audio_path: Path, *, volume: int) -> ThreadAud
 
 
 def _play_wav_with_soundcard(audio_path: Path, *, volume: int, stop_event: threading.Event, speaker) -> None:
-    gain = max(0.0, min(1.0, float(volume) / 100.0))
+    gain = _volume_percent(volume) / 100.0
     with wave.open(str(audio_path), "rb") as wav:
         sample_rate = wav.getframerate()
         channels = wav.getnchannels()
@@ -158,7 +159,7 @@ def _start_ffplay(audio_path: Path, *, volume: int) -> ProcessAudioPlaybackHandl
         "-loglevel",
         "quiet",
         "-volume",
-        str(max(0, min(100, int(volume)))),
+        str(_volume_percent(volume)),
         str(audio_path),
     ]
     startupinfo = None
@@ -167,3 +168,13 @@ def _start_ffplay(audio_path: Path, *, volume: int) -> ProcessAudioPlaybackHandl
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     process = subprocess.Popen(command, startupinfo=startupinfo)
     return ProcessAudioPlaybackHandle(process)
+
+
+def _volume_percent(value: object) -> int:
+    try:
+        volume = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return 100
+    if not math.isfinite(volume):
+        return 100
+    return max(0, min(100, int(round(volume))))

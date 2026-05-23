@@ -8,7 +8,7 @@
     "homepage": "https://github.com/pnnbao97/VieNeu-TTS",
     "notice": "Model and voices are for non-commercial use only. Mention pnnbao-ump when using."
   },
-  "default_voice": "Binh",
+  "default_voice": "Doan",
   "presets": {
     "Binh": {
       "codes": [
