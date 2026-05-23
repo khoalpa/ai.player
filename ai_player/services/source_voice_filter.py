@@ -98,9 +98,11 @@ def source_voice_filter_cached_output_valid(
     if not output_path.exists() or output_path.stat().st_size <= 0:
         return False
     metadata = read_source_voice_filter_metadata(output_path)
+    if not metadata:
+        return False
     backend = str(metadata.get("backend") or "").strip().lower()
     if backend not in {"fast", "ai"}:
-        backend = None
+        return False
     normalized_mode = normalize_source_voice_filter_mode(mode)
     selected_model = normalize_source_voice_filter_model(model)
     cached_model = normalize_source_voice_filter_model(str(metadata.get("model") or ""))
@@ -157,8 +159,32 @@ def apply_source_voice_filter(
     selected_model = normalize_source_voice_filter_model(model)
     runner = process_runner or _run_process
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists() and not source_voice_filter_cached_output_valid(
+        output_path,
+        normalized_mode,
+        selected_model,
+    ):
+        _remove_partial_output(output_path)
 
-    if normalized_mode == "fast":
+    try:
+        if normalized_mode == "fast":
+            _create_fast_filtered_video(source_path, output_path, runner)
+            return SourceVoiceFilterResult(
+                output_path=output_path,
+                backend="fast",
+                mode=normalized_mode,
+                model=selected_model,
+            )
+
+        if normalized_mode == "ai":
+            _create_demucs_filtered_video(source_path, output_path, runner, selected_model)
+            return SourceVoiceFilterResult(
+                output_path=output_path,
+                backend="ai",
+                mode=normalized_mode,
+                model=selected_model,
+            )
+
         _create_fast_filtered_video(source_path, output_path, runner)
         return SourceVoiceFilterResult(
             output_path=output_path,
@@ -166,23 +192,9 @@ def apply_source_voice_filter(
             mode=normalized_mode,
             model=selected_model,
         )
-
-    if normalized_mode == "ai":
-        _create_demucs_filtered_video(source_path, output_path, runner, selected_model)
-        return SourceVoiceFilterResult(
-            output_path=output_path,
-            backend="ai",
-            mode=normalized_mode,
-            model=selected_model,
-        )
-
-    _create_fast_filtered_video(source_path, output_path, runner)
-    return SourceVoiceFilterResult(
-        output_path=output_path,
-        backend="fast",
-        mode=normalized_mode,
-        model=selected_model,
-    )
+    except Exception:
+        _remove_partial_output(output_path)
+        raise
 
 
 def resolve_source_voice_filter_command(command: Sequence[object]) -> list[str]:
@@ -394,11 +406,12 @@ def _run_process(command: list[str]) -> None:
 
 
 def _remove_partial_output(output_path: Path) -> None:
-    try:
-        if output_path.exists():
-            output_path.unlink()
-    except OSError:
-        pass
+    for path in (output_path, _metadata_path(output_path)):
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError:
+            pass
 
 
 def _nonempty_file(path: Path) -> bool:

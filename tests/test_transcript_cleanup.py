@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -120,6 +123,31 @@ def test_cleanup_failure_logs_once_and_returns_original(monkeypatch, caplog) -> 
 
     messages = [record.message for record in caplog.records]
     assert sum("Transcript cleanup failed" in message for message in messages) == 1
+
+
+def test_transcript_cleaner_serializes_stateful_clean_calls(monkeypatch) -> None:
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def fake_clean(text: str, _context, _config: AppConfig) -> str:
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        return text
+
+    monkeypatch.setattr(transcript_cleanup, "_clean_with_provider", fake_clean)
+    cleaner = transcript_cleanup.TranscriptCleaner(AppConfig(transcript_cleanup_mode="light"))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda text: cleaner.clean(text, "vi"), ["mot", "hai"]))
+
+    assert results == ["mot", "hai"]
+    assert max_active == 1
 
 
 @pytest.mark.parametrize(

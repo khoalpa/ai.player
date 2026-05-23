@@ -14,6 +14,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QFrame
 
 from ai_player.services.ffmpeg import ffprobe_executable
+from ai_player.services.media_cache import playback_compat_cached_output_valid
 from ai_player.services.source_voice_filter import source_voice_filter_signature
 from ai_player.services.video_source import _cleanup_cache_root
 from ai_player.ui.player_window_utils import (
@@ -74,7 +75,7 @@ class PlayerMediaMixin:
                 self._switch_player_source(compat_path, preserve_state)
                 return
             output_path = self._playback_compat_output_path(self._video_path)
-            if output_path.exists() and output_path.stat().st_size > 0:
+            if playback_compat_cached_output_valid(output_path, self._video_path, compat_key):
                 self._playback_compat_cache[compat_key] = str(output_path)
                 self._switch_player_source(str(output_path), preserve_state)
                 return
@@ -159,7 +160,8 @@ class PlayerMediaMixin:
         if self._playback_compat_worker is not None and self._playback_compat_worker.isRunning():
             return
         output_path = self._playback_compat_output_path(source_path)
-        self._playback_compat_worker = PlaybackCompatibilityWorker(source_path, output_path, self)
+        cache_key = self._playback_compat_cache_key(source_path)
+        self._playback_compat_worker = PlaybackCompatibilityWorker(source_path, output_path, cache_key, self)
         self._playback_compat_worker.ready.connect(self._playback_compat_ready)
         self._playback_compat_worker.failed.connect(self._playback_compat_failed)
         self._playback_compat_worker.finished.connect(self._playback_compat_finished)

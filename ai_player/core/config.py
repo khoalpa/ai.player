@@ -6,7 +6,38 @@ from pathlib import Path
 
 CORE_DIR = Path(__file__).resolve().parent
 AI_PLAYER_DIR = CORE_DIR.parent
-PROJECT_ROOT = AI_PLAYER_DIR.parent
+PACKAGE_ROOT = AI_PLAYER_DIR
+RESOURCE_ROOT = PACKAGE_ROOT / "resources"
+
+
+def _resolve_project_root() -> Path:
+    configured = os.getenv("AI_PLAYER_PROJECT_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+
+    if getattr(sys, "frozen", False):
+        executable_dir = Path(sys.executable).resolve().parent
+        portable_root = executable_dir.parent
+        if executable_dir.name.casefold() == "ai player" and _looks_like_portable_root(portable_root):
+            return portable_root
+        return executable_dir
+
+    return AI_PLAYER_DIR.parent
+
+
+def _looks_like_portable_root(path: Path) -> bool:
+    return any(
+        (path / marker).exists()
+        for marker in (
+            "Run AI Player.bat",
+            "models",
+            "data",
+            "tools",
+        )
+    )
+
+
+PROJECT_ROOT = _resolve_project_root()
 MODEL_ROOT = PROJECT_ROOT / "models"
 ASR_MODELS_PATH = MODEL_ROOT / "asr"
 TRANSLATION_MODELS_PATH = MODEL_ROOT / "translation"

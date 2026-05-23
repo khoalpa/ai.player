@@ -8,6 +8,11 @@ from PySide6.QtCore import QThread, Signal
 from ai_player.core.config import AppConfig
 from ai_player.services.document_reader import create_document_transcript
 from ai_player.services.ffmpeg import ffmpeg_executable
+from ai_player.services.media_cache import (
+    playback_compat_cached_output_valid,
+    remove_playback_compat_output,
+    write_playback_compat_metadata,
+)
 from ai_player.services.runtime_warmup import RuntimeWarmupCancelled, warm_runtime_components
 from ai_player.services.source_voice_filter import (
     SourceVoiceFilterCancelled,
@@ -208,10 +213,11 @@ class PlaybackCompatibilityWorker(QThread):
     ready = Signal(str, str)
     failed = Signal(str, str)
 
-    def __init__(self, source_path: str, output_path: Path, parent=None) -> None:
+    def __init__(self, source_path: str, output_path: Path, cache_key: str = "", parent=None) -> None:
         super().__init__(parent)
         self._source_path = source_path
         self._output_path = output_path
+        self._cache_key = cache_key
         self._process: subprocess.Popen | None = None
         self._stop_requested = False
 
@@ -222,9 +228,10 @@ class PlaybackCompatibilityWorker(QThread):
 
     def run(self) -> None:
         try:
-            if self._output_path.exists() and self._output_path.stat().st_size > 0:
+            if playback_compat_cached_output_valid(self._output_path, self._source_path, self._cache_key):
                 self.ready.emit(self._source_path, str(self._output_path))
                 return
+            remove_playback_compat_output(self._output_path)
             self._output_path.parent.mkdir(parents=True, exist_ok=True)
             command = [
                 ffmpeg_executable(),
@@ -267,11 +274,14 @@ class PlaybackCompatibilityWorker(QThread):
             self._process = subprocess.Popen(command)
             return_code = self._process.wait()
             if self._stop_requested:
+                remove_playback_compat_output(self._output_path)
                 return
             if return_code != 0:
                 raise subprocess.CalledProcessError(return_code, command)
+            write_playback_compat_metadata(self._output_path, self._source_path, self._cache_key)
             self.ready.emit(self._source_path, str(self._output_path))
         except Exception as exc:
+            remove_playback_compat_output(self._output_path)
             if not self._stop_requested:
                 self.failed.emit(self._source_path, str(exc))
         finally:

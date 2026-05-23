@@ -19,6 +19,8 @@ _block_unneeded_optional_imports()
 
 from ai_player.ui.player_window import PlayerWindow
 
+_NATIVE_CRASH_LOG_HANDLE = None
+
 
 def main() -> int:
     os.environ.setdefault("QT_LOGGING_RULES", "qt.multimedia.ffmpeg=false")
@@ -40,7 +42,7 @@ def main() -> int:
 def _install_exception_logger() -> None:
     def excepthook(exc_type, exc, tb):
         log_path = RUNTIME_DIR / "ai-player-error.log"
-        log_path.parent.mkdir(exist_ok=True)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text(
             "".join(traceback.format_exception(exc_type, exc, tb)),
             encoding="utf-8",
@@ -51,17 +53,19 @@ def _install_exception_logger() -> None:
 
 
 def _install_native_crash_logger() -> None:
+    global _NATIVE_CRASH_LOG_HANDLE
     log_path = RUNTIME_DIR / "ai-player-native-crash.log"
-    log_path.parent.mkdir(exist_ok=True)
-    handle = log_path.open("a", encoding="utf-8")
-    faulthandler.enable(file=handle, all_threads=True)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    if _NATIVE_CRASH_LOG_HANDLE is None or _NATIVE_CRASH_LOG_HANDLE.closed:
+        _NATIVE_CRASH_LOG_HANDLE = log_path.open("a", encoding="utf-8")
+    faulthandler.enable(file=_NATIVE_CRASH_LOG_HANDLE, all_threads=True)
 
 
 def _install_performance_logger() -> None:
     if str(os.getenv("AI_PLAYER_PERF_LOG", "")).strip().lower() not in {"1", "true", "yes", "on"}:
         return
     log_path = RUNTIME_DIR / "ai-player-performance.log"
-    log_path.parent.mkdir(exist_ok=True)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     handler = logging.FileHandler(log_path, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
     logger = logging.getLogger("ai_player.performance")
@@ -72,7 +76,7 @@ def _install_performance_logger() -> None:
 
 def _log_line(message: str) -> None:
     log_path = RUNTIME_DIR / "ai-player-runtime.log"
-    log_path.parent.mkdir(exist_ok=True)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write(message + "\n")
 

@@ -247,16 +247,23 @@ def _audio_capture_section() -> DiagnosticSection:
 
 def _first_tool(candidates: tuple[str, ...]) -> str:
     if candidates == ("ffmpeg",):
-        return ffmpeg_executable()
+        return _existing_tool(ffmpeg_executable())
     if candidates == ("ffplay",):
-        return ffplay_executable()
+        return _existing_tool(ffplay_executable())
     for candidate in candidates:
-        found = shutil.which(candidate)
+        found = _existing_tool(candidate)
         if found:
             return found
-        path = Path(candidate)
-        if path.exists():
-            return str(path)
+    return ""
+
+
+def _existing_tool(candidate: str) -> str:
+    found = shutil.which(candidate)
+    if found:
+        return found
+    path = Path(candidate)
+    if path.is_file():
+        return str(path)
     return ""
 
 

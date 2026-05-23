@@ -11,10 +11,11 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from ai_player.core.config import PROJECT_ROOT
+
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
 FFPLAY = "ffplay"
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _PROBE_DURATION_CACHE_LOCK = threading.Lock()
 _PROBE_DURATION_CACHE: dict[tuple[str, int, int], float] = {}
 

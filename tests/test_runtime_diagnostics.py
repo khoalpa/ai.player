@@ -50,6 +50,22 @@ def test_first_tool_uses_path_candidates(monkeypatch, tmp_path, candidate_index:
     assert diag._first_tool(candidates) == str(tool)
 
 
+def test_first_tool_rejects_unresolved_ffmpeg_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(diag, "ffmpeg_executable", lambda: "ffmpeg")
+    monkeypatch.setattr(diag.shutil, "which", lambda _candidate: None)
+
+    assert diag._first_tool(("ffmpeg",)) == ""
+
+
+def test_first_tool_accepts_resolved_ffmpeg_path(monkeypatch, tmp_path) -> None:
+    ffmpeg = tmp_path / "ffmpeg.exe"
+    ffmpeg.write_text("", encoding="utf-8")
+    monkeypatch.setattr(diag, "ffmpeg_executable", lambda: str(ffmpeg))
+    monkeypatch.setattr(diag.shutil, "which", lambda _candidate: None)
+
+    assert diag._first_tool(("ffmpeg",)) == str(ffmpeg)
+
+
 @pytest.mark.parametrize("present", [False, True])
 def test_model_section_reports_missing_required_files(monkeypatch, tmp_path, present: bool) -> None:
     model_dir = tmp_path / "model"

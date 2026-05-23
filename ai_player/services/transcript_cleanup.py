@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -74,57 +75,60 @@ class TranscriptCleaner:
         self._previous_text = ""
         self.last_error: str = ""
         self._warned_failure = False
+        self._lock = threading.RLock()
 
     @property
     def enabled(self) -> bool:
         return _cleanup_mode(self._config.transcript_cleanup_mode) != "off"
 
     def clean(self, text: str, source_language: str | None = None) -> str:
-        clean_text = " ".join(str(text or "").split())
-        if not clean_text or not self.enabled:
-            return clean_text
-        clean_text = _normalize_protected_terms(clean_text)
-        context = CleanupContext(source_language=source_language, previous_text=self._previous_text)
-        try:
-            result = _clean_with_provider(clean_text, context, self._config)
-            self.last_error = ""
-        except Exception as exc:
-            self._record_failure(exc)
-            result = clean_text
-        result = _safe_cleanup_output(clean_text, result)
-        self._previous_text = result
-        return result
+        with self._lock:
+            clean_text = " ".join(str(text or "").split())
+            if not clean_text or not self.enabled:
+                return clean_text
+            clean_text = _normalize_protected_terms(clean_text)
+            context = CleanupContext(source_language=source_language, previous_text=self._previous_text)
+            try:
+                result = _clean_with_provider(clean_text, context, self._config)
+                self.last_error = ""
+            except Exception as exc:
+                self._record_failure(exc)
+                result = clean_text
+            result = _safe_cleanup_output(clean_text, result)
+            self._previous_text = result
+            return result
 
     def clean_many(self, texts: list[str], source_language: str | None = None) -> list[str]:
-        clean_texts = [" ".join(str(text or "").split()) for text in texts]
-        if not self.enabled:
-            return clean_texts
-        clean_texts = [_normalize_protected_terms(text) for text in clean_texts]
-        indexed = [(index, text) for index, text in enumerate(clean_texts) if text]
-        if not indexed:
-            return clean_texts
-        if len(indexed) == 1:
-            index, text = indexed[0]
-            clean_texts[index] = self.clean(text, source_language)
-            return clean_texts
+        with self._lock:
+            clean_texts = [" ".join(str(text or "").split()) for text in texts]
+            if not self.enabled:
+                return clean_texts
+            clean_texts = [_normalize_protected_terms(text) for text in clean_texts]
+            indexed = [(index, text) for index, text in enumerate(clean_texts) if text]
+            if not indexed:
+                return clean_texts
+            if len(indexed) == 1:
+                index, text = indexed[0]
+                clean_texts[index] = self.clean(text, source_language)
+                return clean_texts
 
-        context = CleanupContext(source_language=source_language, previous_text=self._previous_text)
-        try:
-            result = _clean_many_with_provider([text for _index, text in indexed], context, self._config)
-            self.last_error = ""
-        except TranscriptCleanupBatchError as exc:
-            self._record_failure(exc)
-            return self._clean_many_individually(clean_texts, indexed, source_language)
-        except Exception as exc:
-            self._record_failure(exc)
+            context = CleanupContext(source_language=source_language, previous_text=self._previous_text)
+            try:
+                result = _clean_many_with_provider([text for _index, text in indexed], context, self._config)
+                self.last_error = ""
+            except TranscriptCleanupBatchError as exc:
+                self._record_failure(exc)
+                return self._clean_many_individually(clean_texts, indexed, source_language)
+            except Exception as exc:
+                self._record_failure(exc)
+                return clean_texts
+            if len(result) != len(indexed):
+                self._record_failure(TranscriptCleanupBatchError("Cleanup batch returned an unexpected item count."))
+                return self._clean_many_individually(clean_texts, indexed, source_language)
+            for (index, original), cleaned in zip(indexed, result, strict=False):
+                clean_texts[index] = _safe_cleanup_output(original, cleaned)
+                self._previous_text = clean_texts[index]
             return clean_texts
-        if len(result) != len(indexed):
-            self._record_failure(TranscriptCleanupBatchError("Cleanup batch returned an unexpected item count."))
-            return self._clean_many_individually(clean_texts, indexed, source_language)
-        for (index, original), cleaned in zip(indexed, result, strict=False):
-            clean_texts[index] = _safe_cleanup_output(original, cleaned)
-            self._previous_text = clean_texts[index]
-        return clean_texts
 
     def _clean_many_individually(
         self,

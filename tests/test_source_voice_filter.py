@@ -115,6 +115,30 @@ def test_old_auto_mode_reuses_fast_cache(tmp_path, monkeypatch) -> None:
     assert filter_service.source_voice_filter_cached_output_valid(output, "auto")
 
 
+def test_source_voice_filter_rejects_nonempty_cache_without_metadata(tmp_path) -> None:
+    output = tmp_path / "filtered.mp4"
+    output.write_bytes(b"partial")
+
+    assert not filter_service.source_voice_filter_cached_output_valid(output, "fast")
+
+
+def test_source_voice_filter_removes_partial_output_on_failure(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(filter_service, "_can_copy_video_stream", lambda _path: False)
+    source = tmp_path / "demo.mp4"
+    output = tmp_path / "filtered.mp4"
+    source.write_bytes(b"source")
+
+    def runner(command: list[str]) -> None:
+        Path(command[-1]).write_bytes(b"partial")
+        raise RuntimeError("ffmpeg failed after writing")
+
+    with pytest.raises(RuntimeError, match="ffmpeg failed"):
+        filter_service.apply_source_voice_filter(source, output, mode="fast", process_runner=runner)
+
+    assert not output.exists()
+    assert not output.with_suffix(".mp4.json").exists()
+
+
 def test_old_auto_ai_cache_is_not_reused_for_fast_mode(tmp_path, monkeypatch) -> None:
     output = tmp_path / "filtered.mp4"
     output.write_bytes(b"filtered")

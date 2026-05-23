@@ -9,6 +9,7 @@ from ai_player.core.config import (
     CONFIG_DIR,
     OCR_MODELS_PATH,
     PROJECT_ROOT,
+    RESOURCE_ROOT,
     TRANSCRIPT_CLEANUP_MODELS_PATH,
 )
 
@@ -84,7 +85,7 @@ DEFAULT_TRANSLATION_PROVIDERS = (
     ("NLLB Local", "nllb"),
     ("No translation", "none"),
 )
-LANGUAGE_PACKS_DIR = PROJECT_ROOT / "ai_player" / "resources" / "languages"
+LANGUAGE_PACKS_DIR = RESOURCE_ROOT / "languages"
 LANGUAGE_PACK_FALLBACKS = ("vi", "en", "vietnamese", "english")
 PRESET_PATH_SETTING_KEYS = {
     "local_translation_model",
@@ -134,7 +135,7 @@ def available_dropdown_options(
     if options:
         return _unique_dropdown_options(options)
 
-    folder = PROJECT_ROOT / "ai_player" / "resources" / folder_name
+    folder = RESOURCE_ROOT / folder_name
     options: list[DropdownOption] = []
     if folder.exists():
         for path in sorted(folder.iterdir(), key=lambda item: item.stem.lower()):
@@ -325,7 +326,7 @@ def load_performance_presets() -> dict[str, dict[str, object]]:
         if presets:
             return presets
 
-    presets_dir = PROJECT_ROOT / "ai_player" / "resources" / "performance_presets"
+    presets_dir = RESOURCE_ROOT / "performance_presets"
     if not presets_dir.exists():
         return presets
     for path in sorted(presets_dir.glob("*.json"), key=lambda item: item.stem.lower()):

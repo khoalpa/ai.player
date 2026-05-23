@@ -33,6 +33,14 @@ class _SilentTTSProvider:
         pass
 
 
+def test_packaged_vieneu_sample_asset_names_are_ascii() -> None:
+    sample_dir = Path("ai_player/vieneu_tts/vieneu/assets/samples")
+    sample_names = [path.name for path in sample_dir.iterdir() if path.is_file()]
+
+    assert sample_names
+    assert all(name.isascii() for name in sample_names)
+
+
 @pytest.mark.parametrize("export_kind", ["audio", "video"])
 def test_release_smoke_exports_sample_media_with_transcript_tts(monkeypatch, qapp, tmp_path, export_kind: str) -> None:
     sample_video = Path("samples/demo-video.mp4")

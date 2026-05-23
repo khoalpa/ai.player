@@ -5,7 +5,13 @@ import tempfile
 from pathlib import Path
 
 from ai_player.services import demucs_separation
+from ai_player.services.media_cache import (
+    playback_compat_cached_output_valid,
+    remove_playback_compat_output,
+    write_playback_compat_metadata,
+)
 from ai_player.ui.player_window_media import PlayerMediaMixin
+from ai_player.workers import player_window_workers
 
 
 class DummyMediaMixin(PlayerMediaMixin):
@@ -38,6 +44,50 @@ def test_playback_compat_cache_key_changes_when_source_file_changes(tmp_path) ->
 
     assert PlayerMediaMixin._playback_compat_cache_key(str(source)) != first_key
     assert PlayerMediaMixin._playback_compat_output_path(str(source)) != first_output
+
+
+def test_playback_compat_cache_requires_complete_metadata(tmp_path) -> None:
+    source = tmp_path / "demo.mp4"
+    output = tmp_path / "cached.mp4"
+    source.write_bytes(b"source")
+    output.write_bytes(b"partial")
+    cache_key = PlayerMediaMixin._playback_compat_cache_key(str(source))
+
+    assert not playback_compat_cached_output_valid(output, str(source), cache_key)
+
+    write_playback_compat_metadata(output, str(source), cache_key)
+
+    assert playback_compat_cached_output_valid(output, str(source), cache_key)
+
+    remove_playback_compat_output(output)
+
+    assert not output.exists()
+    assert not output.with_suffix(".mp4.json").exists()
+
+
+def test_playback_compat_worker_removes_partial_output_when_stopped(monkeypatch, tmp_path) -> None:
+    source = tmp_path / "demo.mp4"
+    output = tmp_path / "cached.mp4"
+    source.write_bytes(b"source")
+    worker = player_window_workers.PlaybackCompatibilityWorker(str(source), output, "cache-key")
+
+    class FakeProcess:
+        def poll(self):
+            return 0
+
+        def wait(self):
+            output.write_bytes(b"partial")
+            output.with_suffix(".mp4.json").write_text("{}", encoding="utf-8")
+            worker._stop_requested = True
+            return 0
+
+    monkeypatch.setattr(player_window_workers, "ffmpeg_executable", lambda: "ffmpeg")
+    monkeypatch.setattr(player_window_workers.subprocess, "Popen", lambda _command: FakeProcess())
+
+    worker.run()
+
+    assert not output.exists()
+    assert not output.with_suffix(".mp4.json").exists()
 
 
 def test_ytdlp_cache_compatible_video_does_not_need_playback_transcode(monkeypatch, tmp_path) -> None:
