@@ -51,20 +51,23 @@ def run_cancelable_process(
     if cancel_strategy == "quit" and "stdin" not in kwargs:
         kwargs["stdin"] = subprocess.PIPE
     process = subprocess.Popen(command_text, **kwargs)
-    while True:
-        return_code = process.poll()
-        if return_code is not None:
-            break
-        if cancel_callback():
-            if cancel_strategy == "quit":
-                _quit_process(process)
-            else:
-                _terminate_process(process)
-            raise ProcessCancelled("Process cancelled")
-        time.sleep(max(0.01, poll_interval_seconds))
-    if check and return_code:
-        raise subprocess.CalledProcessError(return_code, command_text)
-    return subprocess.CompletedProcess(command_text, return_code)
+    try:
+        while True:
+            return_code = process.poll()
+            if return_code is not None:
+                break
+            if cancel_callback():
+                if cancel_strategy == "quit":
+                    _quit_process(process)
+                else:
+                    _terminate_process(process)
+                raise ProcessCancelled("Process cancelled")
+            time.sleep(max(0.01, poll_interval_seconds))
+        if check and return_code:
+            raise subprocess.CalledProcessError(return_code, command_text)
+        return subprocess.CompletedProcess(command_text, return_code)
+    finally:
+        _close_process_stdin(process)
 
 
 def run_ffmpeg_cancelable(
@@ -386,3 +389,12 @@ def _quit_process(process: subprocess.Popen, timeout_seconds: float = 5.0) -> No
         process.wait(timeout=timeout_seconds)
     except Exception:
         _terminate_process(process)
+
+
+def _close_process_stdin(process: subprocess.Popen) -> None:
+    try:
+        stdin = process.stdin
+        if stdin is not None and not stdin.closed:
+            stdin.close()
+    except Exception:
+        pass

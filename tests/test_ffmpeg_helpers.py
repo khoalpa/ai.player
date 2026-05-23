@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -125,3 +126,40 @@ def test_resolve_media_command_rewrites_ffplay(monkeypatch, tmp_path) -> None:
     command = ffmpeg_service.resolve_media_command(["ffplay", "-version"])
 
     assert command == [str(executable), "-version"]
+
+
+def test_cancelable_quit_process_closes_stdin_on_normal_exit(monkeypatch) -> None:
+    class FakeStdin:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdin = FakeStdin()
+
+        def poll(self) -> int:
+            return 0
+
+    created: list[FakeProcess] = []
+    popen_kwargs: list[object] = []
+
+    def fake_popen(_command, **kwargs):
+        popen_kwargs.append(kwargs)
+        process = FakeProcess()
+        created.append(process)
+        return process
+
+    monkeypatch.setattr(ffmpeg_service.subprocess, "Popen", fake_popen)
+
+    result = ffmpeg_service.run_cancelable_process(
+        ["ffmpeg", "-version"],
+        cancel_callback=lambda: False,
+        cancel_strategy="quit",
+    )
+
+    assert result.returncode == 0
+    assert popen_kwargs[0]["stdin"] == subprocess.PIPE
+    assert created[0].stdin.closed

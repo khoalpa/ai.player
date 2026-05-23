@@ -34,6 +34,10 @@ Use this checklist before sharing a build.
 ## Portable Build
 
 - Build with `.\scripts\build_portable.ps1`.
+- List available signing certificates with `.\scripts\build_portable.ps1 -ListCodeSigningCerts`.
+- On machines with enterprise code integrity enforcement, build with `.\scripts\build_portable.ps1 -RequireSignature`.
+- If multiple signing certificates are available, add `-CodeSigningCertThumbprint "<real-thumbprint>"`.
+- If the signing certificate is provided as a `.pfx` or `.p12` file, use `-CodeSigningPfxPath` and pass the password as a `SecureString`.
 - Launch the app from `dist\portable`.
 - Run Runtime Doctor from the portable app.
 - Record the completed smoke results in `docs\manual_smoke_results.md`.
