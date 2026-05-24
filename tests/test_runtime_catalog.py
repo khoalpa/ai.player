@@ -103,6 +103,19 @@ def test_available_ocr_models_scans_tessdata_dirs(monkeypatch, tmp_path) -> None
     assert "vi" in options[0].name
 
 
+def test_available_speaker_gender_models_scans_audio_classifiers(monkeypatch, tmp_path) -> None:
+    model_dir = tmp_path / "common-voice-gender-detection"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    (model_dir / "preprocessor_config.json").write_text("{}", encoding="utf-8")
+    (model_dir / "model.safetensors").write_text("", encoding="utf-8")
+    monkeypatch.setattr(catalog, "SPEAKER_GENDER_MODELS_PATH", tmp_path)
+
+    options = catalog.available_speaker_gender_models()
+
+    assert options == [catalog.RuntimeOption(str(model_dir.resolve()), "common-voice-gender-detection")]
+
+
 def test_read_dropdown_options_file_accepts_wrapped_options(tmp_path) -> None:
     path = tmp_path / "options.json"
     path.write_text(json.dumps({"options": [{"value": "a", "label": "A"}]}), encoding="utf-8")
@@ -138,6 +151,7 @@ def test_default_config_matches_default_performance_preset(monkeypatch) -> None:
         "AI_PLAYER_DUBBING_OVERLAP_POLICY",
         "AI_PLAYER_DUBBING_AUTO_VOICE_GENDER",
         "AI_PLAYER_DUBBING_AUTO_VOICE_GENDER_MODE",
+        "AI_PLAYER_SPEAKER_GENDER_AI_MODEL",
         "AI_PLAYER_DUBBING_LOOKAHEAD_SEGMENTS",
         "AI_PLAYER_DUBBING_MIN_READY_AHEAD_SECONDS",
         "AI_PLAYER_DUBBING_PREBUFFER_SEGMENTS",

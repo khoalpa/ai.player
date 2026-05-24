@@ -73,7 +73,7 @@ class VoiceGenderSelector:
         self._pending_count = 0
 
     def select_voice(self, reference_path: Path, *, provider: str, config: AppConfig) -> VoiceGenderDecision:
-        profile = _profile_for_mode(reference_path, self._mode)
+        profile = _profile_for_mode(reference_path, self._mode, config=config)
         gender, confidence, reason = self._smooth(profile)
         voice = config.tts_voice
         if gender in {"male", "female"}:
@@ -130,16 +130,16 @@ class VoiceGenderSelector:
         return ("unknown", confidence, f"{profile.detector}:waiting")
 
 
-def _profile_for_mode(reference_path: Path, mode: str) -> AudioProfile:
+def _profile_for_mode(reference_path: Path, mode: str, *, config: AppConfig | None = None) -> AudioProfile:
     if normalize_voice_gender_mode(mode) == "ai":
-        ai_profile = _ai_profile_reference_audio(reference_path)
+        ai_profile = _ai_profile_reference_audio(reference_path, config=config)
         if ai_profile is not None:
             return ai_profile
     return profile_reference_audio(reference_path)
 
 
-def _ai_profile_reference_audio(reference_path: Path) -> AudioProfile | None:
-    model_source = _speaker_gender_ai_model_source()
+def _ai_profile_reference_audio(reference_path: Path, *, config: AppConfig | None = None) -> AudioProfile | None:
+    model_source = _speaker_gender_ai_model_source(config)
     if not model_source:
         _LOGGER.debug("AI speaker-gender mode is enabled, but no local classifier is configured.")
         return None
@@ -180,7 +180,10 @@ def _ai_profile_reference_audio(reference_path: Path) -> AudioProfile | None:
         return None
 
 
-def _speaker_gender_ai_model_source() -> str:
+def _speaker_gender_ai_model_source(config: AppConfig | None = None) -> str:
+    configured_from_config = str(getattr(config, "speaker_gender_model", "") or "").strip()
+    if configured_from_config:
+        return configured_from_config
     configured = os.getenv("AI_PLAYER_SPEAKER_GENDER_AI_MODEL", "").strip()
     if configured:
         return configured

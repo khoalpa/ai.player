@@ -76,6 +76,14 @@ def available_vieneu_modes() -> list[VoiceOption]:
 
 def available_vieneu_models(mode: str, config: AppConfig) -> list[VieNeuModelOption]:
     selected_mode = normalize_vieneu_mode(mode)
+    if selected_mode == "remote":
+        return [
+            VieNeuModelOption(
+                "pnnbao-ump/VieNeu-TTS",
+                "VieNeu-TTS remote API",
+                False,
+            )
+        ]
     if selected_mode == "standard":
         models = _local_vieneu_standard_models()
         models.extend(

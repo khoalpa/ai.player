@@ -32,7 +32,7 @@ def test_normalize_voice_gender_mode_aliases() -> None:
 
 
 def test_balanced_selector_uses_gendered_voice(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(selector, "_profile_for_mode", lambda _path, _mode: _profile("male", 0.74))
+    monkeypatch.setattr(selector, "_profile_for_mode", lambda _path, _mode, **_kwargs: _profile("male", 0.74))
     config = AppConfig(
         dubbing_auto_voice_gender_mode="balanced",
         tts_provider="vieneu",
@@ -50,7 +50,7 @@ def test_balanced_selector_uses_gendered_voice(monkeypatch, tmp_path) -> None:
 
 
 def test_stable_selector_waits_for_repeated_gender(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(selector, "_profile_for_mode", lambda _path, _mode: _profile("female", 0.8))
+    monkeypatch.setattr(selector, "_profile_for_mode", lambda _path, _mode, **_kwargs: _profile("female", 0.8))
     config = AppConfig(
         dubbing_auto_voice_gender_mode="stable",
         tts_provider="vieneu",
@@ -72,7 +72,7 @@ def test_stable_selector_waits_for_repeated_gender(monkeypatch, tmp_path) -> Non
 
 
 def test_ai_mode_falls_back_to_pitch_profile(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(selector, "_ai_profile_reference_audio", lambda _path: None)
+    monkeypatch.setattr(selector, "_ai_profile_reference_audio", lambda _path, **_kwargs: None)
     monkeypatch.setattr(selector, "profile_reference_audio", lambda _path: _profile("female", 0.9))
     config = AppConfig(
         dubbing_auto_voice_gender_mode="ai",
@@ -104,6 +104,16 @@ def test_ai_model_source_prefers_explicit_environment(monkeypatch, tmp_path) -> 
     monkeypatch.setenv("AI_PLAYER_SPEAKER_GENDER_AI_MODEL", str(model_path))
 
     assert selector._speaker_gender_ai_model_source() == str(model_path)
+
+
+def test_ai_model_source_uses_config_before_environment(monkeypatch, tmp_path) -> None:
+    env_path = tmp_path / "env-speaker-gender"
+    config_path = tmp_path / "configured-speaker-gender"
+    monkeypatch.setenv("AI_PLAYER_SPEAKER_GENDER_AI_MODEL", str(env_path))
+
+    assert selector._speaker_gender_ai_model_source(AppConfig(speaker_gender_model=str(config_path))) == str(
+        config_path
+    )
 
 
 def test_real_audio_selector_uses_pitch_gender_when_ffprobe_has_no_duration(monkeypatch, tmp_path) -> None:
@@ -159,7 +169,7 @@ def test_real_audio_selector_keeps_default_voice_for_ambiguous_pitch(monkeypatch
 
 
 def test_selector_logs_voice_decision(monkeypatch, tmp_path, caplog) -> None:
-    monkeypatch.setattr(selector, "_profile_for_mode", lambda _path, _mode: _profile("male", 0.74))
+    monkeypatch.setattr(selector, "_profile_for_mode", lambda _path, _mode, **_kwargs: _profile("male", 0.74))
     config = AppConfig(
         dubbing_auto_voice_gender_mode="balanced",
         tts_provider="vieneu",

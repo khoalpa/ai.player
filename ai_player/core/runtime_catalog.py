@@ -10,6 +10,7 @@ from ai_player.core.config import (
     OCR_MODELS_PATH,
     PROJECT_ROOT,
     RESOURCE_ROOT,
+    SPEAKER_GENDER_MODELS_PATH,
     TRANSCRIPT_CLEANUP_MODELS_PATH,
 )
 
@@ -96,6 +97,7 @@ PRESET_PATH_SETTING_KEYS = {
     "vieneu_tts_model_name",
     "vieneu_tts_standard_codec_path",
     "ocr_model",
+    "speaker_gender_model",
     "whisper_model",
 }
 
@@ -525,6 +527,16 @@ def available_ocr_models() -> list[RuntimeOption]:
     return options
 
 
+def available_speaker_gender_models() -> list[RuntimeOption]:
+    options: list[RuntimeOption] = []
+    seen: set[str] = set()
+    if SPEAKER_GENDER_MODELS_PATH.exists():
+        for path in sorted(SPEAKER_GENDER_MODELS_PATH.iterdir(), key=lambda item: item.name.lower()):
+            if path.is_dir() and _looks_like_audio_classifier(path):
+                _append_model_option(options, seen, path, path.name)
+    return options
+
+
 def _append_model_option(options: list[RuntimeOption], seen: set[str], path: Path, name: str) -> None:
     model_id = str(path.resolve())
     if model_id in seen:
@@ -555,6 +567,14 @@ def _looks_like_whisper_model(path: Path) -> bool:
     return (path / "config.json").exists() and (
         (path / "model.bin").exists() or any(path.glob("*.bin")) or any(path.glob("*.safetensors"))
     )
+
+
+def _looks_like_audio_classifier(path: Path) -> bool:
+    return (path / "config.json").exists() and (
+        (path / "preprocessor_config.json").exists()
+        or (path / "feature_extractor_config.json").exists()
+        or (path / "processor_config.json").exists()
+    ) and (any(path.glob("*.safetensors")) or any(path.glob("*.bin")) or any(path.glob("model-*")))
 
 
 def _tessdata_candidates() -> list[Path]:

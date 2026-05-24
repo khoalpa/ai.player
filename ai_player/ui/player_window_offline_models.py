@@ -27,7 +27,7 @@ from ai_player.core.config import (
     MODEL_ROOT,
     PROJECT_ROOT,
 )
-from ai_player.core.runtime_catalog import available_asr_models, available_ocr_models
+from ai_player.core.runtime_catalog import available_asr_models, available_ocr_models, available_speaker_gender_models
 from ai_player.services.translation import available_translation_models
 
 
@@ -383,6 +383,16 @@ class PlayerOfflineModelsMixin:
             if current and self._ocr_model_combo.findData(current) < 0:
                 self._ocr_model_combo.addItem(current, current)
             self._ocr_model_combo.setCurrentIndex(max(0, self._ocr_model_combo.findData(current)))
+        if hasattr(self, "_speaker_gender_model_combo"):
+            current = self._selected_speaker_gender_model()
+            self._speaker_gender_model_combo.clear()
+            for model in available_speaker_gender_models():
+                self._speaker_gender_model_combo.addItem(model.name, model.id)
+            if current and self._speaker_gender_model_combo.findData(current) < 0:
+                self._speaker_gender_model_combo.addItem(current, current)
+            self._speaker_gender_model_combo.setCurrentIndex(
+                max(0, self._speaker_gender_model_combo.findData(current))
+            )
         if hasattr(self, "_translator_combo") and hasattr(self, "_nllb_model_combo"):
             self._refresh_translation_models(self._selected_nllb_model())
             if self._nllb_model_combo.count() == 0:

@@ -32,6 +32,7 @@ from ai_player.core.runtime_catalog import (
     available_local_llm_options,
     available_ocr_models,
     available_ocr_providers,
+    available_speaker_gender_models,
     available_translation_provider_options,
 )
 from ai_player.services.capture_sources import list_capture_device_options
@@ -39,6 +40,7 @@ from ai_player.services.source_voice_filter import (
     SOURCE_VOICE_FILTER_DEMUCS_MODELS,
     normalize_source_voice_filter_model,
 )
+from ai_player.services.speaker_voice_selector import normalize_voice_gender_mode
 from ai_player.services.translation import normalize_translator_provider
 from ai_player.services.tts import available_tts_providers, available_vieneu_modes, normalize_tts_provider
 from ai_player.ui.player_window_utils import (
@@ -494,6 +496,8 @@ class PlayerLayoutMixin:
         self._preserve_terms_check.setProperty("i18n_key", "keep_terms")
         self._preserve_terms_check.setChecked(self._config.preserve_source_terms)
         self._set_preserve_terms_tooltip()
+        self._preserved_terms_file_edit = QLineEdit(self._config.preserved_source_terms_file)
+        self._preserved_terms_file_edit.setReadOnly(True)
         self._whisper_offline_check = QCheckBox(self._tr("whisper_offline"))
         self._whisper_offline_check.setProperty("i18n_key", "whisper_offline")
         self._whisper_offline_check.setChecked(self._config.whisper_offline)
@@ -556,10 +560,31 @@ class PlayerLayoutMixin:
         self._auto_voice_gender_mode_combo.addItem(self._tr("voice_gender_mode_sensitive"), "sensitive")
         self._auto_voice_gender_mode_combo.addItem(self._tr("voice_gender_mode_ai"), "ai")
         self._auto_voice_gender_mode_combo.setCurrentIndex(
-            max(0, self._auto_voice_gender_mode_combo.findData(self._config.dubbing_auto_voice_gender_mode))
+            max(
+                0,
+                self._auto_voice_gender_mode_combo.findData(
+                    normalize_voice_gender_mode(self._config.dubbing_auto_voice_gender_mode)
+                ),
+            )
         )
         self._auto_voice_gender_mode_combo.setToolTip(self._tr("voice_gender_mode_tooltip"))
         self._auto_voice_gender_mode_combo.setProperty("i18n_tooltip_key", "voice_gender_mode_tooltip")
+        self._auto_voice_gender_mode_combo.currentIndexChanged.connect(self._sync_auto_voice_controls_enabled)
+        self._speaker_gender_model_combo = QComboBox()
+        self._compact_combo(self._speaker_gender_model_combo)
+        self._speaker_gender_model_combo.setEditable(True)
+        for model in available_speaker_gender_models():
+            self._speaker_gender_model_combo.addItem(model.name, model.id)
+        speaker_gender_model_index = self._speaker_gender_model_combo.findData(self._config.speaker_gender_model)
+        if speaker_gender_model_index < 0 and self._config.speaker_gender_model:
+            self._speaker_gender_model_combo.addItem(
+                self._config.speaker_gender_model,
+                self._config.speaker_gender_model,
+            )
+            speaker_gender_model_index = self._speaker_gender_model_combo.findData(self._config.speaker_gender_model)
+        self._speaker_gender_model_combo.setCurrentIndex(max(0, speaker_gender_model_index))
+        self._speaker_gender_model_combo.setToolTip(self._tr("speaker_gender_model_tooltip"))
+        self._speaker_gender_model_combo.setProperty("i18n_tooltip_key", "speaker_gender_model_tooltip")
         self._auto_match_audio_check = QCheckBox(self._tr("auto_match"))
         self._auto_match_audio_check.setProperty("i18n_key", "auto_match")
         self._auto_match_audio_check.setChecked(self._config.dubbing_auto_match_audio)
@@ -715,6 +740,13 @@ class PlayerLayoutMixin:
         self._transcript_cleanup_api_key_edit = QLineEdit(self._config.transcript_cleanup_api_key)
         self._transcript_cleanup_api_key_edit.setPlaceholderText(self._tr("cleanup_api_key_placeholder"))
         self._transcript_cleanup_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._cleanup_timeout_slider, self._cleanup_timeout_value = self._labeled_slider(
+            minimum=1,
+            maximum=120,
+            step=1,
+            value=int(self._config.transcript_cleanup_timeout_seconds),
+            formatter=lambda value: f"{value} s",
+        )
         self._transcript_cleanup_mode_combo.currentIndexChanged.connect(self._sync_transcript_cleanup_controls)
         self._transcript_cleanup_provider_combo.currentIndexChanged.connect(self._sync_transcript_cleanup_controls)
         self._vieneu_temperature_slider, self._vieneu_temperature_value = self._labeled_slider(
@@ -731,6 +763,84 @@ class PlayerLayoutMixin:
             value=self._config.vieneu_tts_max_chars_chunk,
             formatter=lambda value: f"{value}",
         )
+        self._runtime_warmup_enabled_check = QCheckBox(self._tr("runtime_warmup_enabled"))
+        self._runtime_warmup_enabled_check.setProperty("i18n_key", "runtime_warmup_enabled")
+        self._runtime_warmup_enabled_check.setChecked(self._config.runtime_warmup_enabled)
+        self._runtime_warmup_whisper_check = QCheckBox(self._tr("runtime_warmup_whisper"))
+        self._runtime_warmup_whisper_check.setProperty("i18n_key", "runtime_warmup_whisper")
+        self._runtime_warmup_whisper_check.setChecked(self._config.runtime_warmup_whisper)
+        self._runtime_warmup_translation_check = QCheckBox(self._tr("runtime_warmup_translation"))
+        self._runtime_warmup_translation_check.setProperty("i18n_key", "runtime_warmup_translation")
+        self._runtime_warmup_translation_check.setChecked(self._config.runtime_warmup_translation)
+        self._runtime_warmup_tts_check = QCheckBox(self._tr("runtime_warmup_tts"))
+        self._runtime_warmup_tts_check.setProperty("i18n_key", "runtime_warmup_tts")
+        self._runtime_warmup_tts_check.setChecked(self._config.runtime_warmup_tts)
+
+        self._ocr_fps_slider, self._ocr_fps_value = self._labeled_slider(
+            minimum=2,
+            maximum=100,
+            step=1,
+            value=int(self._config.ocr_fps * 10),
+            formatter=lambda value: f"{value / 10:.1f}",
+        )
+        self._ocr_crop_top_slider, self._ocr_crop_top_value = self._labeled_slider(
+            minimum=0,
+            maximum=95,
+            step=1,
+            value=int(self._config.ocr_crop_top_ratio * 100),
+            formatter=lambda value: f"{value} %",
+        )
+        self._ocr_crop_height_slider, self._ocr_crop_height_value = self._labeled_slider(
+            minimum=5,
+            maximum=100,
+            step=1,
+            value=int(self._config.ocr_crop_height_ratio * 100),
+            formatter=lambda value: f"{value} %",
+        )
+        self._ocr_scale_slider, self._ocr_scale_value = self._labeled_slider(
+            minimum=100,
+            maximum=400,
+            step=25,
+            value=int(self._config.ocr_scale * 100),
+            formatter=lambda value: f"{value / 100:.2f}x",
+        )
+        self._ocr_psm_slider, self._ocr_psm_value = self._labeled_slider(
+            minimum=3,
+            maximum=13,
+            step=1,
+            value=int(self._config.ocr_psm),
+            formatter=lambda value: f"{value}",
+        )
+        self._ocr_threshold_check = QCheckBox(self._tr("ocr_threshold"))
+        self._ocr_threshold_check.setProperty("i18n_key", "ocr_threshold")
+        self._ocr_threshold_check.setChecked(self._config.ocr_threshold)
+        self._ocr_min_confidence_slider, self._ocr_min_confidence_value = self._labeled_slider(
+            minimum=0,
+            maximum=100,
+            step=5,
+            value=int(self._config.ocr_min_confidence),
+            formatter=lambda value: f"{value} %",
+        )
+        self._ocr_merge_similarity_slider, self._ocr_merge_similarity_value = self._labeled_slider(
+            minimum=0,
+            maximum=100,
+            step=1,
+            value=int(self._config.ocr_merge_similarity * 100),
+            formatter=lambda value: f"{value} %",
+        )
+
+        self._vieneu_core_combo = QComboBox()
+        self._compact_combo(self._vieneu_core_combo)
+        self._vieneu_core_combo.addItem(self._tr("vieneu_core_local"), "local")
+        self._vieneu_core_combo.addItem(self._tr("vieneu_core_remote"), "remote")
+        self._vieneu_core_combo.setCurrentIndex(max(0, self._vieneu_core_combo.findData(self._config.vieneu_tts_core)))
+        self._vieneu_path_edit = QLineEdit(self._config.vieneu_tts_path)
+        self._vieneu_python_edit = QLineEdit(self._config.vieneu_tts_python)
+        self._vieneu_api_base_edit = QLineEdit(self._config.vieneu_tts_api_base)
+        self._vieneu_api_base_edit.setPlaceholderText("http://localhost:23333/v1")
+        self._vieneu_decoder_path_edit = QLineEdit(self._config.vieneu_tts_decoder_path)
+        self._vieneu_encoder_path_edit = QLineEdit(self._config.vieneu_tts_encoder_path)
+        self._vieneu_standard_codec_path_edit = QLineEdit(self._config.vieneu_tts_standard_codec_path)
 
         preset_row = QWidget()
         preset_layout = QHBoxLayout(preset_row)
@@ -780,16 +890,16 @@ class PlayerLayoutMixin:
         basic_processing_grid.addWidget(self._source_filter_check, 0, 0, 1, 2)
         basic_processing_grid.addWidget(self._field_label("source_filter_provider"), 1, 0)
         basic_processing_grid.addWidget(self._source_filter_mode_combo, 1, 1)
-        basic_processing_grid.addWidget(self._field_label("source_filter_model"), 2, 0)
-        basic_processing_grid.addWidget(self._source_filter_model_combo, 2, 1)
-        basic_processing_grid.addWidget(self._field_label("export_video_quality"), 3, 0)
-        basic_processing_grid.addWidget(self._export_video_quality_combo, 3, 1)
-        basic_processing_grid.addWidget(self._video_url_full_cache_check, 4, 0, 1, 2)
+        basic_processing_grid.addWidget(self._field_label("export_video_quality"), 2, 0)
+        basic_processing_grid.addWidget(self._export_video_quality_combo, 2, 1)
+        basic_processing_grid.addWidget(self._video_url_full_cache_check, 3, 0, 1, 2)
 
         advanced_terms_grid = QGridLayout()
         advanced_terms_grid.setHorizontalSpacing(8)
         advanced_terms_grid.setVerticalSpacing(7)
         advanced_terms_grid.addWidget(self._preserve_terms_check, 0, 0, 1, 2)
+        advanced_terms_grid.addWidget(self._field_label("preserved_terms"), 1, 0)
+        advanced_terms_grid.addWidget(self._preserved_terms_file_edit, 1, 1)
 
         advanced_timing_grid = QGridLayout()
         advanced_timing_grid.setHorizontalSpacing(8)
@@ -861,6 +971,21 @@ class PlayerLayoutMixin:
         ocr_grid.addWidget(self._ocr_provider_combo, 0, 1)
         ocr_grid.addWidget(self._field_label("ocr_model"), 1, 0)
         ocr_grid.addWidget(self._ocr_model_combo, 1, 1)
+        ocr_grid.addWidget(self._field_label("ocr_fps"), 2, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_fps_slider, self._ocr_fps_value), 2, 1)
+        ocr_grid.addWidget(self._field_label("ocr_crop_top"), 3, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_crop_top_slider, self._ocr_crop_top_value), 3, 1)
+        ocr_grid.addWidget(self._field_label("ocr_crop_height"), 4, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_crop_height_slider, self._ocr_crop_height_value), 4, 1)
+        ocr_grid.addWidget(self._field_label("ocr_scale"), 5, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_scale_slider, self._ocr_scale_value), 5, 1)
+        ocr_grid.addWidget(self._field_label("ocr_psm"), 6, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_psm_slider, self._ocr_psm_value), 6, 1)
+        ocr_grid.addWidget(self._ocr_threshold_check, 7, 0, 1, 2)
+        ocr_grid.addWidget(self._field_label("ocr_min_confidence"), 8, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_min_confidence_slider, self._ocr_min_confidence_value), 8, 1)
+        ocr_grid.addWidget(self._field_label("ocr_merge_similarity"), 9, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_merge_similarity_slider, self._ocr_merge_similarity_value), 9, 1)
 
         translation_grid = QGridLayout()
         translation_grid.setHorizontalSpacing(8)
@@ -890,17 +1015,35 @@ class PlayerLayoutMixin:
         tts_grid.addWidget(self._vieneu_mode_combo, 1, 1)
         tts_grid.addWidget(self._tts_model_label, 2, 0)
         tts_grid.addWidget(self._vieneu_model_combo, 2, 1)
-        tts_grid.addWidget(self._field_label("vieneu_runtime"), 3, 0)
-        tts_grid.addWidget(self._vieneu_runtime_combo, 3, 1)
-        tts_grid.addWidget(self._field_label("vieneu_device"), 4, 0)
-        tts_grid.addWidget(self._vieneu_device_combo, 4, 1)
-        tts_grid.addWidget(self._field_label("vieneu_backend"), 5, 0)
-        tts_grid.addWidget(self._vieneu_backend_combo, 5, 1)
-        tts_grid.addWidget(self._field_label("vieneu_temperature"), 6, 0)
-        tts_grid.addWidget(self._slider_row(self._vieneu_temperature_slider, self._vieneu_temperature_value), 6, 1)
-        tts_grid.addWidget(self._field_label("tts_max_chars"), 7, 0)
-        tts_grid.addWidget(self._slider_row(self._vieneu_max_chars_slider, self._vieneu_max_chars_value), 7, 1)
-        tts_grid.addWidget(self._vieneu_offline_check, 8, 0, 1, 2)
+        tts_grid.addWidget(self._field_label("vieneu_core"), 3, 0)
+        tts_grid.addWidget(self._vieneu_core_combo, 3, 1)
+        tts_grid.addWidget(self._field_label("vieneu_runtime"), 4, 0)
+        tts_grid.addWidget(self._vieneu_runtime_combo, 4, 1)
+        tts_grid.addWidget(self._field_label("vieneu_device"), 5, 0)
+        tts_grid.addWidget(self._vieneu_device_combo, 5, 1)
+        tts_grid.addWidget(self._field_label("vieneu_backend"), 6, 0)
+        tts_grid.addWidget(self._vieneu_backend_combo, 6, 1)
+        tts_grid.addWidget(self._field_label("vieneu_temperature"), 7, 0)
+        tts_grid.addWidget(self._slider_row(self._vieneu_temperature_slider, self._vieneu_temperature_value), 7, 1)
+        tts_grid.addWidget(self._field_label("tts_max_chars"), 8, 0)
+        tts_grid.addWidget(self._slider_row(self._vieneu_max_chars_slider, self._vieneu_max_chars_value), 8, 1)
+        tts_grid.addWidget(self._vieneu_offline_check, 9, 0, 1, 2)
+
+        tts_advanced_grid = QGridLayout()
+        tts_advanced_grid.setHorizontalSpacing(8)
+        tts_advanced_grid.setVerticalSpacing(7)
+        tts_advanced_grid.addWidget(self._field_label("vieneu_path"), 0, 0)
+        tts_advanced_grid.addWidget(self._vieneu_path_edit, 0, 1)
+        tts_advanced_grid.addWidget(self._field_label("vieneu_python"), 1, 0)
+        tts_advanced_grid.addWidget(self._vieneu_python_edit, 1, 1)
+        tts_advanced_grid.addWidget(self._field_label("vieneu_api_base"), 2, 0)
+        tts_advanced_grid.addWidget(self._vieneu_api_base_edit, 2, 1)
+        tts_advanced_grid.addWidget(self._field_label("vieneu_decoder_path"), 3, 0)
+        tts_advanced_grid.addWidget(self._vieneu_decoder_path_edit, 3, 1)
+        tts_advanced_grid.addWidget(self._field_label("vieneu_encoder_path"), 4, 0)
+        tts_advanced_grid.addWidget(self._vieneu_encoder_path_edit, 4, 1)
+        tts_advanced_grid.addWidget(self._field_label("vieneu_standard_codec_path"), 5, 0)
+        tts_advanced_grid.addWidget(self._vieneu_standard_codec_path_edit, 5, 1)
 
         cleanup_grid = QGridLayout()
         cleanup_grid.setHorizontalSpacing(8)
@@ -915,6 +1058,16 @@ class PlayerLayoutMixin:
         cleanup_grid.addWidget(self._transcript_cleanup_api_base_edit, 3, 1)
         cleanup_grid.addWidget(self._field_label("cleanup_api_key"), 4, 0)
         cleanup_grid.addWidget(self._transcript_cleanup_api_key_edit, 4, 1)
+        cleanup_grid.addWidget(self._field_label("cleanup_timeout"), 5, 0)
+        cleanup_grid.addWidget(self._slider_row(self._cleanup_timeout_slider, self._cleanup_timeout_value), 5, 1)
+
+        voice_ai_grid = QGridLayout()
+        voice_ai_grid.setHorizontalSpacing(8)
+        voice_ai_grid.setVerticalSpacing(7)
+        voice_ai_grid.addWidget(self._field_label("speaker_gender_model"), 0, 0)
+        voice_ai_grid.addWidget(self._speaker_gender_model_combo, 0, 1)
+        voice_ai_grid.addWidget(self._field_label("source_filter_model"), 1, 0)
+        voice_ai_grid.addWidget(self._source_filter_model_combo, 1, 1)
 
         self._transcript = QTextEdit()
         self._transcript.setObjectName("transcript")
@@ -976,14 +1129,18 @@ class PlayerLayoutMixin:
         models_layout.setSpacing(10)
         models_layout.addWidget(self._section_title("asr_group"))
         models_layout.addLayout(asr_grid)
-        models_layout.addWidget(self._section_title("ocr_group"))
-        models_layout.addLayout(ocr_grid)
-        models_layout.addWidget(self._section_title("cleanup_group"))
-        models_layout.addLayout(cleanup_grid)
         models_layout.addWidget(self._section_title("translation_group"))
         models_layout.addLayout(translation_grid)
         models_layout.addWidget(self._section_title("tts_group"))
         models_layout.addLayout(tts_grid)
+        models_layout.addWidget(self._section_title("tts_advanced_group"))
+        models_layout.addLayout(tts_advanced_grid)
+        models_layout.addWidget(self._section_title("voice_ai_group"))
+        models_layout.addLayout(voice_ai_grid)
+        models_layout.addWidget(self._section_title("ocr_group"))
+        models_layout.addLayout(ocr_grid)
+        models_layout.addWidget(self._section_title("cleanup_group"))
+        models_layout.addLayout(cleanup_grid)
         models_layout.addStretch(1)
 
         advanced_tab = QWidget()
@@ -1035,6 +1192,7 @@ class PlayerLayoutMixin:
         self._sync_auto_match_controls_enabled()
         self._sync_source_filter_controls()
         self._sync_transcript_cleanup_controls()
+        self._sync_vieneu_advanced_controls()
         self._apply_control_tooltips()
         self._performance_preset_combo.currentIndexChanged.connect(self._apply_selected_performance_preset)
         self._connect_settings_autosave()
@@ -1082,8 +1240,17 @@ class PlayerLayoutMixin:
             ("_asr_model_combo", "asr_model"),
             ("_ocr_provider_combo", "ocr_provider"),
             ("_ocr_model_combo", "ocr_model"),
+            ("_ocr_fps_slider", "ocr_fps"),
+            ("_ocr_crop_top_slider", "ocr_crop_top"),
+            ("_ocr_crop_height_slider", "ocr_crop_height"),
+            ("_ocr_scale_slider", "ocr_scale"),
+            ("_ocr_psm_slider", "ocr_psm"),
+            ("_ocr_threshold_check", "ocr_threshold"),
+            ("_ocr_min_confidence_slider", "ocr_min_confidence"),
+            ("_ocr_merge_similarity_slider", "ocr_merge_similarity"),
             ("_translator_combo", "translator"),
             ("_nllb_model_combo", "translation_model"),
+            ("_speaker_gender_model_combo", "speaker_gender_model_tooltip"),
             ("_performance_preset_combo", "preset"),
             ("_export_video_quality_combo", "export_video_quality"),
             ("_translation_device_combo", "translator_device"),
@@ -1095,6 +1262,7 @@ class PlayerLayoutMixin:
             ("_tts_provider_combo", "tts"),
             ("_vieneu_mode_combo", "mode"),
             ("_vieneu_model_combo", "model"),
+            ("_vieneu_core_combo", "vieneu_core"),
             ("_tts_voice_combo", "voice_default"),
             ("_tts_male_voice_combo", "male_voice"),
             ("_tts_female_voice_combo", "female_voice"),
@@ -1126,6 +1294,12 @@ class PlayerLayoutMixin:
             ("_vieneu_backend_combo", "vieneu_backend"),
             ("_vieneu_temperature_slider", "vieneu_temperature"),
             ("_vieneu_max_chars_slider", "tts_max_chars"),
+            ("_vieneu_path_edit", "vieneu_path"),
+            ("_vieneu_python_edit", "vieneu_python"),
+            ("_vieneu_api_base_edit", "vieneu_api_base"),
+            ("_vieneu_decoder_path_edit", "vieneu_decoder_path"),
+            ("_vieneu_encoder_path_edit", "vieneu_encoder_path"),
+            ("_vieneu_standard_codec_path_edit", "vieneu_standard_codec_path"),
             ("_capture_backend_combo", "capture_backend"),
             ("_capture_system_device_combo", "system_audio"),
             ("_capture_microphone_device_combo", "microphone"),
@@ -1134,6 +1308,11 @@ class PlayerLayoutMixin:
             ("_transcript_cleanup_model_combo", "cleanup_model_tooltip"),
             ("_transcript_cleanup_api_base_edit", "cleanup_api_base_placeholder"),
             ("_transcript_cleanup_api_key_edit", "cleanup_api_key_placeholder"),
+            ("_cleanup_timeout_slider", "cleanup_timeout"),
+            ("_runtime_warmup_enabled_check", "runtime_warmup_enabled"),
+            ("_runtime_warmup_whisper_check", "runtime_warmup_whisper"),
+            ("_runtime_warmup_translation_check", "runtime_warmup_translation"),
+            ("_runtime_warmup_tts_check", "runtime_warmup_tts"),
             ("_transcript_view_combo", "show_transcript"),
             ("_transcript_type_combo", "transcript_type"),
             ("_export_transcript_button", "export_transcript"),
@@ -1151,3 +1330,5 @@ class PlayerLayoutMixin:
             return
         tooltip = self._tr("preserved_terms_file_tooltip").format(path=self._config.preserved_source_terms_file)
         self._preserve_terms_check.setToolTip(tooltip)
+        if hasattr(self, "_preserved_terms_file_edit"):
+            self._preserved_terms_file_edit.setToolTip(tooltip)

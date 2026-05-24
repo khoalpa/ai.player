@@ -223,6 +223,7 @@ class AppConfig:
     dubbing_overlap_policy: str = "smart"
     dubbing_auto_voice_gender: bool = True
     dubbing_auto_voice_gender_mode: str = "balanced"
+    speaker_gender_model: str = field(default_factory=lambda: str(LOCAL_SPEAKER_GENDER_MODEL_PATH))
     dubbing_speed_min: float = 0.92
     dubbing_speed_max: float = 1.12
     dubbing_volume_gain_min_db: float = -8.0
@@ -323,6 +324,7 @@ _APP_CONFIG_ENV_FIELDS = {
     "dubbing_overlap_policy": ("AI_PLAYER_DUBBING_OVERLAP_POLICY", "str"),
     "dubbing_auto_voice_gender": ("AI_PLAYER_DUBBING_AUTO_VOICE_GENDER", "bool"),
     "dubbing_auto_voice_gender_mode": ("AI_PLAYER_DUBBING_AUTO_VOICE_GENDER_MODE", "str"),
+    "speaker_gender_model": ("AI_PLAYER_SPEAKER_GENDER_AI_MODEL", "str"),
     "dubbing_speed_min": ("AI_PLAYER_DUBBING_SPEED_MIN", "float"),
     "dubbing_speed_max": ("AI_PLAYER_DUBBING_SPEED_MAX", "float"),
     "dubbing_volume_gain_min_db": ("AI_PLAYER_DUBBING_VOLUME_GAIN_MIN_DB", "float"),

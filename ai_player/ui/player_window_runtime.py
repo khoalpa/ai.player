@@ -46,6 +46,16 @@ class PlayerRuntimeMixin:
         summary.setWordWrap(True)
         layout.addWidget(summary)
 
+        warmup_grid = QGridLayout()
+        warmup_grid.setHorizontalSpacing(8)
+        warmup_grid.setVerticalSpacing(4)
+        warmup_grid.addWidget(self._section_title("runtime_warmup_group"), 0, 0, 1, 2)
+        warmup_grid.addWidget(self._runtime_warmup_enabled_check, 1, 0, 1, 2)
+        warmup_grid.addWidget(self._runtime_warmup_whisper_check, 2, 0)
+        warmup_grid.addWidget(self._runtime_warmup_translation_check, 2, 1)
+        warmup_grid.addWidget(self._runtime_warmup_tts_check, 3, 0, 1, 2)
+        layout.addLayout(warmup_grid)
+
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(7)

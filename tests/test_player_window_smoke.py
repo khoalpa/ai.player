@@ -64,6 +64,61 @@ def test_player_window_scaled_preset_value_ignores_bad_numbers() -> None:
     assert PlayerWindow._scaled_preset_value("bad", fallback=0.55, scale=100) == 55
 
 
+def test_player_window_exposes_advanced_config_controls(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window._runtime_warmup_enabled_check.setChecked(False)
+        window._runtime_warmup_whisper_check.setChecked(False)
+        window._runtime_warmup_translation_check.setChecked(False)
+        window._runtime_warmup_tts_check.setChecked(True)
+        window._cleanup_timeout_slider.setValue(45)
+        window._ocr_fps_slider.setValue(35)
+        window._ocr_crop_top_slider.setValue(42)
+        window._ocr_crop_height_slider.setValue(33)
+        window._ocr_scale_slider.setValue(175)
+        window._ocr_psm_slider.setValue(7)
+        window._ocr_threshold_check.setChecked(False)
+        window._ocr_min_confidence_slider.setValue(55)
+        window._ocr_merge_similarity_slider.setValue(91)
+        window._set_combo_data(window._vieneu_core_combo, "remote")
+        window._vieneu_path_edit.setText("D:/vieneu")
+        window._vieneu_python_edit.setText("D:/Python/python.exe")
+        window._vieneu_api_base_edit.setText("http://localhost:23333/v1")
+        window._vieneu_decoder_path_edit.setText("D:/models/decoder.onnx")
+        window._vieneu_encoder_path_edit.setText("D:/models/encoder.onnx")
+        window._vieneu_standard_codec_path_edit.setText("D:/models/codec")
+
+        config = window._current_runtime_config()
+
+        assert config.runtime_warmup_enabled is False
+        assert config.runtime_warmup_whisper is False
+        assert config.runtime_warmup_translation is False
+        assert config.runtime_warmup_tts is True
+        assert config.transcript_cleanup_timeout_seconds == 45
+        assert config.ocr_fps == 3.5
+        assert config.ocr_crop_top_ratio == 0.42
+        assert config.ocr_crop_height_ratio == 0.33
+        assert config.ocr_scale == 1.75
+        assert config.ocr_psm == 7
+        assert config.ocr_threshold is False
+        assert config.ocr_min_confidence == 55
+        assert config.ocr_merge_similarity == 0.91
+        assert config.vieneu_tts_core == "remote"
+        assert config.vieneu_tts_model_name == "pnnbao-ump/VieNeu-TTS"
+        assert config.vieneu_tts_offline is False
+        assert config.vieneu_tts_path == "D:/vieneu"
+        assert config.vieneu_tts_python == "D:/Python/python.exe"
+        assert config.vieneu_tts_api_base == "http://localhost:23333/v1"
+        assert config.vieneu_tts_decoder_path == "D:/models/decoder.onnx"
+        assert config.vieneu_tts_encoder_path == "D:/models/encoder.onnx"
+        assert config.vieneu_tts_standard_codec_path == "D:/models/codec"
+        assert window._vieneu_api_base_edit.isEnabled()
+        assert not window._vieneu_offline_check.isEnabled()
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
 def test_player_window_event_loop_smoke(qapp) -> None:
     window = PlayerWindow()
     try:

@@ -236,8 +236,9 @@ class UserGuideMixin:
                 + self._option_reference_rows(self._vieneu_backend_combo, kind_backend, "vieneu_backend"),
             ),
             (
-                self._tr("source_filter"),
-                self._option_reference_rows(self._source_filter_mode_combo, kind_provider, "source_filter_provider")
+                self._tr("voice_ai_group"),
+                self._option_reference_rows(self._speaker_gender_model_combo, kind_model, "speaker_gender_model")
+                + self._option_reference_rows(self._source_filter_mode_combo, kind_provider, "source_filter_provider")
                 + self._option_reference_rows(self._source_filter_model_combo, kind_model, "source_filter_model"),
             ),
         ]
@@ -323,7 +324,6 @@ class UserGuideMixin:
                 [
                     self._setting_row("source_filter", self._bool_text(config.original_audio_voice_filter), notes["source_filter"]),
                     self._setting_row("source_filter_provider", self._combo_text(self._source_filter_mode_combo), notes["source_filter_provider"]),
-                    self._setting_row("source_filter_model", self._combo_text(self._source_filter_model_combo), notes["source_filter_model"]),
                     self._setting_row("export_video_quality", self._combo_text(self._export_video_quality_combo), notes["export_video_quality"]),
                     self._setting_row("video_url_full_cache", self._bool_text(config.video_url_full_cache), notes["video_url_full_cache"]),
                 ],
@@ -380,6 +380,13 @@ class UserGuideMixin:
                     self._setting_row("vieneu_temperature", f"{config.vieneu_tts_temperature:.2f}", notes["vieneu_temperature"]),
                     self._setting_row("tts_max_chars", str(config.vieneu_tts_max_chars_chunk), self._guide_text("tts_chars_note")),
                     self._setting_row("vieneu_offline", self._bool_text(config.vieneu_tts_offline), notes["vieneu_offline"]),
+                ],
+            ),
+            (
+                self._tr("voice_ai_group"),
+                [
+                    self._setting_row("speaker_gender_model", self._combo_text(self._speaker_gender_model_combo), notes["speaker_gender_model"]),
+                    self._setting_row("source_filter_model", self._combo_text(self._source_filter_model_combo), notes["source_filter_model"]),
                 ],
             ),
             (
@@ -614,6 +621,7 @@ _GUIDE_TEXT = {
             "playback_quality": "Chất lượng khung hình khi mở video từ URL.",
             "source_filter": "Giảm giọng nói trong âm nguồn để nhường chỗ cho giọng đích.",
             "source_filter_provider": "Cách lọc giọng nguồn: nhanh nhẹ hoặc tách giọng bằng AI.",
+            "speaker_gender_model": "Model local dùng khi Cách chọn giọng là AI.",
             "source_filter_model": "Model dùng khi lọc giọng nguồn bằng AI.",
             "export_video_quality": "Preset chất lượng khi xuất video lồng tiếng hoặc video tài liệu.",
             "video_url_full_cache": "Tải video URL về cache trước khi phát để ổn định hơn, đổi lại chờ lâu hơn.",
@@ -733,6 +741,10 @@ _GUIDE_TEXT = {
                 "vieneu_model": {
                     "description": "Model VieNeu-TTS tạo giọng nói tiếng Việt/local.",
                     "when": "Dùng khi cần tạo giọng local/offline hoặc muốn kiểm soát runtime TTS.",
+                },
+                "speaker_gender_model": {
+                    "description": "Model phân loại giới tính giọng nói dùng cho chế độ chọn giọng AI.",
+                    "when": "Dùng khi muốn tự đổi giữa giọng nam và nữ bằng model local thay vì chỉ đo pitch.",
                 },
                 "source_filter_model": {
                     "description": "Model tách/lọc giọng nguồn để giảm lời thoại gốc.",
@@ -1058,6 +1070,7 @@ _GUIDE_TEXT = {
             "playback_quality": "Frame quality used when opening video URLs.",
             "source_filter": "Reduces speech in the source audio to make room for target voice.",
             "source_filter_provider": "Voice filtering method: light/fast filtering or AI separation.",
+            "speaker_gender_model": "Local model used when Voice match mode is AI.",
             "source_filter_model": "Model used when source voice filtering runs through AI.",
             "export_video_quality": "Quality preset for dubbed video or document video export.",
             "video_url_full_cache": "Caches URL video before playback for stability, at the cost of a longer wait.",
@@ -1177,6 +1190,10 @@ _GUIDE_TEXT = {
                 "vieneu_model": {
                     "description": "VieNeu-TTS model for local Vietnamese voice generation.",
                     "when": "Use when local/offline voice generation or runtime control is needed.",
+                },
+                "speaker_gender_model": {
+                    "description": "Voice-gender classifier used by the AI voice match mode.",
+                    "when": "Use when you want local model-based switching between male and female voices.",
                 },
                 "source_filter_model": {
                     "description": "Model used to separate/filter source voice.",

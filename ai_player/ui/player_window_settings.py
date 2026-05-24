@@ -47,7 +47,7 @@ class PlayerSettingsMixin:
         previous_model = self._selected_vieneu_model() or self._config.vieneu_tts_model_name
         self._vieneu_model_combo.clear()
 
-        for model in available_vieneu_models(self._selected_vieneu_mode(), self._config):
+        for model in available_vieneu_models(self._selected_vieneu_model_mode(), self._config):
             self._vieneu_model_combo.addItem(
                 model.name,
                 {"id": model.id, "offline": model.offline},
@@ -101,6 +101,8 @@ class PlayerSettingsMixin:
         enabled = self._auto_voice_gender_check.isChecked()
         for widget in (self._auto_voice_gender_mode_combo, self._tts_male_voice_combo, self._tts_female_voice_combo):
             widget.setEnabled(enabled)
+        if hasattr(self, "_speaker_gender_model_combo"):
+            self._speaker_gender_model_combo.setEnabled(enabled and self._selected_auto_voice_gender_mode() == "ai")
 
     def _sync_auto_match_controls_enabled(self, *_args) -> None:
         if not hasattr(self, "_auto_match_audio_check"):
@@ -290,6 +292,11 @@ class PlayerSettingsMixin:
             return normalize_voice_gender_mode(self._auto_voice_gender_mode_combo.currentData())
         return normalize_voice_gender_mode(self._config.dubbing_auto_voice_gender_mode)
 
+    def _selected_speaker_gender_model(self) -> str:
+        if hasattr(self, "_speaker_gender_model_combo"):
+            return self._combo_value(self._speaker_gender_model_combo)
+        return self._config.speaker_gender_model
+
     def _selected_overlap_policy(self) -> str:
         if hasattr(self, "_overlap_policy_combo"):
             return normalize_overlap_policy(self._overlap_policy_combo.currentData())
@@ -297,6 +304,9 @@ class PlayerSettingsMixin:
 
     def _selected_vieneu_mode(self) -> str:
         return self._vieneu_mode_combo.currentData() or self._config.vieneu_tts_mode
+
+    def _selected_vieneu_model_mode(self) -> str:
+        return "remote" if self._selected_vieneu_core() == "remote" else self._selected_vieneu_mode()
 
     def _selected_vieneu_model_data(self) -> dict:
         data = self._vieneu_model_combo.currentData()
@@ -306,10 +316,17 @@ class PlayerSettingsMixin:
         return str(self._selected_vieneu_model_data().get("id") or self._config.vieneu_tts_model_name)
 
     def _selected_vieneu_model_offline(self) -> bool:
+        if self._selected_vieneu_core() == "remote":
+            return False
         data = self._selected_vieneu_model_data()
         if "offline" in data:
             return bool(data["offline"])
         return self._config.vieneu_tts_offline
+
+    def _selected_vieneu_offline(self) -> bool:
+        if self._selected_vieneu_core() == "remote":
+            return False
+        return self._selected_vieneu_model_offline() or self._vieneu_offline_check.isChecked()
 
     def _selected_vieneu_runtime(self) -> str:
         return self._vieneu_runtime_combo.currentData() or self._config.vieneu_tts_runtime
@@ -319,6 +336,9 @@ class PlayerSettingsMixin:
 
     def _selected_vieneu_backend(self) -> str:
         return self._vieneu_backend_combo.currentData() or self._config.vieneu_tts_backend
+
+    def _selected_vieneu_core(self) -> str:
+        return self._vieneu_core_combo.currentData() or self._config.vieneu_tts_core
 
     def _selected_capture_backend(self) -> str:
         return self._capture_backend_combo.currentData() or self._config.capture_backend
@@ -353,6 +373,20 @@ class PlayerSettingsMixin:
         self._transcript_cleanup_model_combo.setEnabled(enabled)
         self._transcript_cleanup_api_base_edit.setEnabled(enabled and provider in {"ollama", "openai"})
         self._transcript_cleanup_api_key_edit.setEnabled(enabled and provider == "openai")
+        self._cleanup_timeout_slider.setEnabled(enabled and provider in {"ollama", "openai"})
+        self._cleanup_timeout_value.setEnabled(enabled and provider in {"ollama", "openai"})
+
+    def _sync_vieneu_advanced_controls(self, *_args) -> None:
+        if not hasattr(self, "_vieneu_api_base_edit"):
+            return
+        remote = self._selected_vieneu_core() == "remote" or self._selected_vieneu_mode() == "remote"
+        self._vieneu_api_base_edit.setEnabled(remote)
+        self._vieneu_offline_check.setEnabled(not remote)
+
+    def _vieneu_core_changed(self, *_args) -> None:
+        self._refresh_vieneu_models()
+        self._sync_vieneu_advanced_controls()
+        self._queue_save_settings()
 
     @staticmethod
     def _combo_value(combo: QComboBox) -> str:
@@ -381,6 +415,7 @@ class PlayerSettingsMixin:
             transcript_cleanup_model=self._selected_transcript_cleanup_model(),
             transcript_cleanup_api_base=self._transcript_cleanup_api_base_edit.text().strip(),
             transcript_cleanup_api_key=self._transcript_cleanup_api_key_edit.text().strip(),
+            transcript_cleanup_timeout_seconds=float(self._cleanup_timeout_slider.value()),
             transcript_path=self._transcript_path_edit.text().strip(),
             asr_provider=self._selected_asr_provider(),
             whisper_model=self._selected_asr_model(),
@@ -393,6 +428,14 @@ class PlayerSettingsMixin:
             whisper_vad_filter=self._whisper_vad_check.isChecked(),
             ocr_provider=self._selected_ocr_provider(),
             ocr_model=self._selected_ocr_model(),
+            ocr_fps=float(self._ocr_fps_slider.value() / 10),
+            ocr_crop_top_ratio=float(self._ocr_crop_top_slider.value() / 100),
+            ocr_crop_height_ratio=float(self._ocr_crop_height_slider.value() / 100),
+            ocr_scale=float(self._ocr_scale_slider.value() / 100),
+            ocr_psm=int(self._ocr_psm_slider.value()),
+            ocr_threshold=self._ocr_threshold_check.isChecked(),
+            ocr_min_confidence=float(self._ocr_min_confidence_slider.value()),
+            ocr_merge_similarity=float(self._ocr_merge_similarity_slider.value() / 100),
             local_translation_device=self._selected_translation_device(),
             local_translation_model=self._selected_nllb_model(),
             local_translation_offline=self._translation_offline_check.isChecked(),
@@ -413,6 +456,7 @@ class PlayerSettingsMixin:
             dubbing_overlap_policy=self._selected_overlap_policy(),
             dubbing_auto_voice_gender=self._auto_voice_gender_check.isChecked(),
             dubbing_auto_voice_gender_mode=self._selected_auto_voice_gender_mode(),
+            speaker_gender_model=self._selected_speaker_gender_model(),
             dubbing_speed_min=float(self._speed_min_slider.value() / 100),
             dubbing_speed_max=float(self._speed_max_slider.value() / 100),
             dubbing_volume_gain_min_db=float(self._volume_gain_min_slider.value()),
@@ -430,10 +474,21 @@ class PlayerSettingsMixin:
             tts_voice=self._selected_tts_voice(),
             tts_male_voice=self._selected_tts_male_voice(),
             tts_female_voice=self._selected_tts_female_voice(),
+            runtime_warmup_enabled=self._runtime_warmup_enabled_check.isChecked(),
+            runtime_warmup_whisper=self._runtime_warmup_whisper_check.isChecked(),
+            runtime_warmup_translation=self._runtime_warmup_translation_check.isChecked(),
+            runtime_warmup_tts=self._runtime_warmup_tts_check.isChecked(),
+            vieneu_tts_path=self._vieneu_path_edit.text().strip(),
             vieneu_tts_runtime=self._selected_vieneu_runtime(),
+            vieneu_tts_python=self._vieneu_python_edit.text().strip(),
+            vieneu_tts_core=self._selected_vieneu_core(),
             vieneu_tts_mode=self._selected_vieneu_mode(),
+            vieneu_tts_api_base=self._vieneu_api_base_edit.text().strip(),
             vieneu_tts_model_name=self._selected_vieneu_model(),
-            vieneu_tts_offline=self._selected_vieneu_model_offline() or self._vieneu_offline_check.isChecked(),
+            vieneu_tts_decoder_path=self._vieneu_decoder_path_edit.text().strip(),
+            vieneu_tts_encoder_path=self._vieneu_encoder_path_edit.text().strip(),
+            vieneu_tts_standard_codec_path=self._vieneu_standard_codec_path_edit.text().strip(),
+            vieneu_tts_offline=self._selected_vieneu_offline(),
             vieneu_tts_device=self._selected_vieneu_device(),
             vieneu_tts_backend=self._selected_vieneu_backend(),
             vieneu_tts_temperature=float(self._vieneu_temperature_slider.value() / 100),
@@ -471,6 +526,10 @@ class PlayerSettingsMixin:
         self._set_combo_data(self._vieneu_runtime_combo, preset.get("vieneu_tts_runtime"))
         self._set_combo_data(self._vieneu_device_combo, preset.get("vieneu_tts_device"))
         self._set_combo_data(self._vieneu_backend_combo, preset.get("vieneu_tts_backend"))
+        self._set_combo_data(self._vieneu_core_combo, preset.get("vieneu_tts_core"))
+        self._set_line_edit_text(self._vieneu_decoder_path_edit, preset.get("vieneu_tts_decoder_path"))
+        self._set_line_edit_text(self._vieneu_encoder_path_edit, preset.get("vieneu_tts_encoder_path"))
+        self._set_line_edit_text(self._vieneu_standard_codec_path_edit, preset.get("vieneu_tts_standard_codec_path"))
         self._set_checkbox(self._vieneu_offline_check, preset.get("vieneu_tts_offline"))
         self._set_slider_value(
             self._vieneu_temperature_slider,
@@ -534,6 +593,7 @@ class PlayerSettingsMixin:
         self._sync_auto_voice_controls_enabled()
         self._sync_auto_match_controls_enabled()
         self._sync_audio_source_controls()
+        self._sync_vieneu_advanced_controls()
         self._save_settings()
         self.statusBar().showMessage(self._tr("status_preset_applied"))
 
@@ -546,6 +606,7 @@ class PlayerSettingsMixin:
             self._audio_source_combo,
             self._source_filter_mode_combo,
             self._source_filter_model_combo,
+            self._speaker_gender_model_combo,
             self._source_language_combo,
             self._target_language_combo,
             self._asr_provider_combo,
@@ -568,6 +629,7 @@ class PlayerSettingsMixin:
             self._vieneu_runtime_combo,
             self._vieneu_device_combo,
             self._vieneu_backend_combo,
+            self._vieneu_core_combo,
             self._capture_backend_combo,
             self._capture_system_device_combo,
             self._capture_microphone_device_combo,
@@ -582,6 +644,10 @@ class PlayerSettingsMixin:
 
         checks = (
             self._preserve_terms_check,
+            self._runtime_warmup_enabled_check,
+            self._runtime_warmup_whisper_check,
+            self._runtime_warmup_translation_check,
+            self._runtime_warmup_tts_check,
             self._whisper_vad_check,
             self._whisper_offline_check,
             self._translation_offline_check,
@@ -590,6 +656,7 @@ class PlayerSettingsMixin:
             self._auto_match_audio_check,
             self._dub_button,
             self._source_filter_check,
+            self._ocr_threshold_check,
             self._video_url_full_cache_check,
         )
         for checkbox in checks:
@@ -602,6 +669,14 @@ class PlayerSettingsMixin:
             self._translation_max_tokens_slider,
             self._translation_beams_slider,
             self._whisper_beam_slider,
+            self._ocr_fps_slider,
+            self._ocr_crop_top_slider,
+            self._ocr_crop_height_slider,
+            self._ocr_scale_slider,
+            self._ocr_psm_slider,
+            self._ocr_min_confidence_slider,
+            self._ocr_merge_similarity_slider,
+            self._cleanup_timeout_slider,
             self._dubbing_buffer_slider,
             self._dub_speed_slider,
             self._video_delay_slider,
@@ -621,6 +696,18 @@ class PlayerSettingsMixin:
 
         self._transcript_cleanup_api_base_edit.textEdited.connect(self._queue_save_settings)
         self._transcript_cleanup_api_key_edit.textEdited.connect(self._queue_save_settings)
+        for line_edit in (
+            self._vieneu_path_edit,
+            self._vieneu_python_edit,
+            self._vieneu_api_base_edit,
+            self._vieneu_decoder_path_edit,
+            self._vieneu_encoder_path_edit,
+            self._vieneu_standard_codec_path_edit,
+        ):
+            line_edit.textEdited.connect(self._queue_save_settings)
+            line_edit.editingFinished.connect(self._queue_save_settings)
+        self._vieneu_core_combo.currentIndexChanged.connect(self._vieneu_core_changed)
+        self._vieneu_mode_combo.currentIndexChanged.connect(self._sync_vieneu_advanced_controls)
 
     def _queue_save_settings(self, *_args) -> None:
         self._settings_save_timer.start()
@@ -772,6 +859,12 @@ class PlayerSettingsMixin:
                 ("ai", "voice_gender_mode_ai"),
             ):
                 self._set_combo_item_text(self._auto_voice_gender_mode_combo, value, self._tr(key))
+        if hasattr(self, "_vieneu_core_combo"):
+            for value, key in (
+                ("local", "vieneu_core_local"),
+                ("remote", "vieneu_core_remote"),
+            ):
+                self._set_combo_item_text(self._vieneu_core_combo, value, self._tr(key))
         for combo_name in ("_capture_system_device_combo", "_capture_microphone_device_combo"):
             if hasattr(self, combo_name):
                 self._set_combo_item_text(getattr(self, combo_name), "", self._tr("auto"))
@@ -865,6 +958,11 @@ class PlayerSettingsMixin:
     def _set_checkbox(checkbox: QCheckBox, value) -> None:
         if value is not None:
             checkbox.setChecked(bool(value))
+
+    @staticmethod
+    def _set_line_edit_text(line_edit: QLineEdit, value) -> None:
+        if value is not None:
+            line_edit.setText(str(value))
 
     def _set_vieneu_model(self, model_id) -> None:
         if not model_id:
