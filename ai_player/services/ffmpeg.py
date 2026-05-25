@@ -11,11 +11,14 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from ai_player.core.app_logging import get_logger
 from ai_player.core.config import PROJECT_ROOT
+from ai_player.core.value_utils import positive_int as _core_positive_int
 
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
 FFPLAY = "ffplay"
+LOGGER = get_logger(__name__)
 _PROBE_DURATION_CACHE_LOCK = threading.Lock()
 _PROBE_DURATION_CACHE: dict[tuple[str, int, int], float] = {}
 
@@ -60,7 +63,7 @@ def run_cancelable_process(
                 if cancel_strategy == "quit":
                     _quit_process(process)
                 else:
-                    _terminate_process(process)
+                    terminate_process(process)
                 raise ProcessCancelled("Process cancelled")
             time.sleep(max(0.01, poll_interval_seconds))
         if check and return_code:
@@ -344,11 +347,7 @@ def _seconds_value(value: object, *, default: float) -> float:
 
 
 def _positive_int(value: object, *, default: int) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError, OverflowError):
-        number = default
-    return max(1, number)
+    return _core_positive_int(value, default=default)
 
 
 def _probe_duration_cache_key(path: Path) -> tuple[str, int, int] | None:
@@ -360,7 +359,7 @@ def _probe_duration_cache_key(path: Path) -> tuple[str, int, int] | None:
     return (str(resolved), int(stat.st_mtime_ns), int(stat.st_size))
 
 
-def _terminate_process(process: subprocess.Popen, timeout_seconds: float = 2.0) -> None:
+def terminate_process(process: subprocess.Popen, timeout_seconds: float = 2.0) -> None:
     if process.poll() is not None:
         return
     try:
@@ -371,12 +370,16 @@ def _terminate_process(process: subprocess.Popen, timeout_seconds: float = 2.0) 
         try:
             process.wait(timeout=timeout_seconds)
         except Exception:
-            pass
+            LOGGER.warning("Failed to wait for killed process after terminate timeout.", exc_info=True)
     except Exception:
+        LOGGER.warning("Failed to terminate process; trying kill.", exc_info=True)
         try:
             process.kill()
         except Exception:
-            pass
+            LOGGER.warning("Failed to kill process after terminate failure.", exc_info=True)
+
+
+_terminate_process = terminate_process
 
 
 def _quit_process(process: subprocess.Popen, timeout_seconds: float = 5.0) -> None:
@@ -388,7 +391,8 @@ def _quit_process(process: subprocess.Popen, timeout_seconds: float = 5.0) -> No
             process.stdin.flush()
         process.wait(timeout=timeout_seconds)
     except Exception:
-        _terminate_process(process)
+        LOGGER.warning("Failed to quit process cleanly; falling back to terminate.", exc_info=True)
+        terminate_process(process)
 
 
 def _close_process_stdin(process: subprocess.Popen) -> None:
@@ -397,4 +401,4 @@ def _close_process_stdin(process: subprocess.Popen) -> None:
         if stdin is not None and not stdin.closed:
             stdin.close()
     except Exception:
-        pass
+        LOGGER.warning("Failed to close process stdin.", exc_info=True)

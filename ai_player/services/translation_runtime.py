@@ -4,6 +4,7 @@ import threading
 from dataclasses import dataclass
 
 from ai_player.core.config import AppConfig
+from ai_player.core.value_utils import int_value as _core_int_value
 from ai_player.services.translation import PassthroughTranslator, VietnameseTranslator, effective_translator_provider
 
 
@@ -72,8 +73,4 @@ def translation_runtime_key(config: AppConfig) -> TranslationRuntimeKey:
 
 
 def _int_value(value: object, *, default: int, minimum: int) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError, OverflowError):
-        number = default
-    return max(minimum, number)
+    return _core_int_value(value, default=default, minimum=minimum)

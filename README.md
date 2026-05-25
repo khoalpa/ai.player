@@ -29,10 +29,23 @@ AI Player là ứng dụng Windows dùng PySide6 để xem video, đọc tài li
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e ".[dev,packaging,audio-separation]"
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,offline-ai]"
 ```
 
-Nếu chỉ chạy app, có thể dùng:
+Nếu chỉ chạy app nhẹ, không cài model AI offline/GPU:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe .\scripts\runtime_doctor.py --profile lite
+```
+
+Nếu muốn runtime đầy đủ để build portable, GPU và tách giọng bằng Demucs:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,packaging,offline-ai,gpu,audio-separation]"
+```
+
+Nếu chỉ muốn cài bằng requirements cho runtime AI CPU/offline cơ bản, có thể dùng:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -95,6 +108,27 @@ Output được ghi vào `dist\portable\AI Player Lite`. Gói Lite không bundle
 3. Chọn nguồn audio/transcript, ngôn ngữ nguồn/đích, provider dịch và provider TTS.
 4. Bấm `Lồng tiếng` để phát gần thời gian thực.
 5. Bấm `Export` để xuất transcript, audio, video hoặc bản review chất lượng cao.
+
+Trong app, bấm nút `?` để mở `Hướng dẫn sử dụng`. Hướng dẫn này tự đi theo ngôn ngữ giao diện và hiển thị cả cấu hình hiện tại để dễ biết thiết lập nào đang làm chậm hoặc ảnh hưởng chất lượng.
+
+## Chọn Nhanh Theo Mục Tiêu
+
+| Mục tiêu | Thiết lập nên bắt đầu | Ghi chú |
+| --- | --- | --- |
+| Xem nhanh | `Quick preview`, Edge TTS, bộ đệm thấp hoặc cân bằng | Phù hợp để kiểm tra nội dung trước; cần Internet cho Edge TTS. |
+| Chạy offline | `Offline lite`, NLLB CTranslate2, VieNeu-TTS local | Nên dùng GPU nếu có; CPU vẫn chạy được nhưng đoạn đầu có thể lâu. |
+| Đọc tài liệu | Nguồn `Editor`/tài liệu, giọng rõ, tắt dịch nếu chỉ cần đọc nguyên văn | Với file dài, chia nhỏ nội dung hoặc giảm max ký tự TTS nếu tạo giọng chậm. |
+| Xuất bản | `Quality / Export`, tăng buffer/lookahead, kiểm tra transcript trước khi xuất | Chậm hơn nhưng giảm lỗi nhịp, lỗi dịch và lỗi âm thanh ở video cuối. |
+
+## Sự Cố Thường Gặp
+
+| Dấu hiệu | Cách thử trước |
+| --- | --- |
+| Nút Play chưa bật | Đợi đủ bộ đệm, giảm `Bộ đệm`, hoặc chuyển sang Edge TTS để tạo âm nhanh hơn. |
+| Âm đích lệch nhịp | Bật `Tự khớp âm thanh`, tăng lookahead, hoặc giảm tốc độ/độ dài đoạn nếu giọng bị kéo dài. |
+| URL web không mở | Bật cache video URL, giảm chất lượng phát, hoặc dùng URL media trực tiếp nếu có. |
+| Dịch/đọc sai thuật ngữ | Bật giữ thuật ngữ và chọn file thuật ngữ; kiểm tra lại ngôn ngữ nguồn trước khi chạy. |
+| App xử lý quá chậm | Tránh mở nhiều cửa sổ cùng lúc, dùng Edge TTS khi cần nhanh, hoặc giảm model/thiết lập local nặng trên CPU. |
 
 ## Nguồn Và Định Dạng Hỗ Trợ
 

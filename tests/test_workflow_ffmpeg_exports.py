@@ -9,7 +9,9 @@ import pytest
 from ai_player.core.config import AppConfig
 from ai_player.pipeline import export_plan, transcript_source
 from ai_player.ui import player_window_export
-from ai_player.workers import export_worker
+from ai_player.workers import (
+    export_worker,
+)
 from ai_player.workers.dubbing_worker import DubbingWorker, _segment_start_key
 
 
@@ -44,7 +46,6 @@ def test_scale_filters_contain_expected_operations(func, needle: str) -> None:
 def test_scale_filters_tolerate_invalid_dimensions() -> None:
     assert "min(1920\\,iw)" in export_worker._scale_filter("bad", 0)
     assert "pad=1920:1080" in export_worker._document_scale_filter(float("inf"), "bad")
-
 
 @pytest.mark.parametrize(("value", "seconds"), [("00:00:01,500", 1.5), ("01:02:03.004", 3723.004)])
 def test_parse_srt_time(value: str, seconds: float) -> None:
@@ -172,7 +173,6 @@ def test_staged_background_voice_mix_ducks_background(tmp_path) -> None:
     assert "sidechaincompress" in filter_complex
     assert "volume=0.850" in filter_complex
     assert args[-1] == tmp_path / "final.wav"
-
 
 def test_mix_args_tolerate_invalid_numeric_options(tmp_path) -> None:
     timeline_args = export_plan.timeline_mix_args(
@@ -638,7 +638,6 @@ def test_staged_source_filter_normalizes_mode_and_model(monkeypatch, tmp_path) -
     assert worker._create_source_audio_stems(source_audio, tmp_path / "background.wav", tmp_path / "voice.wav") == "ai"
     assert commands[0][commands[0].index("-n") + 1] == "mdx_extra"
 
-
 def test_staged_demucs_source_filter_rejects_empty_no_vocals(monkeypatch, tmp_path) -> None:
     config = AppConfig(
         audio_source="original",
@@ -714,7 +713,6 @@ def test_staged_target_voice_cue_always_writes_wav_artifact(monkeypatch, tmp_pat
 
     assert audio_path == tmp_path / "tts" / "0001-aligned.wav"
     assert audio_path.read_bytes() == b"raw mp3"
-
 
 def test_export_range_filters_and_shifts_transcript_cues(monkeypatch, tmp_path) -> None:
     transcript = tmp_path / "demo.srt"
@@ -869,7 +867,6 @@ def test_source_export_replaces_non_speech_target_with_silence(tmp_path) -> None
     assert cue.audio_path.read_bytes() == b"silence"
     assert cue.duration_seconds == 0.5
 
-
 def test_export_duration_helpers_reject_non_finite_probe(monkeypatch, tmp_path) -> None:
     captured: list[float] = []
     audio_path = tmp_path / "target.wav"
@@ -931,7 +928,6 @@ def test_transcript_export_sanitizes_entry_timing_and_text(monkeypatch, tmp_path
             duration_seconds=5.0,
         )
     ]
-
 
 def test_source_export_skips_reference_extract_when_unused(monkeypatch, tmp_path) -> None:
     config = AppConfig(
@@ -1030,7 +1026,6 @@ def test_export_aligned_audio_uses_smart_overlap_policy(tmp_path) -> None:
     filter_complex = args[args.index("-filter_complex") + 1]
     assert "adelay=0:all=1" in filter_complex
     assert "adelay=1750:all=1" in filter_complex
-
 
 def test_dubbing_worker_queues_audio_at_source_start_even_when_previous_audio_extends(qapp, tmp_path) -> None:
     config = AppConfig(audio_source="original", dubbing_overlap_policy="strict_start")
@@ -1199,7 +1194,6 @@ def test_document_export_sanitizes_invalid_cue_timing(tmp_path) -> None:
     assert silences == [0.25]
     assert cue.start_seconds == 0.0
     assert cue.duration_seconds == 0.25
-
 
 def test_dubbing_worker_advances_async_segments_in_timeline_order(qapp) -> None:
     config = AppConfig(segment_seconds=4, dubbing_lookahead_segments=2)

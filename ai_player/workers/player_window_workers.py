@@ -5,9 +5,10 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
+from ai_player.core.app_logging import get_logger
 from ai_player.core.config import AppConfig
 from ai_player.services.document_reader import create_document_transcript
-from ai_player.services.ffmpeg import ffmpeg_executable
+from ai_player.services.ffmpeg import ffmpeg_executable, terminate_process
 from ai_player.services.media_cache import (
     playback_compat_cached_output_valid,
     remove_playback_compat_output,
@@ -23,6 +24,8 @@ from ai_player.services.source_voice_filter import (
     write_source_voice_filter_metadata,
 )
 from ai_player.services.video_source import resolve_video_source
+
+LOGGER = get_logger(__name__)
 
 
 class RuntimeWarmupWorker(QThread):
@@ -50,6 +53,7 @@ class RuntimeWarmupWorker(QThread):
             return
         except Exception as exc:
             if not self._stop_requested and not self.isInterruptionRequested():
+                LOGGER.exception("Runtime warmup worker failed.")
                 self.failed.emit(str(exc))
             return
         if not self._stop_requested and not self.isInterruptionRequested():
@@ -94,6 +98,7 @@ class VideoSourceWorker(QThread):
             )
         except Exception as exc:
             if not self._stop_requested and not self.isInterruptionRequested():
+                LOGGER.exception("Video source worker failed.")
                 self.failed.emit(str(exc))
 
 
@@ -130,6 +135,7 @@ class DocumentTranscriptWorker(QThread):
             )
         except Exception as exc:
             if not self._stop_requested and not self.isInterruptionRequested():
+                LOGGER.exception("Document transcript worker failed.")
                 self.failed.emit(str(exc))
             return
         if self._stop_requested or self.isInterruptionRequested():
@@ -185,6 +191,7 @@ class SourceAudioFilterWorker(QThread):
             self.ready.emit(self._source_path, str(self._output_path), result.backend)
         except Exception as exc:
             if not self._stop_requested:
+                LOGGER.exception("Source audio filter worker failed.")
                 self.failed.emit(self._source_path, _format_process_exception(exc))
         finally:
             self._process = None
@@ -283,25 +290,13 @@ class PlaybackCompatibilityWorker(QThread):
         except Exception as exc:
             remove_playback_compat_output(self._output_path)
             if not self._stop_requested:
+                LOGGER.exception("Playback compatibility worker failed.")
                 self.failed.emit(self._source_path, str(exc))
         finally:
             self._process = None
 
 
-def _terminate_process(process: subprocess.Popen, timeout_seconds: float = 2.0) -> None:
-    if process.poll() is not None:
-        return
-    try:
-        process.terminate()
-        process.wait(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=timeout_seconds)
-    except Exception:
-        try:
-            process.kill()
-        except Exception:
-            pass
+_terminate_process = terminate_process
 
 
 def _format_process_exception(exc: Exception, max_length: int = 500) -> str:

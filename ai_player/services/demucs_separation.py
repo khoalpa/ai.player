@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -46,6 +47,19 @@ def demucs_executable() -> str:
         if candidate and candidate.is_file():
             return str(candidate)
     return shutil.which("demucs") or "demucs"
+
+
+def demucs_two_stem_args(command_prefix: Sequence[str], input_path: Path, output_dir: Path, *, model: str) -> list[str]:
+    return [
+        *command_prefix,
+        "-n",
+        model,
+        "--two-stems",
+        "vocals",
+        "-o",
+        str(output_dir),
+        str(input_path),
+    ]
 
 
 def _demucs_python() -> str:
@@ -95,16 +109,7 @@ def separate_vocals(input_path: Path, output_dir: Path, *, model: str = "htdemuc
         raise DemucsSeparationError("Demucs is not installed. Install the audio-separation extra first.")
     output_dir.mkdir(parents=True, exist_ok=True)
     subprocess.run(
-        [
-            *demucs_command(),
-            "-n",
-            model,
-            "--two-stems",
-            "vocals",
-            "-o",
-            str(output_dir),
-            str(input_path),
-        ],
+        demucs_two_stem_args(demucs_command(), input_path, output_dir, model=model),
         check=True,
     )
     stem_dir = output_dir / model / input_path.stem

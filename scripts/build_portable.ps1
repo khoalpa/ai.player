@@ -149,7 +149,7 @@ $CodeSigningCertificate = Get-CodeSigningCertificate `
 
 if ($InstallDependencies) {
     & $Python -m pip install --upgrade pip
-    & $Python -m pip install -e "$ProjectRoot[packaging,audio-separation]"
+    & $Python -m pip install -e "$ProjectRoot[packaging,offline-ai,gpu,audio-separation]"
 }
 
 & $Python -c "import PyInstaller" 2>$null

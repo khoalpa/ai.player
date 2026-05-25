@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ai_player.core.config import CONFIG_DIR
 from ai_player.core.i18n import ui_text
+from ai_player.services.ffmpeg import terminate_process
 
 SUPPORTED_DOCUMENT_EXTENSIONS = {
     ".csv",
@@ -577,20 +578,7 @@ def _run_cancelable(
         raise
 
 
-def _terminate_process(process: subprocess.Popen, timeout_seconds: float = 2.0) -> None:
-    if process.poll() is not None:
-        return
-    try:
-        process.terminate()
-        process.wait(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=timeout_seconds)
-    except Exception:
-        try:
-            process.kill()
-        except Exception:
-            pass
+_terminate_process = terminate_process
 
 
 def _render_placeholder_pages(

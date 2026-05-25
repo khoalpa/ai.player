@@ -449,7 +449,9 @@ def test_player_window_guide_and_device_auto_follow_language(qapp) -> None:
     try:
         window._set_combo_data(window._ui_language_combo, "en")
         qapp.processEvents()
+        assert "Start from your goal" in window._user_guide_html()
         assert "Quick workflow" in window._user_guide_html()
+        assert "Common fixes" in window._user_guide_html()
         assert "Quy trình nhanh" not in window._user_guide_html()
         assert [title for title, _html in window._user_guide_tabs()] == [
             "Workflow",
@@ -462,7 +464,9 @@ def test_player_window_guide_and_device_auto_follow_language(qapp) -> None:
 
         window._set_combo_data(window._ui_language_combo, "vi")
         qapp.processEvents()
+        assert "Chọn nhanh theo mục tiêu" in window._user_guide_html()
         assert "Quy trình nhanh" in window._user_guide_html()
+        assert "Sự cố thường gặp" in window._user_guide_html()
         assert "Nền tảng video phổ biến" in window._user_guide_html()
         assert "BuomTV và mirror" not in window._user_guide_html()
         assert "Adult video" in window._user_guide_html()

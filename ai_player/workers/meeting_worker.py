@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import queue
 import shutil
 import subprocess
@@ -13,15 +12,16 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
+from ai_player.core.app_logging import get_logger
 from ai_player.core.config import AppConfig
 from ai_player.core.i18n import ui_text
 from ai_player.core.offline_env import OfflineEnvironmentToken, pop_hf_offline_environment, push_hf_offline_environment
 from ai_player.core.performance import measure_stage
 from ai_player.services.capture_sources import capture_system_microphone_audio
-from ai_player.services.ffmpeg import ffmpeg_executable, ffplay_executable
+from ai_player.services.ffmpeg import concat_escape, ffmpeg_executable, ffplay_executable, terminate_process
 from ai_player.services.transcript_cleanup import TranscriptCleaner
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
-from ai_player.services.tts import create_tts_provider, normalize_tts_provider
+from ai_player.services.tts import create_tts_provider
 from ai_player.services.whisper_runtime import (
     SharedWhisperModel,
     get_shared_whisper_model,
@@ -30,7 +30,18 @@ from ai_player.services.whisper_runtime import (
 from ai_player.services.whisper_runtime import (
     effective_whisper_compute_type as shared_whisper_compute_type,
 )
-from ai_player.workers.dubbing_worker import _effective_whisper_device
+from ai_player.services.whisper_runtime import (
+    effective_whisper_device as _effective_whisper_device,
+)
+from ai_player.workers.asr_fallback import transcribe_model_with_device_fallback
+from ai_player.workers.worker_values import clamped_int as _clamped_int
+from ai_player.workers.worker_values import clean_language as _clean_language
+from ai_player.workers.worker_values import clean_worker_text as _clean_text
+from ai_player.workers.worker_values import format_hhmmss, selected_source_language, voice_tts_suffix
+from ai_player.workers.worker_values import nonnegative_finite_seconds as _finite_seconds
+from ai_player.workers.worker_values import tts_disabled as _tts_disabled
+
+LOGGER = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -167,6 +178,7 @@ class MeetingWorker(QThread):
                 )
             )
         except Exception as exc:
+            LOGGER.exception("Meeting worker failed.")
             self.failed.emit(str(exc))
         finally:
             self._finish_playback_worker(wait=False)
@@ -185,8 +197,7 @@ class MeetingWorker(QThread):
             raise RuntimeError(self._tr("meeting_error_missing_whisper_offline"))
 
     def _selected_whisper_language(self) -> str | None:
-        language = str(self._config.source_language or "auto").strip().lower()
-        return None if language in {"", "auto"} else language
+        return selected_source_language(self._config)
 
     def _load_model(self) -> SharedWhisperModel:
         try:
@@ -206,19 +217,26 @@ class MeetingWorker(QThread):
                 local_files_only=self._config.whisper_offline,
             )
 
+    def _switch_whisper_to_cpu(self, _cause: Exception | None = None) -> SharedWhisperModel:
+        self._whisper_device = "cpu"
+        self._whisper_compute_type = "int8"
+        self._model = self._load_model()
+        return self._model
+
     def _transcribe_segments(self, audio_path: Path):
         if self._model is None:
             self._model = self._load_model()
         kwargs = whisper_transcribe_kwargs(self._config, self._selected_whisper_language())
-        try:
-            return self._model.transcribe(str(audio_path), **kwargs)
-        except Exception:
-            if self._whisper_device == "cpu":
-                raise
-            self._whisper_device = "cpu"
-            self._whisper_compute_type = "int8"
-            self._model = self._load_model()
-            return self._model.transcribe(str(audio_path), **kwargs)
+        return transcribe_model_with_device_fallback(
+            self._model,
+            audio_path,
+            kwargs,
+            whisper_device=lambda: self._whisper_device,
+            whisper_compute_type=lambda: self._whisper_compute_type,
+            emit_status=lambda _key: None,
+            switch_whisper_to_cpu=lambda exc: self._switch_whisper_to_cpu(exc),
+            retry_cpu_compute=False,
+        )
 
     def _process_chunk(
         self,
@@ -249,7 +267,7 @@ class MeetingWorker(QThread):
             if _tts_disabled(self._config):
                 lines.append(self._transcript_line(start, end, text, translated))
                 continue
-            tts_suffix = "wav" if normalize_tts_provider(self._config.tts_provider) == "vieneu" else "mp3"
+            tts_suffix = voice_tts_suffix(self._config)
             self._dub_segment(
                 translated,
                 temp_dir / f"meeting-tts-{chunk_index:05d}-{segment_index:03d}.{tts_suffix}",
@@ -300,7 +318,7 @@ class MeetingWorker(QThread):
                 try:
                     queue_ref.put(None, timeout=0.5)
                 except queue.Full:
-                    pass
+                    LOGGER.warning("Meeting playback queue was full while stopping.", exc_info=True)
         if thread_ref is not None:
             thread_ref.join(timeout=10.0 if wait else 1.0)
         if not wait:
@@ -339,7 +357,7 @@ class MeetingWorker(QThread):
                     self._active_playback_process = process
                 process.wait()
         except Exception:
-            pass
+            LOGGER.warning("Meeting playback failed.", exc_info=True)
         finally:
             with self._playback_lock:
                 self._active_playback_process = None
@@ -350,14 +368,7 @@ class MeetingWorker(QThread):
             self._active_playback_process = None
         if process is None or process.poll() is not None:
             return
-        try:
-            process.terminate()
-            process.wait(timeout=2)
-        except Exception:
-            try:
-                process.kill()
-            except Exception:
-                pass
+        terminate_process(process)
 
     def _export_audio(self, chunk_paths: list[Path], output_path: Path, temp_dir: Path) -> None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -392,54 +403,13 @@ class MeetingWorker(QThread):
             raise RuntimeError(self._tr("meeting_error_no_audio"))
 
 
-def _tts_disabled(config: AppConfig) -> bool:
-    return normalize_tts_provider(config.tts_provider) == "none"
-
-
 def _ffmpeg_escape(path: Path) -> str:
-    return str(path).replace("\\", "/").replace("'", "'\\''")
+    return concat_escape(path)
 
 
 def _format_elapsed(elapsed_seconds: float) -> str:
-    elapsed = max(0, int(_finite_seconds(elapsed_seconds, 0.0)))
-    minutes, seconds = divmod(elapsed, 60)
-    hours, minutes = divmod(minutes, 60)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return format_hhmmss(elapsed_seconds)
 
 
 def _format_timestamp(value: object) -> str:
-    seconds_total = max(0, int(round(_finite_seconds(value, 0.0))))
-    hours, remainder = divmod(seconds_total, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-
-def _clean_text(value: object) -> str:
-    if isinstance(value, bytes):
-        text = value.decode("utf-8", errors="replace")
-    else:
-        text = str(value or "")
-    return " ".join(text.split())
-
-
-def _clean_language(value: object) -> str | None:
-    language = _clean_text(value).lower()
-    return language or None
-
-
-def _finite_seconds(value: object, default: float) -> float:
-    try:
-        seconds = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    if not math.isfinite(seconds):
-        return default
-    return max(0.0, seconds)
-
-
-def _clamped_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError, OverflowError):
-        number = default
-    return max(minimum, min(maximum, number))
+    return format_hhmmss(value, round_seconds=True)

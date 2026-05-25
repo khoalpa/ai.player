@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ai_player.core.config import AppConfig
+from ai_player.core.value_utils import finite_float as _core_finite_float
+from ai_player.core.value_utils import positive_int as _core_positive_int
 from ai_player.services.ffmpeg import (
     extract_audio_range as ffmpeg_extract_audio_range,
 )
@@ -172,11 +174,7 @@ def _safe_auto_tempo_bounds(config: AppConfig) -> tuple[float, float]:
 
 
 def _finite_float(value: object, default: float) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return number if math.isfinite(number) else default
+    return _core_finite_float(value, default=default)
 
 
 def _clamp_natural_tempo(value: float) -> float:
@@ -257,11 +255,7 @@ def _audio_format_filter(sample_rate: int | None, channels: int | None) -> str:
 
 
 def _positive_int(value: object, *, default: int) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError, OverflowError):
-        number = default
-    return max(1, number)
+    return _core_positive_int(value, default=default)
 
 
 def _median_pitch_hz(path: Path) -> float:

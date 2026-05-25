@@ -14,9 +14,9 @@ jobs:
       matrix:
         include:
           - python-version: "3.10"
-            install-command: python -m pip install -c constraints/windows-release-py310.txt -e ".[dev,packaging]"
+            install-command: python -m pip install -c constraints/windows-release-py310.txt -e ".[dev,packaging,offline-ai,gpu]"
           - python-version: "3.11"
-            install-command: python -m pip install -e ".[dev]"
+            install-command: python -m pip install -e ".[dev,offline-ai]"
 
     steps:
       - name: Check out repository

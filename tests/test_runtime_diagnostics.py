@@ -40,6 +40,16 @@ def test_package_section_marks_missing_required(monkeypatch) -> None:
     assert section.items[0].required is True
 
 
+def test_package_section_marks_non_profile_package_optional(monkeypatch) -> None:
+    monkeypatch.setattr(diag, "PYTHON_PACKAGES", (("offline_only_package", ("offline-ai",)),))
+    monkeypatch.setattr(diag.importlib.util, "find_spec", lambda _name: None)
+
+    section = diag._package_section("lite")
+
+    assert section.items[0].status == "WARN"
+    assert section.items[0].required is False
+
+
 @pytest.mark.parametrize("candidate_index", [0, 1])
 def test_first_tool_uses_path_candidates(monkeypatch, tmp_path, candidate_index: int) -> None:
     tool = tmp_path / "tool.exe"

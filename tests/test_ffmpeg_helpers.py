@@ -163,3 +163,30 @@ def test_cancelable_quit_process_closes_stdin_on_normal_exit(monkeypatch) -> Non
     assert result.returncode == 0
     assert popen_kwargs[0]["stdin"] == subprocess.PIPE
     assert created[0].stdin.closed
+
+
+def test_terminate_process_kills_after_terminate_timeout() -> None:
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.terminated = False
+            self.killed = False
+
+        def poll(self):
+            return None
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def wait(self, timeout: float | None = None) -> None:
+            if not self.killed:
+                raise subprocess.TimeoutExpired("fake", timeout)
+
+        def kill(self) -> None:
+            self.killed = True
+
+    process = FakeProcess()
+
+    ffmpeg_service.terminate_process(process)
+
+    assert process.terminated
+    assert process.killed

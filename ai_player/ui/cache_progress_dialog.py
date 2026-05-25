@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QDialog, QLabel, QProgressBar, QTextEdit, QVBoxLayout
 
+from ai_player.core.value_utils import optional_float, optional_int
 from ai_player.ui.player_window_utils import UI_TEXT
 
 
@@ -105,22 +106,11 @@ class CacheProgressDialog(QDialog):
 
 
 def _int_value(value) -> int | None:
-    try:
-        if value is None:
-            return None
-        return int(value)
-    except Exception:
-        return None
+    return optional_int(value)
 
 
 def _float_value(value) -> float | None:
-    try:
-        if value is None:
-            return None
-        number = float(value)
-    except Exception:
-        return None
-    return number if math.isfinite(number) else None
+    return optional_float(value)
 
 
 def _format_bytes(value: float) -> str:

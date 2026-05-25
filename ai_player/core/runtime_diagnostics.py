@@ -43,14 +43,14 @@ class RuntimeDiagnostics:
 
 
 PYTHON_PACKAGES = (
-    "PySide6",
-    "fitz",
-    "PIL",
-    "soundcard",
-    "faster_whisper",
-    "ctranslate2",
-    "transformers",
-    "edge_tts",
+    ("PySide6", ("lite", "offline-ai")),
+    ("fitz", ("lite", "offline-ai")),
+    ("PIL", ("lite", "offline-ai")),
+    ("soundcard", ("lite", "offline-ai")),
+    ("edge_tts", ("lite", "offline-ai")),
+    ("faster_whisper", ("offline-ai",)),
+    ("ctranslate2", ("offline-ai",)),
+    ("transformers", ("offline-ai",)),
 )
 
 TOOLS = {
@@ -123,9 +123,13 @@ REQUIRED_TESSDATA = ("eng", "osd", "vie")
 TESSDATA = OCR_MODELS_PATH / "tessdata"
 
 
-def collect_runtime_diagnostics(*, include_audio_devices: bool = True) -> RuntimeDiagnostics:
+def collect_runtime_diagnostics(
+    *,
+    include_audio_devices: bool = True,
+    profile: str = "offline-ai",
+) -> RuntimeDiagnostics:
     sections = [
-        _package_section(),
+        _package_section(profile),
         _tool_section(),
         _model_section(),
         _tessdata_section(),
@@ -178,12 +182,23 @@ def format_runtime_diagnostics_summary(report: RuntimeDiagnostics) -> str:
     return "\n".join(lines)
 
 
-def _package_section() -> DiagnosticSection:
+def _package_section(profile: str = "offline-ai") -> DiagnosticSection:
     items = []
-    for package in PYTHON_PACKAGES:
+    for package_info in PYTHON_PACKAGES:
+        package, required_profiles = _package_requirement(package_info)
         ok = importlib.util.find_spec(package) is not None
-        items.append(DiagnosticItem(package, "OK" if ok else "MISS", "", required=True))
+        required = profile in required_profiles
+        status = "OK" if ok else ("MISS" if required else "WARN")
+        detail = "" if required else f"required for {', '.join(required_profiles)} profile"
+        items.append(DiagnosticItem(package, status, detail, required=required))
     return DiagnosticSection("Python packages", tuple(items))
+
+
+def _package_requirement(package_info: object) -> tuple[str, tuple[str, ...]]:
+    if isinstance(package_info, str):
+        return package_info, ("lite", "offline-ai")
+    package, profiles = package_info
+    return str(package), tuple(str(profile) for profile in profiles)
 
 
 def _tool_section() -> DiagnosticSection:

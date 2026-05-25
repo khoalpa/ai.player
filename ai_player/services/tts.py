@@ -32,6 +32,10 @@ from ai_player.core.config import (
     AppConfig,
 )
 from ai_player.core.offline_env import pop_hf_offline_environment, push_hf_offline_environment
+from ai_player.core.value_utils import clean_message as _core_clean_message
+from ai_player.core.value_utils import clean_text as _core_clean_text
+from ai_player.core.value_utils import finite_float as _core_finite_float
+from ai_player.core.value_utils import int_value as _core_int_value
 from ai_player.services.tts_voices import (
     EDGE_VOICES,
     STANDARD_VIENEU_VOICES,
@@ -1219,19 +1223,11 @@ def _cache_text(value: object) -> str:
 
 
 def _finite_float(value: object, *, default: float) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return number if math.isfinite(number) else default
+    return _core_finite_float(value, default=default)
 
 
 def _int_value(value: object, *, default: int, minimum: int) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError, OverflowError):
-        number = default
-    return max(minimum, number)
+    return _core_int_value(value, default=default, minimum=minimum)
 
 
 def _preferred_voice_ids(provider: str, config: AppConfig, gender: str) -> tuple[str, ...]:
@@ -1253,12 +1249,11 @@ def _preferred_voice_ids(provider: str, config: AppConfig, gender: str) -> tuple
 
 
 def _clean_message(value: object) -> str:
-    return str(value or "").encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+    return _core_clean_message(value)
 
 
 def _clean_text(value: object) -> str:
-    text = str(value or "").encode("utf-8", errors="replace").decode("utf-8", errors="replace")
-    return " ".join(text.split())
+    return _core_clean_text(value)
 
 
 def _vieneu_import_root(root: Path) -> Path:

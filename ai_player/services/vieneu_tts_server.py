@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import sys
 import traceback
 from pathlib import Path
 from typing import Any
+
+from ai_player.core.value_utils import clean_message as _core_clean_message
+from ai_player.core.value_utils import clean_text as _core_clean_text
+from ai_player.core.value_utils import finite_float as _core_finite_float
+from ai_player.core.value_utils import int_value as _core_int_value
 
 
 def main() -> int:
@@ -156,28 +160,19 @@ def _emit(payload: dict[str, Any]) -> None:
 
 
 def _clean_message(value: object) -> str:
-    return str(value or "").encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+    return _core_clean_message(value)
 
 
 def _clean_text(value: object) -> str:
-    text = str(value or "").encode("utf-8", errors="replace").decode("utf-8", errors="replace")
-    return " ".join(text.split())
+    return _core_clean_text(value)
 
 
 def _float_value(value: object, *, default: float) -> float:
-    try:
-        result = float(value)
-    except (OverflowError, TypeError, ValueError):
-        return default
-    return result if math.isfinite(result) else default
+    return _core_finite_float(value, default=default)
 
 
 def _int_value(value: object, *, default: int, minimum: int) -> int:
-    try:
-        result = int(value)
-    except (OverflowError, TypeError, ValueError):
-        return default
-    return max(minimum, result)
+    return _core_int_value(value, default=default, minimum=minimum)
 
 
 if __name__ == "__main__":

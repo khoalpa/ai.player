@@ -80,6 +80,21 @@ def test_demucs_command_ignores_python_without_demucs(monkeypatch, tmp_path) -> 
     assert demucs_separation.demucs_command() == ["external-demucs"]
 
 
+def test_demucs_two_stem_args_use_selected_model_and_output(tmp_path) -> None:
+    args = demucs_separation.demucs_two_stem_args(
+        ["python", "-m", "ai_player.services.demucs_runner"],
+        tmp_path / "source.wav",
+        tmp_path / "stems",
+        model="mdx_extra",
+    )
+
+    assert args[:3] == ["python", "-m", "ai_player.services.demucs_runner"]
+    assert args[args.index("-n") + 1] == "mdx_extra"
+    assert args[args.index("--two-stems") + 1] == "vocals"
+    assert args[args.index("-o") + 1] == str(tmp_path / "stems")
+    assert args[-1] == str(tmp_path / "source.wav")
+
+
 def test_demucs_python_does_not_use_frozen_app_executable(monkeypatch, tmp_path) -> None:
     app_exe = tmp_path / "AI Player.exe"
     app_exe.write_bytes(b"")

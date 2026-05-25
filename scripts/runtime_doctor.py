@@ -14,8 +14,14 @@ from ai_player.core.runtime_diagnostics import collect_runtime_diagnostics, form
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check AI Player runtime dependencies.")
     parser.add_argument("--ci", action="store_true", help="Skip checks that are noisy in CI.")
+    parser.add_argument(
+        "--profile",
+        choices=("lite", "offline-ai"),
+        default="offline-ai",
+        help="Dependency profile to treat as required.",
+    )
     args = parser.parse_args()
-    report = collect_runtime_diagnostics(include_audio_devices=not args.ci)
+    report = collect_runtime_diagnostics(include_audio_devices=not args.ci, profile=args.profile)
     print(format_runtime_diagnostics(report))
     return 1 if report.failure_count else 0
 

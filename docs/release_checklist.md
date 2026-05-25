@@ -5,7 +5,7 @@ Use this checklist before sharing a build.
 ## Source Baseline
 
 - Confirm the working tree contains only intended changes.
-- Install the release dependency set with `.\.venv\Scripts\python.exe -m pip install -c constraints\windows-release-py310.txt -e ".[dev,packaging]"`.
+- Install the release dependency set with `.\.venv\Scripts\python.exe -m pip install -c constraints\windows-release-py310.txt -e ".[dev,packaging,offline-ai,gpu,audio-separation]"`.
 - Run `.\.venv\Scripts\python.exe -m ruff check .`.
 - Run `.\.venv\Scripts\python.exe -m pytest`.
 - Run `.\.venv\Scripts\python.exe .\scripts\runtime_doctor.py`.

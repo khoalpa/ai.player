@@ -15,6 +15,7 @@ from ai_player.core.runtime_catalog import (
     load_gui_translations,
     load_performance_presets,
 )
+from ai_player.core.value_utils import optional_float
 
 UI_TEXT = load_gui_translations()
 UI_TEXT_ALIASES = load_gui_text_aliases()
@@ -57,11 +58,7 @@ def dropdown_options(folder_name: str, language_id: str | None = None) -> list[t
 
 
 def float_value(value) -> float | None:
-    try:
-        number = float(value)
-    except Exception:
-        return None
-    return number if math.isfinite(number) else None
+    return optional_float(value)
 
 
 def format_bitrate(value, unknown: str = "không rõ") -> str:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import os
 import re
 import shutil
@@ -15,8 +14,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from ai_player.core.config import PROJECT_ROOT, AppConfig
-from ai_player.core.gpu import ctranslate2_cuda_available, cuda_runtime_files_available
+from ai_player.core.app_logging import get_logger
+from ai_player.core.config import AppConfig
 from ai_player.core.i18n import ui_text
 from ai_player.core.offline_env import OfflineEnvironmentToken, pop_hf_offline_environment, push_hf_offline_environment
 from ai_player.core.performance import measure_stage
@@ -48,6 +47,7 @@ from ai_player.services.ffmpeg import (
     ProcessCancelled,
     ffplay_executable,
     run_ffmpeg_cancelable,
+    terminate_process,
 )
 from ai_player.services.ffmpeg import (
     make_silence as ffmpeg_make_silence,
@@ -59,7 +59,6 @@ from ai_player.services.translation_runtime import get_shared_vietnamese_transla
 from ai_player.services.tts import (
     create_tts_provider,
     is_pathological_tts_duration,
-    normalize_tts_provider,
     prepare_tts_text,
 )
 from ai_player.services.whisper_runtime import (
@@ -70,6 +69,22 @@ from ai_player.services.whisper_runtime import (
 from ai_player.services.whisper_runtime import (
     effective_whisper_compute_type as shared_whisper_compute_type,
 )
+from ai_player.services.whisper_runtime import (
+    effective_whisper_device as _effective_whisper_device,
+)
+from ai_player.workers.asr_fallback import transcribe_model_with_device_fallback
+from ai_player.workers.worker_values import clamped_int as _clamped_int
+from ai_player.workers.worker_values import clean_language as _clean_language
+from ai_player.workers.worker_values import clean_message as _clean_message
+from ai_player.workers.worker_values import clean_worker_text as _clean_worker_text
+from ai_player.workers.worker_values import finite_seconds as _finite_seconds
+from ai_player.workers.worker_values import int_value as _int_value
+from ai_player.workers.worker_values import positive_int as _positive_int
+from ai_player.workers.worker_values import segment_start_key as _segment_start_key
+from ai_player.workers.worker_values import selected_source_language, voice_tts_suffix
+from ai_player.workers.worker_values import tts_disabled as _tts_disabled
+
+LOGGER = get_logger(__name__)
 
 PendingAudio = tuple[float, float, Path, str, str]
 PLAYBACK_AUDIO_LEAD_SECONDS = 0.25
@@ -221,6 +236,7 @@ class DubbingWorker(QThread):
                     time.sleep(0.1)
         except Exception as exc:
             if not self._stop_requested:
+                LOGGER.exception("Realtime dubbing worker failed.")
                 self.failed.emit(_clean_message(exc))
         finally:
             self._shutdown_segment_executor()
@@ -328,7 +344,7 @@ class DubbingWorker(QThread):
         if not original:
             return
         segment_ms = int(entry_start * 1000)
-        tts_suffix = "wav" if normalize_tts_provider(self._config.tts_provider) == "vieneu" else "mp3"
+        tts_suffix = voice_tts_suffix(self._config)
         tts_path = self._temp_dir / f"vi-transcript-{segment_ms}-{index}.{tts_suffix}"
 
         self._emit_status("worker_translating_transcript_at", time=_format_hhmmss(entry_start))
@@ -467,8 +483,7 @@ class DubbingWorker(QThread):
         )
 
     def _selected_whisper_language(self) -> str | None:
-        language = str(self._config.source_language or "auto").strip().lower()
-        return None if language in {"", "auto"} else language
+        return selected_source_language(self._config)
 
     def _validate_whisper_model(self) -> None:
         if not self._config.whisper_offline:
@@ -509,18 +524,15 @@ class DubbingWorker(QThread):
         if self._model is None:
             self._model = self._load_whisper_model()
         kwargs = whisper_transcribe_kwargs(self._config, self._selected_whisper_language())
-        try:
-            return self._model.transcribe(str(wav_path), **kwargs)
-        except Exception as exc:
-            if self._whisper_device == "cpu" and self._whisper_compute_type != "int8":
-                self._emit_status("worker_whisper_cpu_compute_fallback")
-                self._switch_whisper_to_cpu(exc)
-                return self._model.transcribe(str(wav_path), **kwargs)
-            if self._whisper_device == "cpu":
-                raise
-            self._emit_status("worker_whisper_cublas_fallback")
-            self._switch_whisper_to_cpu(exc)
-            return self._model.transcribe(str(wav_path), **kwargs)
+        return transcribe_model_with_device_fallback(
+            self._model,
+            wav_path,
+            kwargs,
+            whisper_device=lambda: self._whisper_device,
+            whisper_compute_type=lambda: self._whisper_compute_type,
+            emit_status=lambda key: self._emit_status(key),
+            switch_whisper_to_cpu=lambda exc: self._switch_whisper_to_cpu(exc),
+        )
 
     def _resume_if_buffer_ready(self, current_seconds: float) -> None:
         ready_ahead = self._covered_until - current_seconds
@@ -554,7 +566,7 @@ class DubbingWorker(QThread):
         start_seconds = max(0.0, _finite_seconds(start_seconds, 0.0))
         safe_start = int(start_seconds * 1000)
         wav_path = self._temp_dir / f"source-{safe_start}.wav"
-        tts_suffix = "wav" if normalize_tts_provider(self._config.tts_provider) == "vieneu" else "mp3"
+        tts_suffix = voice_tts_suffix(self._config)
 
         if self._config.audio_source == "subtitle":
             self._process_subtitle_segment(start_seconds, tts_suffix)
@@ -1152,50 +1164,13 @@ class DubbingWorker(QThread):
         self._sync_hold_requested = False
 
 
-def _clean_message(value: object) -> str:
-    return str(value or "").encode("utf-8", errors="replace").decode("utf-8", errors="replace")
-
-
-def _terminate_process(process: subprocess.Popen, timeout_seconds: float = 2.0) -> None:
-    if process.poll() is not None:
-        return
-    try:
-        process.terminate()
-        process.wait(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        try:
-            process.wait(timeout=timeout_seconds)
-        except Exception:
-            pass
-    except Exception:
-        try:
-            process.kill()
-        except Exception:
-            pass
+_terminate_process = terminate_process
 
 
 def _unsupported_audio_source_message(value: str, language_id: str | None = None) -> str:
     label = str(value or ui_text("worker_unknown_source", language_id))
     supported = ", ".join(sorted(SUPPORTED_AUDIO_SOURCES))
     return ui_text("worker_unsupported_audio_source", language_id, source=label, supported=supported)
-
-
-def _tts_disabled(config: AppConfig) -> bool:
-    return normalize_tts_provider(config.tts_provider) == "none"
-
-
-def _clean_worker_text(value: object) -> str:
-    if isinstance(value, bytes):
-        text = value.decode("utf-8", errors="replace")
-    else:
-        text = str(value or "")
-    return " ".join(text.split())
-
-
-def _clean_language(value: object) -> str | None:
-    language = _clean_worker_text(value).strip().lower()
-    return language or None
 
 
 def _text_key(value: object) -> str:
@@ -1213,50 +1188,3 @@ def _text_keys_similar(left: str, right: str) -> bool:
     if len(shorter) >= 12 and shorter in longer:
         return True
     return SequenceMatcher(None, left, right).ratio() >= 0.82
-
-
-def _segment_start_key(value: float) -> int:
-    return int(round(_finite_seconds(value, 0.0) * 1000))
-
-
-def _finite_seconds(value: object, default: float) -> float:
-    try:
-        seconds = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    if not math.isfinite(seconds):
-        return default
-    return seconds
-
-
-def _positive_int(value: object, default: int) -> int:
-    number = _int_value(value, default=default)
-    return max(1, number)
-
-
-def _int_value(value: object, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-
-
-def _clamped_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
-    return max(minimum, min(maximum, _int_value(value, default=default)))
-
-
-def _effective_whisper_device(value: str) -> str:
-    device = str(value or "auto").strip().lower()
-    if device == "cpu":
-        return "cpu"
-    if device == "cuda":
-        return "cuda" if _cuda_runtime_available() else "cpu"
-    if device == "auto":
-        return "cuda" if _cuda_runtime_available() else "cpu"
-    return device
-
-
-def _cuda_runtime_available() -> bool:
-    search_roots = [Path(value) for value in (os.environ.get("CUDA_PATH"),) if value]
-    search_roots.append(PROJECT_ROOT / ".venv")
-    return ctranslate2_cuda_available() or cuda_runtime_files_available(*search_roots)

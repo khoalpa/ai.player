@@ -16,6 +16,7 @@ from ai_player.core.config import (
 from ai_player.core.gpu import configure_cuda_dll_paths, ctranslate2_cuda_available
 from ai_player.core.offline_env import pop_hf_offline_environment, push_hf_offline_environment
 from ai_player.core.optional_imports import block_unneeded_transformers_optional_imports
+from ai_player.core.value_utils import int_value as _core_int_value
 
 
 class TranslationError(RuntimeError):
@@ -657,11 +658,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _int_value(value: object, *, default: int, minimum: int) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError, OverflowError):
-        number = default
-    return max(minimum, number)
+    return _core_int_value(value, default=default, minimum=minimum)
 
 
 def _disable_unneeded_transformers_optional_imports() -> dict[str, object]:

@@ -1,5 +1,5 @@
 # Windows release constraints validated on 2026-05-21 with Python 3.10.
-# Use with: python -m pip install -c constraints/windows-release-py310.txt -e ".[dev,packaging]"
+# Use with: python -m pip install -c constraints/windows-release-py310.txt -e ".[dev,packaging,offline-ai,gpu,audio-separation]"
 --extra-index-url https://download.pytorch.org/whl/cu128
 
 PySide6-Essentials==6.11.0
