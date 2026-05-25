@@ -5,10 +5,11 @@ Use this checklist before sharing a build.
 ## Source Baseline
 
 - Confirm the working tree contains only intended changes.
-- Install the release dependency set with `.\.venv\Scripts\python.exe -m pip install -c constraints\windows-release-py310.txt -e ".[dev,packaging,offline-ai,gpu,audio-separation]"`.
+- Install the release dependency set with `.\.venv\Scripts\python.exe -m pip install -c constraints\windows-release-py310.txt -e ".[dev,packaging,offline-ai,gpu,audio-separation,audit]"`.
 - Run `.\.venv\Scripts\python.exe -m ruff check .`.
 - Run `.\.venv\Scripts\python.exe -m pytest`.
 - Run `.\.venv\Scripts\python.exe .\scripts\runtime_doctor.py`.
+- Run `.\scripts\audit_dependencies.ps1` and triage any unresolved advisories. If audit tools are not installed yet, run it once with `-InstallTools`. Run `.\scripts\audit_dependencies.ps1 -AcceptedVulnerabilities @()` before release approval to review accepted advisories explicitly.
 
 ## Runtime Smoke Test
 

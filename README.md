@@ -81,6 +81,18 @@ Trong CI hoặc môi trường không cần liệt kê thiết bị audio:
 .\.venv\Scripts\python.exe .\scripts\runtime_doctor.py --ci
 ```
 
+## Dependency Audit
+
+Trước khi chia sẻ build, chạy audit dependency theo `docs/dependency_audit.md`:
+
+```powershell
+.\scripts\audit_dependencies.ps1
+```
+
+## License
+
+AI Player được phân phối theo giấy phép MIT. Xem `LICENSE`.
+
 ## Chạy App
 
 ```powershell

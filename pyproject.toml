@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=78.1.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,6 +8,22 @@ version = "0.1.0"
 description = "Windows AI video player with offline ASR, translation, OCR, and dubbing."
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  { name = "AI Player contributors" },
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Win32 (MS Windows)",
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Multimedia :: Sound/Audio :: Speech",
+  "Topic :: Multimedia :: Video",
+]
 dependencies = [
   "PySide6-Essentials>=6.7",
   "PySide6-Addons>=6.7",
@@ -50,12 +66,19 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.5",
 ]
+audit = [
+  "pip-audit>=2.10",
+]
 packaging = [
   "pyinstaller>=6.0",
 ]
 audio-separation = [
   "demucs>=4.0",
 ]
+
+[project.urls]
+Documentation = "https://github.com/khoalpa/ai.player#readme"
+Source = "https://github.com/khoalpa/ai.player"
 
 [tool.setuptools.packages.find]
 include = ["ai_player*", "yt_dlp_plugins*"]
