@@ -4,7 +4,9 @@ Use this checklist before sharing a build.
 
 ## Source Baseline
 
-- Confirm the working tree contains only intended changes.
+- Confirm the working tree contains only intended changes with `git status --short --branch`.
+- Review untracked files with `git ls-files -o --exclude-standard` and either add them intentionally or move generated scratch files under ignored paths.
+- Review binary fixture changes separately with `git diff --stat` so regenerated samples are not bundled by accident.
 - Install the release dependency set with `.\.venv\Scripts\python.exe -m pip install -c constraints\windows-release-py310.txt -e ".[dev,packaging,offline-ai,gpu,audio-separation,audit]"`.
 - Run `.\.venv\Scripts\python.exe -m ruff check .`.
 - Run `.\.venv\Scripts\python.exe -m pytest`.

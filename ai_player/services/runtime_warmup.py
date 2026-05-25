@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
+from ai_player.core.app_logging import get_logger
 from ai_player.core.config import RUNTIME_DIR, AppConfig
 from ai_player.core.i18n import ui_text
 from ai_player.core.performance import measure_stage
@@ -15,6 +16,8 @@ from ai_player.services.whisper_runtime import (
     effective_whisper_device,
     get_shared_whisper_model,
 )
+
+LOGGER = get_logger(__name__)
 
 
 class RuntimeWarmupCancelled(RuntimeError):
@@ -85,6 +88,12 @@ def _warm_whisper(config: AppConfig) -> None:
     except Exception:
         if device == "cpu" and compute_type == "int8":
             raise
+        LOGGER.warning(
+            "Whisper warmup failed on %s/%s; retrying on cpu/int8.",
+            device,
+            compute_type,
+            exc_info=True,
+        )
         with measure_stage("warmup", "whisper_load", device="cpu", compute="int8"):
             get_shared_whisper_model(
                 config.whisper_model,

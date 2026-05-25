@@ -11,7 +11,8 @@ from ai_player.services.document_reader import (
 )
 from ai_player.services.video_source import is_supported_video_url
 from ai_player.ui.cache_progress_dialog import CacheProgressDialog
-from ai_player.workers.player_window_workers import DocumentTranscriptWorker, VideoSourceWorker
+from ai_player.ui.player_window_utils import repair_mojibake as _repair_mojibake
+from ai_player.workers.player_window_workers import DocumentTranscriptWorker
 
 
 class PlayerSourceMixin:
@@ -137,7 +138,7 @@ class PlayerSourceMixin:
                 self._tr("msg_invalid_url"),
             )
             return
-        if self._url_worker is not None and self._url_worker.isRunning():
+        if self._url_is_opening():
             QMessageBox.information(self, self._tr("app_title"), self._tr("msg_url_opening"))
             return
 
@@ -152,7 +153,6 @@ class PlayerSourceMixin:
         )
         self._stop_dubbing()
         self._reset_document_state_for_video()
-        self._open_url_button.setEnabled(False)
         self._save_settings()
         if self._cache_dialog is not None:
             self._cache_dialog.close()
@@ -165,18 +165,12 @@ class PlayerSourceMixin:
         else:
             status_key = "status_open_url_stream_quality"
         self.statusBar().showMessage(self._tr(status_key).format(quality=quality_label))
-        self._url_worker = VideoSourceWorker(
+        self._video_url.start(
             url,
             self._config.playback_video_quality,
             full_cache=full_cache,
             language_id=self._config.gui_language,
-            parent=self,
         )
-        self._url_worker.progress_changed.connect(self._video_cache_progress_changed)
-        self._url_worker.resolved.connect(self._video_url_resolved)
-        self._url_worker.failed.connect(self._video_url_failed)
-        self._url_worker.finished.connect(self._video_url_finished)
-        self._url_worker.start()
 
     def _effective_video_url_full_cache(self) -> bool:
         if self._selected_video_url_full_cache():
@@ -236,16 +230,14 @@ class PlayerSourceMixin:
         self._invalidate_subtitle_entries()
 
     def _video_url_failed(self, message: str) -> None:
+        detail = _repair_mojibake(message)
         if self._cache_dialog is not None:
-            self._cache_dialog.mark_failed(message)
-        QMessageBox.warning(self, self._tr("open_url_error_title"), message)
+            self._cache_dialog.mark_failed(detail)
+        QMessageBox.warning(self, self._tr("open_url_error_title"), detail)
         self.statusBar().showMessage(self._tr("status_open_url_failed"))
 
     def _video_url_finished(self) -> None:
-        if self._url_worker is not None:
-            self._url_worker.deleteLater()
-            self._url_worker = None
-        self._open_url_button.setEnabled(True)
+        self._video_url.finished()
 
     def _save_transcript(self) -> None:
         text = self._transcript_text(self._selected_transcript_view(), self._selected_transcript_type())
@@ -385,4 +377,7 @@ class PlayerSourceMixin:
             self.statusBar().showMessage(self._tr("status_playback_quality_next_url"))
 
     def _url_is_opening(self) -> bool:
-        return self._url_worker is not None and self._url_worker.isRunning()
+        return self._video_url.is_opening()
+
+    def _stop_video_url(self, wait_ms: int = 5000) -> bool:
+        return self._video_url.stop(wait_ms=wait_ms)

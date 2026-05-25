@@ -4,7 +4,6 @@ import time
 
 from PySide6.QtCore import Qt, QThread, QTimer
 from PySide6.QtWidgets import (
-    QApplication,
     QFrame,
     QMainWindow,
 )
@@ -13,7 +12,6 @@ from ai_player.core.config import (
     AppConfig,
 )
 from ai_player.core.settings_store import load_app_config
-from ai_player.services.runtime_warmup import has_runtime_warmup_stage
 from ai_player.services.translation import (
     configured_translation_backend,
 )
@@ -32,14 +30,14 @@ from ai_player.ui.player_window_settings import PlayerSettingsMixin
 from ai_player.ui.player_window_sources import PlayerSourceMixin
 from ai_player.ui.player_window_transcript import PlayerTranscriptMixin
 from ai_player.ui.player_window_ui import PlayerUiMixin
+from ai_player.ui.runtime_warmup_controller import RuntimeWarmupController
 from ai_player.ui.user_guide import UserGuideMixin
+from ai_player.ui.video_url_controller import VideoUrlController
 from ai_player.workers.dubbing_worker import DubbingWorker
 from ai_player.workers.meeting_worker import MeetingWorker
 from ai_player.workers.player_window_workers import (
     PlaybackCompatibilityWorker,
-    RuntimeWarmupWorker,
     SourceAudioFilterWorker,
-    VideoSourceWorker,
 )
 
 
@@ -89,8 +87,8 @@ class PlayerWindow(
         self._export_worker: QThread | None = None
         self._meeting_worker: MeetingWorker | None = None
         self._meeting_elapsed = "00:00:00"
-        self._url_worker: VideoSourceWorker | None = None
-        self._runtime_warmup_worker: RuntimeWarmupWorker | None = None
+        self._video_url = VideoUrlController(self)
+        self._runtime_warmup = RuntimeWarmupController(self)
         self._document_worker = None
         self._source_filter_worker: SourceAudioFilterWorker | None = None
         self._source_filter_worker_mode = self._config.original_audio_voice_filter_mode
@@ -124,7 +122,6 @@ class PlayerWindow(
         self._runtime_media_path = ""
         self._runtime_media_info_path = ""
         self._runtime_media_info_text = self._tr("status_no_video")
-        self._runtime_warmup_last_status = ""
 
         self._transcript_segments: list[tuple[str, str]] = []
 
@@ -149,57 +146,22 @@ class PlayerWindow(
         self._start_runtime_warmup()
 
     def _start_runtime_warmup(self) -> None:
-        if not self._config.runtime_warmup_enabled:
-            return
-        if not has_runtime_warmup_stage(self._config):
-            return
-        app = QApplication.instance()
-        if app is not None and app.platformName().lower() == "offscreen":
-            return
-        if self._runtime_warmup_worker is not None:
-            return
-        worker = RuntimeWarmupWorker(self._config, self)
-        self._runtime_warmup_worker = worker
-        worker.status_changed.connect(self._runtime_warmup_status_changed)
-        worker.finished_successfully.connect(self._runtime_warmup_finished_successfully)
-        worker.failed.connect(self._runtime_warmup_failed)
-        worker.finished.connect(lambda worker=worker: self._runtime_warmup_worker_finished(worker))
-        worker.start()
+        self._runtime_warmup.start()
 
     def _runtime_warmup_status_changed(self, message: str) -> None:
-        self._show_runtime_warmup_status(message)
+        self._runtime_warmup.status_changed(message)
 
-    def _runtime_warmup_finished_successfully(self, _timings: object) -> None:
-        if isinstance(_timings, dict) and not _timings:
-            return
-        self._show_runtime_warmup_status(self._tr("status_runtime_warmup_ready"))
+    def _runtime_warmup_finished_successfully(self, timings: object) -> None:
+        self._runtime_warmup.finished_successfully(timings)
 
     def _runtime_warmup_failed(self, message: str) -> None:
-        self._show_runtime_warmup_status(self._tr("status_runtime_warmup_failed").format(detail=message))
+        self._runtime_warmup.failed(message)
 
     def _show_runtime_warmup_status(self, message: str) -> None:
-        if self._can_replace_status_with_runtime_warmup():
-            self._runtime_warmup_last_status = message
-            self.statusBar().showMessage(message)
+        self._runtime_warmup.show_status(message)
 
     def _can_replace_status_with_runtime_warmup(self) -> bool:
-        current = self.statusBar().currentMessage()
-        previous_warmup_status = getattr(self, "_runtime_warmup_last_status", "")
-        warmup_messages = {
-            self._tr("warmup_loading_whisper"),
-            self._tr("warmup_loading_translation"),
-            self._tr("warmup_loading_transcript_cleanup"),
-            self._tr("warmup_loading_tts"),
-            self._tr("status_runtime_warmup_ready"),
-        }
-        warmup_failed_prefix = self._tr("status_runtime_warmup_failed").split("{detail}", 1)[0]
-        return (
-            not current
-            or current == previous_warmup_status
-            or current == self._runtime_startup_status_message()
-            or current in warmup_messages
-            or (bool(warmup_failed_prefix) and current.startswith(warmup_failed_prefix))
-        )
+        return self._runtime_warmup.can_replace_status()
 
     def _runtime_startup_status_message(self) -> str:
         return self._tr("status_translation_backend").format(
@@ -207,7 +169,5 @@ class PlayerWindow(
             voice=self._config.tts_voice,
         )
 
-    def _runtime_warmup_worker_finished(self, worker: RuntimeWarmupWorker) -> None:
-        if self._runtime_warmup_worker is worker:
-            self._runtime_warmup_worker = None
-        worker.deleteLater()
+    def _stop_runtime_warmup(self, wait_ms: int = 5000) -> bool:
+        return self._runtime_warmup.stop(wait_ms=wait_ms)

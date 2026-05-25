@@ -46,6 +46,15 @@ To run without accepted advisories:
 .\scripts\audit_dependencies.ps1 -AcceptedVulnerabilities @()
 ```
 
+## Accepted Advisory Tracking
+
+- Re-run the strict command above before every release approval.
+- Keep each accepted advisory listed in this document with the affected package,
+  why the current app usage is mitigated, and what upstream change should remove
+  the exception.
+- Remove an advisory from the default ignore list in `scripts\audit_dependencies.ps1`
+  as soon as the resolved dependency set no longer reports it.
+
 ## Triage
 
 - Fail the release on high or critical vulnerabilities unless a documented mitigation exists.

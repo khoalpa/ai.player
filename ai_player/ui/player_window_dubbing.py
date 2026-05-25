@@ -67,9 +67,7 @@ class PlayerDubbingMixin:
         if hasattr(self, "_dub_button"):
             self._dub_button.setChecked(False)
         self._stop_dubbing()
-        if self._url_worker is not None:
-            self._stop_worker_attr("_url_worker", wait_ms=1500)
-            self._open_url_button.setEnabled(True)
+        self._stop_video_url(wait_ms=1500)
         if self._export_worker is not None:
             self._stop_worker_attr("_export_worker", wait_ms=1500)
             self._export_button.setEnabled(True)
