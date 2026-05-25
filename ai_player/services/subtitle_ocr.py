@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import re
 import shutil
 import subprocess
@@ -11,6 +10,7 @@ from pathlib import Path
 from PIL import Image, ImageOps
 
 from ai_player.core.config import DEFAULT_OCR_PROVIDER, OCR_MODELS_PATH, AppConfig
+from ai_player.core.value_utils import clamped_float, nonnegative_float
 from ai_player.services.ffmpeg import ffmpeg_executable
 
 
@@ -365,23 +365,11 @@ def _ocr_merge_similarity(config: AppConfig | None) -> float:
 
 
 def _clamp_float(value: object, minimum: float, maximum: float) -> float:
-    try:
-        numeric = float(value)
-    except (OverflowError, TypeError, ValueError):
-        return minimum
-    if not math.isfinite(numeric):
-        return minimum
-    return max(minimum, min(maximum, numeric))
+    return clamped_float(value, minimum=minimum, maximum=maximum)
 
 
 def _seconds_value(value: object, *, default: float) -> float:
-    try:
-        seconds = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    if not math.isfinite(seconds):
-        return default
-    return max(0.0, seconds)
+    return nonnegative_float(value, default=default)
 
 
 def _duration_value(value: object, *, default: float) -> float:

@@ -27,6 +27,15 @@ def optional_float(value: object) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def nonnegative_float(value: object, *, default: float) -> float:
+    return max(0.0, finite_float(value, default=default))
+
+
+def clamped_float(value: object, *, minimum: float, maximum: float, default: float | None = None) -> float:
+    numeric = finite_float(value, default=minimum if default is None else default)
+    return max(minimum, min(maximum, numeric))
+
+
 def int_value(value: object, *, default: int, minimum: int | None = None) -> int:
     try:
         number = int(value)

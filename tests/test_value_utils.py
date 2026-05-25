@@ -24,6 +24,18 @@ def test_optional_number_helpers_return_none_for_invalid_values() -> None:
     assert value_utils.optional_int("42") == 42
 
 
+def test_nonnegative_float_sanitizes_and_clamps_negative_values() -> None:
+    assert value_utils.nonnegative_float(float("inf"), default=2.0) == 2.0
+    assert value_utils.nonnegative_float("-1.5", default=2.0) == 0.0
+
+
+def test_clamped_float_sanitizes_nonfinite_and_bounds_values() -> None:
+    assert value_utils.clamped_float(float("inf"), minimum=0.0, maximum=1.0) == 0.0
+    assert value_utils.clamped_float("-1", minimum=0.0, maximum=1.0) == 0.0
+    assert value_utils.clamped_float("2", minimum=0.0, maximum=1.0) == 1.0
+    assert value_utils.clamped_float("0.4", minimum=0.0, maximum=1.0) == 0.4
+
+
 def test_int_value_handles_invalid_values_and_minimum() -> None:
     assert value_utils.int_value("bad", default=7) == 7
     assert value_utils.int_value(0, default=7, minimum=1) == 1
