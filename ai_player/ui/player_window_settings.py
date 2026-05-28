@@ -570,6 +570,7 @@ class PlayerSettingsMixin:
         self._set_checkbox(self._auto_match_audio_check, preset.get("dubbing_auto_match_audio"))
         self._set_combo_data(self._overlap_policy_combo, preset.get("dubbing_overlap_policy"))
         self._set_slider_value(self._video_delay_slider, preset.get("original_audio_playback_delay_seconds"))
+        self._set_checkbox(self._source_filter_check, preset.get("original_audio_voice_filter"))
         self._set_combo_data(self._source_filter_mode_combo, preset.get("original_audio_voice_filter_mode"))
         self._set_combo_data(self._export_video_quality_combo, preset.get("export_video_quality"))
         self._set_slider_value(
@@ -590,6 +591,7 @@ class PlayerSettingsMixin:
         )
         self._set_slider_value(self._volume_gain_min_slider, preset.get("dubbing_volume_gain_min_db"))
         self._set_slider_value(self._volume_gain_max_slider, preset.get("dubbing_volume_gain_max_db"))
+        self._set_checkbox(self._runtime_warmup_tts_check, preset.get("runtime_warmup_tts"))
         self._sync_auto_voice_controls_enabled()
         self._sync_auto_match_controls_enabled()
         self._sync_audio_source_controls()

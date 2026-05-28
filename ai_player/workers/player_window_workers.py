@@ -23,6 +23,16 @@ from ai_player.services.source_voice_filter import (
     source_voice_filter_cached_output_valid,
     write_source_voice_filter_metadata,
 )
+from ai_player.services.telegram_channel import (
+    TelegramLoginConfig,
+    TelegramLoginRequest,
+    TelegramPasswordRequired,
+    complete_telegram_login,
+    download_telegram_channel_video,
+    list_telegram_channel_videos,
+    list_telegram_channel_videos_authenticated,
+    start_telegram_login,
+)
 from ai_player.services.video_source import resolve_video_source
 
 LOGGER = get_logger(__name__)
@@ -141,6 +151,97 @@ class DocumentTranscriptWorker(QThread):
         if self._stop_requested or self.isInterruptionRequested():
             return
         self.ready.emit(transcript, self._start_dubbing)
+
+
+class TelegramChannelWorker(QThread):
+    videos_ready = Signal(object)
+    login_request_ready = Signal(object)
+    login_ready = Signal(object)
+    password_required = Signal(object, str)
+    video_ready = Signal(str)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        operation: str,
+        *,
+        url: str = "",
+        config: TelegramLoginConfig | None = None,
+        login_request: TelegramLoginRequest | None = None,
+        code: str = "",
+        password: str = "",
+        post_id: str = "",
+        language_id: str | None = None,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.operation = operation
+        self._url = url
+        self._config = config
+        self._login_request = login_request
+        self._code = code
+        self._password = password
+        self._post_id = post_id
+        self._language_id = language_id
+        self._stop_requested = False
+
+    def stop(self) -> None:
+        self._stop_requested = True
+        self.requestInterruption()
+
+    def run(self) -> None:
+        try:
+            if self.operation == "list_public":
+                self.videos_ready.emit(list_telegram_channel_videos(self._url, language_id=self._language_id))
+            elif self.operation == "list_authenticated":
+                if self._config is None:
+                    raise RuntimeError("Telegram login config is missing.")
+                self.videos_ready.emit(
+                    list_telegram_channel_videos_authenticated(
+                        self._url,
+                        self._config,
+                        language_id=self._language_id,
+                    )
+                )
+            elif self.operation == "start_login":
+                if self._config is None:
+                    raise RuntimeError("Telegram login config is missing.")
+                request = start_telegram_login(self._config, language_id=self._language_id)
+                if request is None:
+                    self.login_ready.emit(self._config)
+                else:
+                    self.login_request_ready.emit(request)
+            elif self.operation == "complete_login":
+                if self._login_request is None:
+                    raise RuntimeError("Telegram login request is missing.")
+                try:
+                    complete_telegram_login(
+                        self._login_request,
+                        self._code,
+                        password=self._password,
+                        language_id=self._language_id,
+                    )
+                except TelegramPasswordRequired:
+                    self.password_required.emit(self._login_request, self._code)
+                    return
+                self.login_ready.emit(self._login_request.config)
+            elif self.operation == "download":
+                if self._config is None:
+                    raise RuntimeError("Telegram login config is missing.")
+                self.video_ready.emit(
+                    download_telegram_channel_video(
+                        self._url,
+                        self._post_id,
+                        self._config,
+                        language_id=self._language_id,
+                    )
+                )
+            else:
+                raise RuntimeError(f"Unknown Telegram operation: {self.operation}")
+        except Exception as exc:
+            if not self._stop_requested and not self.isInterruptionRequested():
+                LOGGER.exception("Telegram channel worker failed.")
+                self.failed.emit(str(exc))
 
 
 class SourceAudioFilterWorker(QThread):

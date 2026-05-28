@@ -15,9 +15,12 @@ from ai_player.ui.player_window_utils import (
 
 class PlayerTranscriptMixin:
     def _append_segment(self, original: str, translated: str) -> None:
+        self._append_dubbing_segment(original, translated)
+        self._set_live_subtitle(original, translated)
+
+    def _append_dubbing_segment(self, original: str, translated: str) -> None:
         self._transcript_segments.append(self._make_transcript_segment(original, translated))
         self._render_transcript()
-        self._set_live_subtitle(original, translated)
 
     def _selected_transcript_view(self) -> str:
         if not hasattr(self, "_transcript_view_combo"):

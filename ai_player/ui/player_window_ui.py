@@ -243,16 +243,6 @@ class PlayerUiMixin:
             QStackedWidget#mediaStack[focusMedia="true"] {
                 border-radius: 0;
             }
-            QLabel#subtitleOverlay {
-                background: transparent;
-                color: #ffffff;
-                border: 0;
-                outline: 0;
-                padding: 0;
-                margin: 0;
-                font-size: 24px;
-                font-weight: 800;
-            }
             QScrollArea#sideScroll {
                 background: transparent;
                 border: 0;

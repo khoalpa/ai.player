@@ -22,6 +22,16 @@ def test_supported_video_url(url: str, expected: bool) -> None:
     assert video_source.is_supported_video_url(url) is expected
 
 
+def test_resolve_rejects_telegram_web_progressive_url() -> None:
+    with pytest.raises(video_source.VideoSourceError) as exc_info:
+        video_source.resolve_video_source(
+            "https://web.telegram.org/a/progressive/document6303332284653118021",
+            language_id="en",
+        )
+
+    assert "Telegram Web progressive" in str(exc_info.value)
+
+
 @pytest.mark.parametrize(
     ("url", "expected"),
     [

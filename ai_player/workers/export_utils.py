@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -265,7 +266,41 @@ def _json_text(value: object, *, default: str | None) -> str | None:
 
 
 def _clean_message(value: object) -> str:
+    if isinstance(value, subprocess.CalledProcessError):
+        return _format_process_exception(value)
     return clean_message(value)
+
+
+def _format_process_exception(exc: subprocess.CalledProcessError, max_length: int = 800) -> str:
+    executable = _process_executable_name(exc.cmd)
+    prefix = f"{executable} failed with exit code {exc.returncode}"
+    detail = _compact_process_detail(exc.stderr or exc.output or "", max_length=max_length - len(prefix) - 2)
+    message = f"{prefix}: {detail}" if detail else prefix
+    if len(message) > max_length:
+        return f"{message[: max_length - 3]}..."
+    return message
+
+
+def _compact_process_detail(detail: object, *, max_length: int = 500) -> str:
+    text = clean_message(detail).replace("\r", "\n")
+    lines = [" ".join(line.split()) for line in text.splitlines()]
+    lines = [line for line in lines if line]
+    if not lines:
+        return ""
+    message = " ".join(lines)
+    if len(message) <= max_length:
+        return message
+    tail_budget = max(80, max_length - 20)
+    return f"...{message[-tail_budget:]}"
+
+
+def _process_executable_name(command: object) -> str:
+    if isinstance(command, (list, tuple)) and command:
+        command_parts = [str(part) for part in command]
+        if "ai_player.services.demucs_runner" in command_parts:
+            return "demucs"
+        return Path(command_parts[0]).name or command_parts[0]
+    return str(command or "process")
 
 
 def _clean_transcript_many(cleaner, texts: list[str], source_language: str | None) -> list[str]:

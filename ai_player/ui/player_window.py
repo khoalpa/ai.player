@@ -28,6 +28,7 @@ from ai_player.ui.player_window_offline_models import PlayerOfflineModelsMixin
 from ai_player.ui.player_window_runtime import PlayerRuntimeMixin
 from ai_player.ui.player_window_settings import PlayerSettingsMixin
 from ai_player.ui.player_window_sources import PlayerSourceMixin
+from ai_player.ui.player_window_state import DocumentPlaybackState, SubtitleOverlayState
 from ai_player.ui.player_window_transcript import PlayerTranscriptMixin
 from ai_player.ui.player_window_ui import PlayerUiMixin
 from ai_player.ui.runtime_warmup_controller import RuntimeWarmupController
@@ -61,6 +62,8 @@ class PlayerWindow(
         super().__init__()
 
         self._config = load_app_config(AppConfig.from_env())
+        self._document_state = DocumentPlaybackState()
+        self._subtitle_state = SubtitleOverlayState()
         self._video_path: str | None = None
         self._media_frame: QFrame | None = None
         self._media_frame_parent = None
@@ -81,6 +84,7 @@ class PlayerWindow(
         self._live_subtitle_source_text = ""
         self._live_subtitle_target_text = ""
         self._live_subtitle_expires_at = 0.0
+        self._live_subtitle_entries: list[tuple[float, float, str, str]] = []
         self._clamping_to_screen = False
         self._dub_worker: DubbingWorker | None = None
         self._dub_worker_generation = 0
@@ -88,6 +92,8 @@ class PlayerWindow(
         self._meeting_worker: MeetingWorker | None = None
         self._meeting_elapsed = "00:00:00"
         self._video_url = VideoUrlController(self)
+        self._telegram_worker: QThread | None = None
+        self._pending_telegram_url = ""
         self._runtime_warmup = RuntimeWarmupController(self)
         self._document_worker = None
         self._source_filter_worker: SourceAudioFilterWorker | None = None
@@ -144,6 +150,126 @@ class PlayerWindow(
 
         self.statusBar().showMessage(self._runtime_startup_status_message())
         self._start_runtime_warmup()
+
+    @property
+    def _document_mode(self) -> bool:
+        return self._document_state.mode
+
+    @_document_mode.setter
+    def _document_mode(self, value: bool) -> None:
+        self._document_state.mode = bool(value)
+
+    @property
+    def _document_elapsed_ms(self) -> int:
+        return self._document_state.elapsed_ms
+
+    @_document_elapsed_ms.setter
+    def _document_elapsed_ms(self, value: int) -> None:
+        self._document_state.elapsed_ms = int(value or 0)
+
+    @property
+    def _document_started_at(self) -> float | None:
+        return self._document_state.started_at
+
+    @_document_started_at.setter
+    def _document_started_at(self, value: float | None) -> None:
+        self._document_state.started_at = value
+
+    @property
+    def _document_audio_sync_active(self) -> bool:
+        return self._document_state.audio_sync_active
+
+    @_document_audio_sync_active.setter
+    def _document_audio_sync_active(self, value: bool) -> None:
+        self._document_state.audio_sync_active = bool(value)
+
+    @property
+    def _document_duration_ms(self) -> int:
+        return self._document_state.duration_ms
+
+    @_document_duration_ms.setter
+    def _document_duration_ms(self, value: int) -> None:
+        self._document_state.duration_ms = max(0, int(value or 0))
+
+    @property
+    def _document_pages(self) -> list[object]:
+        return self._document_state.pages
+
+    @_document_pages.setter
+    def _document_pages(self, value: list[object]) -> None:
+        self._document_state.pages = list(value or [])
+
+    @property
+    def _document_current_page_index(self) -> int:
+        return self._document_state.current_page_index
+
+    @_document_current_page_index.setter
+    def _document_current_page_index(self, value: int) -> None:
+        self._document_state.current_page_index = int(value or 0)
+
+    @property
+    def _document_editor_active(self) -> bool:
+        return self._document_state.editor_active
+
+    @_document_editor_active.setter
+    def _document_editor_active(self, value: bool) -> None:
+        self._document_state.editor_active = bool(value)
+
+    @property
+    def _subtitle_entries(self) -> list[object]:
+        return self._subtitle_state.entries
+
+    @_subtitle_entries.setter
+    def _subtitle_entries(self, value: list[object]) -> None:
+        self._subtitle_state.entries = list(value or [])
+
+    @property
+    def _subtitle_entries_path(self) -> str:
+        return self._subtitle_state.entries_path
+
+    @_subtitle_entries_path.setter
+    def _subtitle_entries_path(self, value: str) -> None:
+        self._subtitle_state.entries_path = str(value or "")
+
+    @property
+    def _last_subtitle_text(self) -> str:
+        return self._subtitle_state.last_text
+
+    @_last_subtitle_text.setter
+    def _last_subtitle_text(self, value: str) -> None:
+        self._subtitle_state.last_text = str(value or "")
+
+    @property
+    def _live_subtitle_source_text(self) -> str:
+        return self._subtitle_state.live_source_text
+
+    @_live_subtitle_source_text.setter
+    def _live_subtitle_source_text(self, value: str) -> None:
+        self._subtitle_state.live_source_text = str(value or "")
+
+    @property
+    def _live_subtitle_target_text(self) -> str:
+        return self._subtitle_state.live_target_text
+
+    @_live_subtitle_target_text.setter
+    def _live_subtitle_target_text(self, value: str) -> None:
+        self._subtitle_state.live_target_text = str(value or "")
+
+    @property
+    def _live_subtitle_expires_at(self) -> float:
+        return self._subtitle_state.live_expires_at
+
+    @_live_subtitle_expires_at.setter
+    def _live_subtitle_expires_at(self, value: float) -> None:
+        self._subtitle_state.live_expires_at = float(value or 0.0)
+
+    @property
+    def _live_subtitle_entries(self) -> list[tuple[float, float, str, str]]:
+        return self._subtitle_state.live_entries
+
+    @_live_subtitle_entries.setter
+    def _live_subtitle_entries(self, value: list[tuple[float, float, str, str]]) -> None:
+        self._subtitle_state.live_entries = list(value or [])
 
     def _start_runtime_warmup(self) -> None:
         self._runtime_warmup.start()

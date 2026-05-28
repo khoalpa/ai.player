@@ -97,6 +97,9 @@ def resolve_video_source(
     if not url:
         raise VideoSourceError(ui_text("video_error_empty_url", language_id))
 
+    if is_telegram_web_progressive_url(url):
+        raise VideoSourceError(ui_text("video_error_telegram_web_progressive", language_id))
+
     if _should_resolve_with_ytdlp(url):
         return _resolve_page_url(url, playback_quality, full_cache, progress_callback, cancel_callback, language_id)
 
@@ -106,6 +109,13 @@ def resolve_video_source(
 def is_supported_video_url(value: str) -> bool:
     parsed = urlparse(value.strip())
     return parsed.scheme.lower() in {"http", "https", "rtsp", "rtmp", "mms"} and bool(parsed.hostname)
+
+
+def is_telegram_web_progressive_url(value: str) -> bool:
+    parsed = urlparse(value.strip())
+    host = _url_host(parsed)
+    path = parsed.path.lower()
+    return parsed.scheme.lower() in {"http", "https"} and host == "web.telegram.org" and "/progressive/" in path
 
 
 def _should_resolve_with_ytdlp(value: str) -> bool:

@@ -58,16 +58,16 @@ def test_load_app_config_ignores_unknown_secret_and_session_values(tmp_path, mon
     assert config.transcript_path == "base.srt"
 
 
-def test_load_app_config_migrates_saved_tts_warmup_to_default_off(tmp_path, monkeypatch) -> None:
+def test_load_app_config_preserves_saved_tts_warmup(tmp_path, monkeypatch) -> None:
     settings_file = tmp_path / "settings.json"
     settings_file.write_text(json.dumps({"runtime_warmup_tts": True}), encoding="utf-8")
     monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
     monkeypatch.setattr(settings_store, "read_preserved_source_terms_file", lambda: "OpenAI")
     monkeypatch.delenv("AI_PLAYER_PREWARM_TTS", raising=False)
 
-    config = settings_store.load_app_config(AppConfig(runtime_warmup_tts=True))
+    config = settings_store.load_app_config(AppConfig(runtime_warmup_tts=False))
 
-    assert config.runtime_warmup_tts is False
+    assert config.runtime_warmup_tts is True
 
 
 def test_load_app_config_allows_env_to_enable_tts_warmup(tmp_path, monkeypatch) -> None:

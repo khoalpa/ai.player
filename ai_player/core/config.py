@@ -211,7 +211,7 @@ class AppConfig:
     preserved_english_terms: str = field(default_factory=read_preserved_terms_file)
     preserved_english_terms_file: str = field(default_factory=lambda: str(preserved_english_terms_file_path()))
     translation_max_tokens: int = 152
-    translation_num_beams: int = 2
+    translation_num_beams: int = 1
     segment_seconds: int = 6
     dubbing_start_delay_seconds: float = 0.0
     dubbing_prebuffer_segments: int = 1
@@ -219,9 +219,9 @@ class AppConfig:
     dubbing_min_ready_ahead_seconds: float = DEFAULT_DUBBING_BUFFER_SECONDS
     dubbing_voice_volume: int = DEFAULT_DUBBING_VOICE_VOLUME
     dubbing_speed_percent: int = 0
-    dubbing_auto_match_audio: bool = True
+    dubbing_auto_match_audio: bool = False
     dubbing_overlap_policy: str = "smart"
-    dubbing_auto_voice_gender: bool = True
+    dubbing_auto_voice_gender: bool = False
     dubbing_auto_voice_gender_mode: str = "balanced"
     speaker_gender_model: str = field(default_factory=lambda: str(LOCAL_SPEAKER_GENDER_MODEL_PATH))
     dubbing_speed_min: float = 0.92
@@ -229,7 +229,7 @@ class AppConfig:
     dubbing_volume_gain_min_db: float = -8.0
     dubbing_volume_gain_max_db: float = 6.0
     original_audio_volume: int = DEFAULT_ORIGINAL_VOLUME
-    original_audio_voice_filter: bool = True
+    original_audio_voice_filter: bool = False
     original_audio_voice_filter_mode: str = "fast"
     original_audio_voice_filter_model: str = "htdemucs"
     original_audio_playback_delay_seconds: int = 6

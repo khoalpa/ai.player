@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -115,7 +116,18 @@ def test_staged_export_paths_define_manifest_artifacts(tmp_path) -> None:
     paths = staged_export_utils.StagedExportPaths.from_output_dir(tmp_path)
 
     assert paths.managed_dirs == (tmp_path / "audio", tmp_path / "subtitles", tmp_path / "tts", tmp_path / ".work")
-    assert paths.managed_files == (tmp_path / "dubbed_video.mp4", tmp_path / "manifest.json")
+    assert paths.managed_files == (
+        tmp_path / "audio" / "source_full.wav",
+        tmp_path / "subtitles" / "source.srt",
+        tmp_path / "subtitles" / "source.words.json",
+        tmp_path / "subtitles" / "target.srt",
+        tmp_path / "audio" / "source_voice.wav",
+        tmp_path / "audio" / "background_no_voice.wav",
+        tmp_path / "audio" / "target_voice.wav",
+        tmp_path / "audio" / "final_mix.wav",
+        tmp_path / "dubbed_video.mp4",
+        tmp_path / "manifest.json",
+    )
     assert paths.artifacts() == {
         "source_full_wav": "audio/source_full.wav",
         "source_srt": "subtitles/source.srt",
@@ -179,6 +191,42 @@ def test_staged_source_stems_fast_mode_runs_filter_args(tmp_path) -> None:
     assert len(commands) == 2
     assert "0.70*c0-0.55*c1" in commands[0][commands[0].index("-af") + 1]
     assert "0.5*c0+0.5*c1" in commands[1][commands[1].index("-af") + 1]
+
+
+def test_staged_demucs_stems_capture_process_output(tmp_path) -> None:
+    source_audio = tmp_path / "source.wav"
+    source_audio.write_bytes(b"source")
+    process_kwargs: dict[str, object] = {}
+
+    def fake_process(command, **kwargs):
+        process_kwargs.update(kwargs)
+        stem_root = tmp_path / ".work" / "demucs" / "htdemucs" / source_audio.stem
+        stem_root.mkdir(parents=True)
+        (stem_root / "no_vocals.wav").write_bytes(b"background")
+        (stem_root / "vocals.wav").write_bytes(b"voice")
+        return SimpleNamespace(returncode=0)
+
+    backend = staged_audio_stems.create_source_audio_stems(
+        config=AppConfig(original_audio_voice_filter=True, original_audio_voice_filter_mode="ai"),
+        source_audio=source_audio,
+        background_path=tmp_path / "background.wav",
+        voice_path=tmp_path / "voice.wav",
+        temp_dir=tmp_path / ".work",
+        run_process=fake_process,
+        run_ffmpeg=lambda _args: pytest.fail("AI filter should not use fast FFmpeg stems"),
+        to_wav=lambda input_path, output_path: Path(output_path).write_bytes(Path(input_path).read_bytes()),
+        cancel_callback=lambda: False,
+        demucs_available=lambda: True,
+        demucs_command=lambda: ["demucs"],
+        temp_missing_message="missing temp",
+    )
+
+    assert backend == "ai"
+    assert process_kwargs["stdout"] == subprocess.PIPE
+    assert process_kwargs["stderr"] == subprocess.PIPE
+    assert process_kwargs["text"] is True
+    assert process_kwargs["encoding"] == "utf-8"
+    assert process_kwargs["errors"] == "replace"
 
 
 def test_staged_target_voice_helper_replaces_non_speech_with_silence(tmp_path) -> None:

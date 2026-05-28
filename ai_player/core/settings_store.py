@@ -96,9 +96,7 @@ def _migrate_preserved_source_flags(data: dict[str, Any]) -> None:
 
 
 def _migrate_runtime_warmup_flags(data: dict[str, Any]) -> None:
-    if os.getenv("AI_PLAYER_PREWARM_TTS") is None:
-        data["runtime_warmup_tts"] = False
-    else:
+    if os.getenv("AI_PLAYER_PREWARM_TTS") is not None:
         data.pop("runtime_warmup_tts", None)
 
 

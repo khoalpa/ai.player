@@ -55,20 +55,37 @@ def run_cancelable_process(
         kwargs["stdin"] = subprocess.PIPE
     process = subprocess.Popen(command_text, **kwargs)
     try:
-        while True:
-            return_code = process.poll()
-            if return_code is not None:
-                break
-            if cancel_callback():
-                if cancel_strategy == "quit":
-                    _quit_process(process)
-                else:
-                    terminate_process(process)
-                raise ProcessCancelled("Process cancelled")
-            time.sleep(max(0.01, poll_interval_seconds))
+        capture_pipe = kwargs.get("stdout") == subprocess.PIPE or kwargs.get("stderr") == subprocess.PIPE
+        stdout = None
+        stderr = None
+        if capture_pipe:
+            while True:
+                try:
+                    stdout, stderr = process.communicate(timeout=max(0.01, poll_interval_seconds))
+                    return_code = process.returncode
+                    break
+                except subprocess.TimeoutExpired:
+                    if cancel_callback():
+                        if cancel_strategy == "quit":
+                            _quit_process(process)
+                        else:
+                            terminate_process(process)
+                        raise ProcessCancelled("Process cancelled") from None
+        else:
+            while True:
+                return_code = process.poll()
+                if return_code is not None:
+                    break
+                if cancel_callback():
+                    if cancel_strategy == "quit":
+                        _quit_process(process)
+                    else:
+                        terminate_process(process)
+                    raise ProcessCancelled("Process cancelled")
+                time.sleep(max(0.01, poll_interval_seconds))
         if check and return_code:
-            raise subprocess.CalledProcessError(return_code, command_text)
-        return subprocess.CompletedProcess(command_text, return_code)
+            raise subprocess.CalledProcessError(return_code, command_text, output=stdout, stderr=stderr)
+        return subprocess.CompletedProcess(command_text, return_code, stdout, stderr)
     finally:
         _close_process_stdin(process)
 

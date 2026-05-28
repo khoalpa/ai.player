@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, QUrl
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QFont, QPalette, QPixmap
 from PySide6.QtWidgets import QFrame
 
 from ai_player.services.ffmpeg import ffprobe_executable
@@ -546,6 +546,16 @@ class PlayerMediaMixin:
     def _position_subtitle_overlay(self) -> None:
         if not hasattr(self, "_subtitle_overlay") or not self._media_frame:
             return
+        if self._subtitle_overlay.parentWidget() is not None:
+            self._subtitle_overlay.setParent(None)
+            self._subtitle_overlay.setWindowFlags(
+                Qt.Tool
+                | Qt.FramelessWindowHint
+                | Qt.NoDropShadowWindowHint
+                | Qt.BypassWindowManagerHint
+                | Qt.WindowDoesNotAcceptFocus
+                | Qt.WindowStaysOnTopHint
+            )
         width = max(1, self._media_frame.width())
         font_size = self._subtitle_font_size()
         height = min(
@@ -556,6 +566,7 @@ class PlayerMediaMixin:
         y = max(0, self._media_frame.height() - height)
         top_left = self._media_frame.mapToGlobal(QPoint(x, y))
         self._subtitle_overlay.setGeometry(top_left.x(), top_left.y(), width, height)
+        self._subtitle_overlay.raise_()
 
     def _subtitle_font_size(self) -> int:
         if hasattr(self, "_subtitle_size_combo"):
@@ -586,16 +597,20 @@ class PlayerMediaMixin:
         background_color = self._subtitle_background_color()
         if hasattr(self._subtitle_overlay, "setSubtitleBackgroundColor"):
             self._subtitle_overlay.setSubtitleBackgroundColor(background_color)
-        self._subtitle_overlay.setStyleSheet(
-            "background-color: transparent;"
-            "border: none;"
-            "outline: none;"
-            f"color: {color};"
-            f"font-size: {font_size}px;"
-            "font-weight: 800;"
-            "padding: 0;"
-            "margin: 0;"
-        )
+        self._subtitle_overlay.setFrameShape(QFrame.Shape.NoFrame)
+        self._subtitle_overlay.setLineWidth(0)
+        self._subtitle_overlay.setMidLineWidth(0)
+        self._subtitle_overlay.setAutoFillBackground(False)
+        self._subtitle_overlay.setAttribute(Qt.WA_StyledBackground, False)
+        self._subtitle_overlay.setStyleSheet("")
+        font = QFont(self._subtitle_overlay.font())
+        font.setPixelSize(font_size)
+        font.setWeight(QFont.Weight.ExtraBold)
+        self._subtitle_overlay.setFont(font)
+        palette = self._subtitle_overlay.palette()
+        text_color = QColor(color)
+        palette.setColor(QPalette.ColorRole.WindowText, text_color if text_color.isValid() else QColor("#ffffff"))
+        self._subtitle_overlay.setPalette(palette)
 
     def _load_subtitle_entries_for_overlay(self) -> None:
         path = self._transcript_path_edit.text().strip()
@@ -632,6 +647,17 @@ class PlayerMediaMixin:
                 if float(entry.start) <= current_seconds < float(end):
                     text = _repair_mojibake(entry.text.strip())
                     break
+        if not text:
+            live_entries = getattr(self, "_live_subtitle_entries", [])
+            if live_entries:
+                stale_before = max(0.0, current_seconds - max(30.0, float(self._config.segment_seconds) * 4.0))
+                self._live_subtitle_entries = [entry for entry in live_entries if entry[1] >= stale_before]
+                mode_text_index = 2 if mode == "source" else 3
+                for start, end, source_text, target_text in self._live_subtitle_entries:
+                    if float(start) <= current_seconds < float(end):
+                        selected = source_text if mode_text_index == 2 else target_text
+                        text = _repair_mojibake(str(selected or source_text).strip())
+                        break
         if not text and time.monotonic() <= self._live_subtitle_expires_at:
             text = self._live_subtitle_source_text if mode == "source" else self._live_subtitle_target_text
         if not text:
@@ -965,8 +991,13 @@ class PlayerMediaMixin:
         else:
             self._player.set_position(self._position_slider.value() / 1000.0)
         if self._dub_button.isChecked():
-            self._stop_dubbing()
-            self._dub_button.setChecked(True)
+            worker = self._dub_worker
+            if worker is not None and worker.isRunning():
+                request_resync = getattr(worker, "request_resync", None)
+                if callable(request_resync):
+                    request_resync()
+                    self._set_dubbing_ready(False, self._tr("worker_resyncing_target_voice"))
+                    return
             self._start_dubbing()
 
     def _refresh_position(self) -> None:

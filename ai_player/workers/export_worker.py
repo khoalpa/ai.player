@@ -802,8 +802,8 @@ class StagedDubbingExportWorker(DubbingExportWorker):
     def _prepare_staged_output_dir(self, final_video: Path, manifest_path: Path) -> None:
         prepare_staged_output_dir(
             self._output_dir,
-            managed_dirs=(self._audio_dir, self._subtitle_dir, self._tts_dir, self._temp_dir),
-            managed_files=(final_video, manifest_path),
+            managed_dirs=self._paths.managed_dirs,
+            managed_files=self._paths.managed_files,
         )
 
     def _write_staged_manifest(

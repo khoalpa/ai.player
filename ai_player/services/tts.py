@@ -23,8 +23,12 @@ from typing import Any
 import edge_tts
 
 from ai_player.core.config import (
+    INTERNAL_VIENEU_STANDARD_CODEC,
     INTERNAL_VIENEU_STANDARD_GGUF,
     INTERNAL_VIENEU_STANDARD_PATH,
+    INTERNAL_VIENEU_TTS_PATH,
+    INTERNAL_VIENEU_TURBO_DECODER,
+    INTERNAL_VIENEU_TURBO_ENCODER,
     INTERNAL_VIENEU_TURBO_GGUF,
     INTERNAL_VIENEU_TURBO_PATH,
     PROJECT_ROOT,
@@ -68,6 +72,8 @@ _VIENEU_SERVER_CACHE_LOCK = threading.Lock()
 _VIENEU_SERVER_CACHE: dict[tuple[str, ...], VieNeuServerClient] = {}
 _TTS_CACHE_LOCK = threading.Lock()
 _TTS_CACHE_KEY_LOCKS: dict[Path, threading.Lock] = {}
+_EDGE_TTS_LOCK = threading.Lock()
+_VIENEU_REMOTE_CODEC_REPO = "neuphonic/neucodec-onnx-decoder-int8"
 
 
 def available_tts_providers() -> list[VoiceOption]:
@@ -167,6 +173,17 @@ def select_voice_for_gender(provider: str, config: AppConfig, gender: str) -> st
 
 def voice_gender(provider: str, voice_id: object) -> str:
     return _catalog_voice_gender(provider, voice_id)
+
+
+def _compatible_edge_voice_id(voice_id: object) -> str:
+    raw = str(voice_id or "").strip()
+    available_ids = {voice.id for voice in EDGE_VOICES}
+    if raw in available_ids:
+        return raw
+    gender = voice_gender("edge", raw)
+    if gender == "male":
+        return "vi-VN-NamMinhNeural"
+    return "vi-VN-HoaiMyNeural"
 
 
 def create_tts_provider(config: AppConfig) -> BaseTTSProvider:
@@ -450,10 +467,30 @@ class CachedTTSProvider(BaseTTSProvider):
 
 class EdgeTTSProvider(BaseTTSProvider):
     def __init__(self, config: AppConfig) -> None:
-        self._voice = config.tts_voice
+        self._voice = _compatible_edge_voice_id(config.tts_voice)
 
     def synthesize(self, text: str, output_path: Path, voice: str | None = None) -> None:
-        asyncio.run(self._synthesize(text, output_path, voice or self._voice))
+        clean_text = _clean_text(text)
+        if not clean_text:
+            raise TTSError("Edge TTS cannot read empty text.")
+        output_path = Path(output_path)
+        voice_id = _compatible_edge_voice_id(voice or self._voice)
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                with _EDGE_TTS_LOCK:
+                    asyncio.run(self._synthesize(clean_text, output_path, voice_id))
+                if output_path.exists() and output_path.stat().st_size > 0:
+                    return
+                raise TTSError("Edge TTS returned an empty audio file.")
+            except Exception as exc:
+                last_error = exc
+                _remove_tts_output(output_path)
+                if attempt >= 2:
+                    break
+                time.sleep(0.4 * (attempt + 1))
+        detail = _clean_message(last_error) if last_error is not None else "unknown error"
+        raise TTSError(f"Edge TTS failed for voice '{voice_id}': {detail}") from last_error
 
     async def _synthesize(self, text: str, output_path: Path, voice: str) -> None:
         communicate = edge_tts.Communicate(text, voice)
@@ -522,8 +559,12 @@ class VieNeuTTSProvider(BaseTTSProvider):
         )
         try:
             audio = engine.infer(**infer_kwargs)
+            if _empty_vieneu_audio(audio):
+                raise TTSError(_vieneu_empty_audio_message(config))
             output_path.parent.mkdir(parents=True, exist_ok=True)
             engine.save(audio, str(output_path))
+            if not output_path.exists() or output_path.stat().st_size <= 44:
+                raise TTSError(_vieneu_empty_audio_message(config))
         except Exception as exc:
             raise TTSError(
                 "VieNeu-TTS không tạo được audio "
@@ -551,7 +592,9 @@ class VieNeuTTSProvider(BaseTTSProvider):
 
     def _should_use_subprocess(self, config: AppConfig) -> bool:
         runtime = str(config.vieneu_tts_runtime or "auto").strip().lower()
-        return runtime == "subprocess" or (runtime == "auto" and self._can_use_subprocess(config))
+        if runtime == "subprocess":
+            return self._can_use_subprocess(config)
+        return runtime == "auto" and self._can_use_subprocess(config)
 
     def _can_use_subprocess(self, config: AppConfig) -> bool:
         python = Path(config.vieneu_tts_python)
@@ -631,12 +674,15 @@ class VieNeuServerClient:
             "--backend",
             backend,
         ]
-        if config.vieneu_tts_decoder_path:
-            command.extend(["--decoder-path", str(Path(config.vieneu_tts_decoder_path))])
-        if config.vieneu_tts_encoder_path:
-            command.extend(["--encoder-path", str(Path(config.vieneu_tts_encoder_path))])
-        if config.vieneu_tts_standard_codec_path:
-            command.extend(["--standard-codec-path", str(Path(config.vieneu_tts_standard_codec_path))])
+        decoder_path = _effective_vieneu_decoder_path(config)
+        encoder_path = _effective_vieneu_encoder_path(config)
+        standard_codec_path = _effective_vieneu_standard_codec_path(config)
+        if decoder_path:
+            command.extend(["--decoder-path", str(Path(decoder_path))])
+        if encoder_path:
+            command.extend(["--encoder-path", str(Path(encoder_path))])
+        if standard_codec_path:
+            command.extend(["--standard-codec-path", str(Path(standard_codec_path))])
         if config.vieneu_tts_offline:
             command.append("--offline")
         env = os.environ.copy()
@@ -795,6 +841,13 @@ atexit.register(_close_shared_vieneu_servers)
 def _vieneu_fallback_configs(config: AppConfig) -> list[AppConfig]:
     candidates: list[AppConfig] = [config]
     requested_mode = normalize_vieneu_mode(config.vieneu_tts_mode)
+    effective_mode = resolve_vieneu_effective_mode(
+        config.vieneu_tts_core,
+        config.vieneu_tts_mode,
+        config.vieneu_tts_device,
+    )
+    if effective_mode == "remote":
+        return candidates
     cuda_available = _runtime_has_cuda()
 
     if requested_mode == "standard":
@@ -875,9 +928,10 @@ def _vieneu_server_config_key(config: AppConfig) -> tuple[str, ...]:
         device,
         backend,
         model_name,
-        str(Path(config.vieneu_tts_decoder_path)),
-        str(Path(config.vieneu_tts_encoder_path)),
-        str(Path(config.vieneu_tts_standard_codec_path)),
+        str(config.vieneu_tts_api_base or ""),
+        str(Path(_effective_vieneu_decoder_path(config))),
+        str(Path(_effective_vieneu_encoder_path(config))),
+        str(Path(_effective_vieneu_standard_codec_path(config))),
         str(config.vieneu_tts_runtime),
         str(config.vieneu_tts_offline),
     )
@@ -902,6 +956,14 @@ def _compatible_vieneu_voice_id(config: AppConfig, voice_id: str) -> str:
     available_ids = {voice.id for voice in voices}
     if migrated in available_ids:
         return migrated
+    gender = voice_gender("vieneu", voice_id)
+    if gender in {"male", "female"}:
+        for preferred in _preferred_voice_ids("vieneu", config, gender):
+            if preferred in available_ids:
+                return preferred
+        for voice in voices:
+            if voice_gender("vieneu", voice.id) == gender:
+                return voice.id
     return voices[0].id if voices else voice_id
 
 
@@ -937,15 +999,18 @@ def _get_vieneu_engine(config: AppConfig):
     api_base = str(config.vieneu_tts_api_base or "").strip()
     if selected_mode != "remote":
         api_base = ""
+    decoder_path = _effective_vieneu_decoder_path(config)
+    encoder_path = _effective_vieneu_encoder_path(config)
+    standard_codec_path = _effective_vieneu_standard_codec_path(config)
 
     cache_key = (
         str(root.resolve()) if root.exists() else str(root),
         selected_mode,
         api_base,
         model_name,
-        str(Path(config.vieneu_tts_decoder_path)) if config.vieneu_tts_decoder_path else "",
-        str(Path(config.vieneu_tts_encoder_path)) if config.vieneu_tts_encoder_path else "",
-        str(Path(config.vieneu_tts_standard_codec_path)) if config.vieneu_tts_standard_codec_path else "",
+        str(Path(decoder_path)) if decoder_path else "",
+        str(Path(encoder_path)) if encoder_path else "",
+        str(Path(standard_codec_path)) if standard_codec_path else "",
         device,
         backend,
     )
@@ -971,9 +1036,9 @@ def _get_vieneu_engine(config: AppConfig):
             mode=selected_mode,
             api_base=api_base,
             model_name=model_name,
-            decoder_path=config.vieneu_tts_decoder_path,
-            encoder_path=config.vieneu_tts_encoder_path,
-            standard_codec_path=config.vieneu_tts_standard_codec_path,
+            decoder_path=_effective_vieneu_decoder_path(config),
+            encoder_path=_effective_vieneu_encoder_path(config),
+            standard_codec_path=_effective_vieneu_standard_codec_path(config),
             device=device,
             backend=backend,
         )
@@ -1008,6 +1073,8 @@ def _build_vieneu_engine_kwargs(
             kwargs["api_base"] = api_base
         if model_name:
             kwargs["model_name"] = model_name
+        kwargs["codec_repo"] = _VIENEU_REMOTE_CODEC_REPO
+        kwargs["codec_device"] = "cpu"
         return kwargs
 
     if model_name:
@@ -1062,6 +1129,27 @@ def _resolve_existing_dir(value: str) -> str:
     return str(path.resolve()) if path.exists() and path.is_dir() else value
 
 
+def _effective_vieneu_decoder_path(config: AppConfig) -> str:
+    configured = str(config.vieneu_tts_decoder_path or "").strip()
+    if configured and Path(configured).exists():
+        return configured
+    return INTERNAL_VIENEU_TURBO_DECODER if Path(INTERNAL_VIENEU_TURBO_DECODER).exists() else configured
+
+
+def _effective_vieneu_encoder_path(config: AppConfig) -> str:
+    configured = str(config.vieneu_tts_encoder_path or "").strip()
+    if configured and Path(configured).exists():
+        return configured
+    return INTERNAL_VIENEU_TURBO_ENCODER if Path(INTERNAL_VIENEU_TURBO_ENCODER).exists() else configured
+
+
+def _effective_vieneu_standard_codec_path(config: AppConfig) -> str:
+    configured = str(config.vieneu_tts_standard_codec_path or "").strip()
+    if configured and Path(configured).exists():
+        return configured
+    return INTERNAL_VIENEU_STANDARD_CODEC if Path(INTERNAL_VIENEU_STANDARD_CODEC).exists() else configured
+
+
 def _local_vieneu_standard_models() -> list[VieNeuModelOption]:
     standard_dir = INTERNAL_VIENEU_STANDARD_PATH
     if not standard_dir.exists():
@@ -1101,15 +1189,15 @@ def _validate_vieneu_local_files(config: AppConfig, mode: str, model_name: str) 
     if mode != "standard":
         required.extend(
             [
-                ("decoder", config.vieneu_tts_decoder_path),
-                ("encoder", config.vieneu_tts_encoder_path),
+                ("decoder", _effective_vieneu_decoder_path(config)),
+                ("encoder", _effective_vieneu_encoder_path(config)),
             ]
         )
     else:
         required.append(
             (
                 "standard codec",
-                str(Path(config.vieneu_tts_standard_codec_path) / "pytorch_model.bin"),
+                str(Path(_effective_vieneu_standard_codec_path(config)) / "pytorch_model.bin"),
             )
         )
 
@@ -1146,6 +1234,31 @@ def _build_vieneu_infer_kwargs(
     if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
         return {key: value for key, value in kwargs.items() if value is not None}
     return {key: value for key, value in kwargs.items() if key in signature.parameters and value is not None}
+
+
+def _empty_vieneu_audio(audio: object) -> bool:
+    size = getattr(audio, "size", None)
+    if size is not None:
+        try:
+            return int(size) <= 0
+        except (TypeError, ValueError, OverflowError):
+            pass
+    try:
+        return len(audio) <= 0  # type: ignore[arg-type]
+    except Exception:
+        return audio is None
+
+
+def _vieneu_empty_audio_message(config: AppConfig) -> str:
+    mode = resolve_vieneu_effective_mode(
+        config.vieneu_tts_core,
+        config.vieneu_tts_mode,
+        config.vieneu_tts_device,
+    )
+    if mode == "remote":
+        api_base = str(config.vieneu_tts_api_base or "http://localhost:23333/v1")
+        return f"VieNeu remote API không trả về audio. Kiểm tra server/API tại {api_base}."
+    return "VieNeu-TTS trả về audio rỗng."
 
 
 def _resolve_vieneu_preset_voice(engine: Any, voice_id: str) -> Any | None:
@@ -1239,7 +1352,7 @@ def _preferred_voice_ids(provider: str, config: AppConfig, gender: str) -> tuple
         config.vieneu_tts_mode,
         config.vieneu_tts_device,
     )
-    if mode == "standard":
+    if mode in {"standard", "remote"}:
         return ("Vinh", "Binh", "Tuyen") if gender == "male" else ("Doan", "Ngoc", "Ly")
     return (
         ("Xuân Vĩnh", "Phạm Tuyên", "Xuan Vinh", "Pham Tuyen")
@@ -1256,9 +1369,22 @@ def _clean_text(value: object) -> str:
     return _core_clean_text(value)
 
 
+def _remove_tts_output(path: Path) -> None:
+    try:
+        if path.exists():
+            path.unlink()
+    except OSError:
+        pass
+
+
 def _vieneu_import_root(root: Path) -> Path:
     if (root / "src" / "vieneu").exists():
         return root / "src"
+    if (root / "vieneu").exists():
+        return root
+    bundled = Path(INTERNAL_VIENEU_TTS_PATH)
+    if (bundled / "vieneu").exists():
+        return bundled
     return root
 
 
@@ -1271,6 +1397,8 @@ def _vieneu_voices(config: AppConfig | None) -> list[VoiceOption]:
         config.vieneu_tts_mode,
         config.vieneu_tts_device,
     )
+    if mode == "remote":
+        return STANDARD_VIENEU_VOICES
     model_voices_path = _vieneu_model_voices_path(config.vieneu_tts_model_name)
     if model_voices_path.is_file():
         voices = _read_vieneu_voices(model_voices_path)
@@ -1285,4 +1413,4 @@ def _vieneu_voices(config: AppConfig | None) -> list[VoiceOption]:
             if voices:
                 return voices
 
-    return STANDARD_VIENEU_VOICES if mode == "standard" else TURBO_VIENEU_VOICES
+    return STANDARD_VIENEU_VOICES if mode in {"standard", "remote"} else TURBO_VIENEU_VOICES

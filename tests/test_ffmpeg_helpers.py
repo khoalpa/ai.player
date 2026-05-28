@@ -1,6 +1,9 @@
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from ai_player.services import ffmpeg as ffmpeg_service
 from ai_player.services.ffmpeg import concat_escape, concat_file_line, safe_float
@@ -163,6 +166,33 @@ def test_cancelable_quit_process_closes_stdin_on_normal_exit(monkeypatch) -> Non
     assert result.returncode == 0
     assert popen_kwargs[0]["stdin"] == subprocess.PIPE
     assert created[0].stdin.closed
+
+
+def test_cancelable_process_captures_pipe_output() -> None:
+    result = ffmpeg_service.run_cancelable_process(
+        [sys.executable, "-c", "import sys; sys.stdout.write('ok'); sys.stderr.write('warn')"],
+        cancel_callback=lambda: False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    assert result.stdout == "ok"
+    assert result.stderr == "warn"
+
+
+def test_cancelable_process_error_includes_pipe_output() -> None:
+    with pytest.raises(subprocess.CalledProcessError) as error:
+        ffmpeg_service.run_cancelable_process(
+            [sys.executable, "-c", "import sys; sys.stderr.write('real failure'); raise SystemExit(3)"],
+            cancel_callback=lambda: False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    assert error.value.returncode == 3
+    assert error.value.stderr == "real failure"
 
 
 def test_terminate_process_kills_after_terminate_timeout() -> None:

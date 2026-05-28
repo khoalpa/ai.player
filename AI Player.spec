@@ -22,6 +22,9 @@ binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
 hiddenimports += collect_submodules("yt_dlp_plugins")
 
+if find_spec("telethon") is not None:
+    hiddenimports += collect_submodules("telethon")
+
 
 def _runtime_module(module_name):
     return ".tests" not in module_name and not module_name.endswith(".tests")

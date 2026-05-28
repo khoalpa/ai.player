@@ -22,4 +22,5 @@ neucodec>=0.0.5
 yt-dlp>=2025.1.15
 onnxruntime>=1.18; platform_system != "Windows"
 requests>=2.31
+telethon>=1.36
 tqdm>=4.66

@@ -157,7 +157,8 @@ class PlayerDubbingMixin:
             self,
         )
         self._dub_worker.status_changed.connect(self.statusBar().showMessage)
-        self._dub_worker.segment_ready.connect(self._append_segment)
+        self._dub_worker.segment_ready.connect(self._append_dubbing_segment)
+        self._dub_worker.subtitle_ready.connect(self._set_timed_live_subtitle)
         self._dub_worker.audio_started.connect(self._sync_document_to_audio_start)
         self._dub_worker.playback_pause_requested.connect(self._pause_for_dubbing_buffer)
         self._dub_worker.playback_resume_requested.connect(self._resume_after_dubbing_buffer)
@@ -206,6 +207,37 @@ class PlayerDubbingMixin:
         text_for_duration = self._live_subtitle_target_text or self._live_subtitle_source_text
         seconds = max(3.0, min(12.0, len(text_for_duration) / 16.0))
         self._live_subtitle_expires_at = time.monotonic() + seconds
+        if self._selected_subtitle_mode() != "off":
+            self._last_subtitle_text = ""
+            self._update_subtitle_overlay()
+
+    def _set_timed_live_subtitle(
+        self,
+        start_seconds: float,
+        duration_seconds: float,
+        source_text: str,
+        target_text: str = "",
+    ) -> None:
+        source_text = _repair_mojibake(str(source_text or "").strip())
+        target_text = _repair_mojibake(str(target_text or "").strip())
+        if not source_text and not target_text:
+            return
+        try:
+            start = max(0.0, float(start_seconds))
+        except (TypeError, ValueError, OverflowError):
+            start = 0.0
+        try:
+            duration = max(0.25, float(duration_seconds))
+        except (TypeError, ValueError, OverflowError):
+            duration = 0.25
+        text_for_duration = target_text or source_text
+        readable_duration = max(1.0, min(12.0, len(text_for_duration) / 14.0))
+        end = start + max(duration, readable_duration)
+        entries = getattr(self, "_live_subtitle_entries", [])
+        key = (round(start, 3), source_text, target_text)
+        entries = [entry for entry in entries if (round(entry[0], 3), entry[2], entry[3]) != key]
+        entries.append((start, end, source_text, target_text or source_text))
+        self._live_subtitle_entries = sorted(entries, key=lambda entry: entry[0])[-200:]
         if self._selected_subtitle_mode() != "off":
             self._last_subtitle_text = ""
             self._update_subtitle_overlay()

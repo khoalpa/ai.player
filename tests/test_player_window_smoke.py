@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QFrame, QScrollArea
@@ -10,6 +11,7 @@ from ai_player.services.document_reader import DocumentPage
 from ai_player.ui.player_window import PlayerWindow
 from ai_player.ui.player_window_layout import _subtitle_qcolor
 from ai_player.ui.player_window_media import _document_ms_value, _document_seconds_value
+from ai_player.ui.player_window_sources import _TelegramVideoChoiceDialog
 
 
 def test_player_window_constructs_offscreen(qapp) -> None:
@@ -18,6 +20,20 @@ def test_player_window_constructs_offscreen(qapp) -> None:
         assert window.windowTitle()
     finally:
         window.close()
+
+
+def test_telegram_video_dialog_keeps_duplicate_titles_distinct(qapp) -> None:
+    videos = [
+        SimpleNamespace(title="same title", post_id="101"),
+        SimpleNamespace(title="same title", post_id="102"),
+    ]
+    dialog = _TelegramVideoChoiceDialog(videos, "en")
+    try:
+        dialog._list.setCurrentRow(1)
+        item = dialog._list.currentItem()
+        assert item.data(Qt.ItemDataRole.UserRole) == 1
+    finally:
+        dialog.close()
 
 
 def test_player_window_runtime_format_helpers(qapp) -> None:
@@ -126,6 +142,58 @@ def test_player_window_event_loop_smoke(qapp) -> None:
         QTimer.singleShot(10, qapp.quit)
         assert qapp.exec() == 0
     finally:
+        window.close()
+
+
+def test_seek_requests_dubbing_resync_without_blocking_stop(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    try:
+        calls: list[object] = []
+
+        class FakePlayer:
+            def set_position(self, value: float) -> None:
+                calls.append(("set_position", value))
+
+            def stop(self) -> None:
+                calls.append("player_stop")
+
+        class FakeDubbingWorker:
+            def isRunning(self) -> bool:
+                return True
+
+            def request_resync(self) -> None:
+                calls.append("request_resync")
+
+            def stop(self) -> None:
+                raise AssertionError("seek must not stop dubbing synchronously")
+
+            def wait(self, _timeout_ms: int) -> bool:
+                raise AssertionError("seek must not wait for dubbing synchronously")
+
+        monkeypatch.setattr(window, "_player", FakePlayer())
+        monkeypatch.setattr(
+            window,
+            "_set_dubbing_ready",
+            lambda ready, message="": calls.append(("ready", ready, message)),
+        )
+        window._document_mode = False
+        window._video_path = "demo.mp4"
+        window._dub_worker = FakeDubbingWorker()
+        window._dub_button.blockSignals(True)
+        window._dub_button.setChecked(True)
+        window._dub_button.blockSignals(False)
+        window._position_slider.setValue(500)
+
+        window._end_seek()
+
+        assert ("set_position", 0.5) in calls
+        assert "request_resync" in calls
+        assert any(call[0:2] == ("ready", False) for call in calls if isinstance(call, tuple))
+    finally:
+        window._dub_worker = None
+        window._dub_button.blockSignals(True)
+        window._dub_button.setChecked(False)
+        window._dub_button.blockSignals(False)
         window.close()
 
 
@@ -566,8 +634,43 @@ def test_subtitle_background_combo_updates_overlay_style(qapp) -> None:
 
         assert window._subtitle_background_color() == "rgba(0, 0, 0, 160)"
         assert window._subtitle_overlay.subtitleBackgroundColor().getRgb() == (0, 0, 0, 160)
-        assert "background-color: transparent" in window._subtitle_overlay.styleSheet()
-        assert window._subtitle_overlay.testAttribute(Qt.WA_StyledBackground)
+        assert window._subtitle_overlay.styleSheet() == ""
+        assert window._subtitle_overlay.font().pixelSize() == window._subtitle_font_size()
+        assert window._subtitle_overlay.frameShape() == QFrame.Shape.NoFrame
+        assert window._subtitle_overlay.lineWidth() == 0
+        assert window._subtitle_overlay.midLineWidth() == 0
+        assert window._subtitle_overlay.parentWidget() is None
+        assert window._subtitle_overlay.isWindow()
+        assert window._subtitle_overlay.windowFlags() & Qt.NoDropShadowWindowHint
+        assert window._subtitle_overlay.windowFlags() & Qt.BypassWindowManagerHint
+        assert window._subtitle_overlay.testAttribute(Qt.WA_NoSystemBackground)
+        assert not window._subtitle_overlay.testAttribute(Qt.WA_StyledBackground)
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_timed_live_subtitle_tracks_source_audio_time(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    try:
+        current_ms = {"value": 0}
+        fake_player = SimpleNamespace(get_time_ms=lambda: current_ms["value"], stop=lambda: None)
+        monkeypatch.setattr(window, "_player", fake_player)
+        window._set_combo_data(window._subtitle_mode_combo, "target")
+        window._set_timed_live_subtitle(10.0, 2.0, "source line", "target line")
+
+        current_ms["value"] = 9000
+        window._update_subtitle_overlay()
+        assert not window._subtitle_overlay.isVisible()
+
+        current_ms["value"] = 10500
+        window._update_subtitle_overlay()
+        assert window._subtitle_overlay.text() == "target line"
+        assert window._subtitle_overlay.isVisible()
+
+        current_ms["value"] = 14000
+        window._update_subtitle_overlay()
+        assert not window._subtitle_overlay.isVisible()
         window._settings_save_timer.stop()
     finally:
         window.close()

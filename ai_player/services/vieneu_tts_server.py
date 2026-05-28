@@ -111,6 +111,8 @@ def _engine_kwargs(
             kwargs["api_base"] = api_base
         if model_name:
             kwargs["model_name"] = model_name
+        kwargs["codec_repo"] = "neuphonic/neucodec-onnx-decoder-int8"
+        kwargs["codec_device"] = "cpu"
         return kwargs
 
     runtime_device = "cuda" if device == "cuda" else "cpu"

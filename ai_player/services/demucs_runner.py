@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -8,10 +9,22 @@ import soundfile as sf
 
 
 def main() -> None:
+    _prefer_resolved_media_tools()
     _patch_torchaudio_save()
     from demucs.separate import main as demucs_main
 
     demucs_main()
+
+
+def _prefer_resolved_media_tools() -> None:
+    from ai_player.services.ffmpeg import ffmpeg_executable, ffprobe_executable
+
+    paths = [Path(ffmpeg_executable()).parent, Path(ffprobe_executable()).parent]
+    directories = [str(path) for path in dict.fromkeys(paths) if path.is_dir()]
+    if not directories:
+        return
+    current_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = os.pathsep.join([*directories, current_path] if current_path else directories)
 
 
 def _patch_torchaudio_save() -> None:

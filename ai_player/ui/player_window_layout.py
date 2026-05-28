@@ -52,8 +52,8 @@ from ai_player.ui.player_window_utils import (
 
 
 class SubtitleOverlayLabel(QLabel):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
         self._subtitle_background_color = QColor(0, 0, 0, 0)
 
     def setSubtitleBackgroundColor(self, value: str) -> None:
@@ -236,7 +236,14 @@ class PlayerLayoutMixin:
         media_frame_layout.setContentsMargins(0, 0, 0, 0)
         media_frame_layout.addWidget(self._media_stack)
         self._subtitle_overlay = SubtitleOverlayLabel()
-        self._subtitle_overlay.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self._subtitle_overlay.setWindowFlags(
+            Qt.Tool
+            | Qt.FramelessWindowHint
+            | Qt.NoDropShadowWindowHint
+            | Qt.BypassWindowManagerHint
+            | Qt.WindowDoesNotAcceptFocus
+            | Qt.WindowStaysOnTopHint
+        )
         self._subtitle_overlay.setObjectName("subtitleOverlay")
         self._subtitle_overlay.setAlignment(Qt.AlignCenter)
         self._subtitle_overlay.setWordWrap(True)
@@ -247,7 +254,8 @@ class PlayerLayoutMixin:
         self._subtitle_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self._subtitle_overlay.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self._subtitle_overlay.setAttribute(Qt.WA_TranslucentBackground, True)
-        self._subtitle_overlay.setAttribute(Qt.WA_StyledBackground, True)
+        self._subtitle_overlay.setAttribute(Qt.WA_NoSystemBackground, True)
+        self._subtitle_overlay.setAttribute(Qt.WA_StyledBackground, False)
         self._subtitle_overlay.setAutoFillBackground(False)
         self._subtitle_overlay.hide()
         self._fullscreen_shortcut = QShortcut(QKeySequence("F11"), self)

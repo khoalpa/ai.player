@@ -1,7 +1,9 @@
+import os
 from pathlib import Path
 
 from ai_player.core.config import AppConfig
-from ai_player.services import demucs_separation
+from ai_player.services import demucs_runner, demucs_separation
+from ai_player.services import ffmpeg as ffmpeg_service
 from ai_player.services.audio_playback import _pcm_bytes_to_float32
 from ai_player.services.runtime_warmup import RuntimeWarmupCancelled, warm_runtime_components
 from ai_player.services.translation_runtime import (
@@ -93,6 +95,18 @@ def test_demucs_two_stem_args_use_selected_model_and_output(tmp_path) -> None:
     assert args[args.index("--two-stems") + 1] == "vocals"
     assert args[args.index("-o") + 1] == str(tmp_path / "stems")
     assert args[-1] == str(tmp_path / "source.wav")
+
+
+def test_demucs_runner_prefers_resolved_media_tools(monkeypatch, tmp_path) -> None:
+    media_bin = tmp_path / "ffmpeg" / "bin"
+    media_bin.mkdir(parents=True)
+    monkeypatch.setattr(ffmpeg_service, "ffmpeg_executable", lambda: str(media_bin / "ffmpeg.exe"))
+    monkeypatch.setattr(ffmpeg_service, "ffprobe_executable", lambda: str(media_bin / "ffprobe.exe"))
+    monkeypatch.setenv("PATH", "C:\\blocked-shims")
+
+    demucs_runner._prefer_resolved_media_tools()
+
+    assert os.environ["PATH"].split(os.pathsep)[:2] == [str(media_bin), "C:\\blocked-shims"]
 
 
 def test_demucs_python_does_not_use_frozen_app_executable(monkeypatch, tmp_path) -> None:

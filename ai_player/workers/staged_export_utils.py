@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,8 +60,19 @@ class StagedExportPaths:
         return (self.audio_dir, self.subtitle_dir, self.tts_dir, self.work_dir)
 
     @property
-    def managed_files(self) -> tuple[Path, Path]:
-        return (self.final_video, self.manifest)
+    def managed_files(self) -> tuple[Path, ...]:
+        return (
+            self.source_full,
+            self.source_srt,
+            self.words_json,
+            self.target_srt,
+            self.source_voice,
+            self.background,
+            self.target_voice,
+            self.final_mix,
+            self.final_video,
+            self.manifest,
+        )
 
     def artifacts(self) -> dict[str, str]:
         return staged_artifacts(
@@ -120,8 +130,6 @@ def prepare_staged_output_dir(
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     managed_dir_list = list(managed_dirs)
-    for directory in managed_dir_list:
-        remove_managed_path(output_dir, directory)
     for file_path in managed_files:
         remove_managed_path(output_dir, file_path)
     for directory in managed_dir_list:
@@ -160,13 +168,13 @@ def manifest_relative_path(output_dir: Path, path: Path) -> str:
 
 def remove_managed_path(output_dir: Path, path: Path) -> None:
     try:
-        if path.parent.resolve() != output_dir.resolve():
-            return
-    except OSError:
+        path.resolve().relative_to(output_dir.resolve())
+    except (OSError, ValueError):
         return
     if not path.exists() and not path.is_symlink():
         return
     if path.is_symlink() or path.is_file():
-        path.unlink(missing_ok=True)
-    elif path.is_dir():
-        shutil.rmtree(path)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            return

@@ -210,8 +210,41 @@ def test_performance_presets_default_to_female_voice() -> None:
     for settings in presets.values():
         provider = str(settings["tts_provider"])
         voice = str(settings["tts_voice"])
+        if tts.normalize_tts_provider(provider) == "none":
+            continue
 
         assert tts.voice_gender(provider, voice) == "female"
+
+
+def test_subtitles_preset_disables_target_voice() -> None:
+    presets = catalog.load_performance_presets()
+
+    settings = presets["subtitles"]
+
+    assert settings["audio_source"] == "original"
+    assert settings["translator_provider"] != "none"
+    assert settings["tts_provider"] == "none"
+    assert settings["runtime_warmup_tts"] is False
+    assert settings["dubbing_auto_match_audio"] is False
+    assert settings["dubbing_auto_voice_gender"] is False
+    assert settings["original_audio_voice_filter"] is False
+
+
+def test_default_realtime_preset_disables_expensive_reference_features() -> None:
+    config = AppConfig()
+    presets = catalog.load_performance_presets()
+
+    assert config.dubbing_auto_match_audio is False
+    assert config.dubbing_auto_voice_gender is False
+    assert config.original_audio_voice_filter is False
+    assert config.translation_num_beams == 1
+    assert presets["balanced"]["dubbing_auto_match_audio"] is False
+    assert presets["balanced"]["dubbing_auto_voice_gender"] is False
+    assert presets["balanced"]["original_audio_voice_filter"] is False
+    assert presets["balanced"]["translation_num_beams"] == 1
+    assert presets["quality"]["dubbing_auto_match_audio"] is True
+    assert presets["quality"]["dubbing_auto_voice_gender"] is True
+    assert presets["quality"]["original_audio_voice_filter"] is True
 
 
 def test_vieneu_defaults_use_southern_voice() -> None:
@@ -229,7 +262,8 @@ def test_vieneu_defaults_use_southern_voice() -> None:
 def test_performance_preset_comparison_orders_latency_and_quality() -> None:
     rows = {row.preset: row for row in compare_presets("en")}
 
-    assert set(rows) == {"low_latency", "offline_lite", "balanced", "quality"}
+    assert set(rows) == {"low_latency", "subtitles", "offline_lite", "balanced", "quality"}
+    assert rows["subtitles"].latency_score < rows["low_latency"].latency_score
     assert rows["balanced"].quality_score > rows["low_latency"].quality_score
     assert rows["low_latency"].latency_score < rows["balanced"].latency_score
     assert rows["quality"].quality_score > rows["balanced"].quality_score

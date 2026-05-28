@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -92,6 +93,11 @@ def create_demucs_stems(
     run_process(
         demucs_two_stem_args(demucs_command(), source_audio, stems_dir, model=model),
         cancel_callback=cancel_callback,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     stem_root = stems_dir / model / source_audio.stem
     no_vocals = stem_root / "no_vocals.wav"

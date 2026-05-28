@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +11,7 @@ from ai_player.core.config import AppConfig
 from ai_player.pipeline import export_plan, transcript_source
 from ai_player.ui import player_window_export
 from ai_player.workers import (
+    dubbing_worker,
     export_worker,
 )
 from ai_player.workers.dubbing_worker import DubbingWorker, _segment_start_key
@@ -586,12 +588,14 @@ def test_staged_translate_keeps_all_cues_when_batch_result_is_short(tmp_path) ->
 def test_staged_export_clears_previous_managed_artifacts(tmp_path) -> None:
     config = AppConfig(audio_source="original")
     worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    paths = worker._paths
     for directory in ("audio", "subtitles", "tts", ".work"):
         managed = tmp_path / directory
         managed.mkdir()
         (managed / "stale.wav").write_bytes(b"stale")
-    (tmp_path / "dubbed_video.mp4").write_bytes(b"old video")
-    (tmp_path / "manifest.json").write_text("old manifest", encoding="utf-8")
+    for file_path in paths.managed_files:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_bytes(b"old artifact")
     unrelated = tmp_path / "notes.txt"
     unrelated.write_text("keep me", encoding="utf-8")
 
@@ -599,12 +603,12 @@ def test_staged_export_clears_previous_managed_artifacts(tmp_path) -> None:
     worker._prepare_staged_output_dir(tmp_path / "dubbed_video.mp4", tmp_path / "manifest.json")
 
     assert unrelated.read_text(encoding="utf-8") == "keep me"
-    assert not (tmp_path / "dubbed_video.mp4").exists()
-    assert not (tmp_path / "manifest.json").exists()
+    for file_path in paths.managed_files:
+        assert not file_path.exists()
     for directory in ("audio", "subtitles", "tts", ".work"):
         managed = tmp_path / directory
         assert managed.exists()
-        assert list(managed.iterdir()) == []
+        assert (managed / "stale.wav").read_bytes() == b"stale"
 
 
 def test_staged_source_filter_normalizes_mode_and_model(monkeypatch, tmp_path) -> None:
@@ -663,6 +667,20 @@ def test_staged_demucs_source_filter_rejects_empty_no_vocals(monkeypatch, tmp_pa
 
     with pytest.raises(RuntimeError, match="Demucs did not create expected file"):
         worker._create_source_audio_stems(source_audio, tmp_path / "background.wav", tmp_path / "voice.wav")
+
+
+def test_export_clean_message_includes_process_stderr_tail() -> None:
+    progress = "0%| progress noise " * 80
+    error = subprocess.CalledProcessError(
+        1,
+        ["python", "-m", "ai_player.services.demucs_runner"],
+        stderr=f"{progress}\nRuntimeError: real failure",
+    )
+
+    message = export_worker._clean_message(error)
+
+    assert message.startswith("demucs failed with exit code 1")
+    assert "RuntimeError: real failure" in message
 
 
 def test_staged_ai_source_filter_does_not_fall_back_to_fast(monkeypatch, tmp_path) -> None:
@@ -1116,6 +1134,106 @@ def test_dubbing_worker_sanitizes_invalid_speed_and_volume(monkeypatch, qapp, tm
     assert worker._launch_due_audio(0.0)
 
     assert commands[0][commands[0].index("-volume") + 1] == "100"
+
+
+def test_dubbing_worker_skips_tts_postprocess_when_matching_is_disabled(qapp) -> None:
+    config = AppConfig(
+        audio_source="original",
+        performance_preset="balanced",
+        dubbing_auto_match_audio=False,
+        dubbing_speed_percent=0,
+    )
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+
+    assert worker._skip_tts_postprocess()
+
+
+def test_dubbing_worker_keeps_tts_postprocess_for_speed_adjustment(qapp) -> None:
+    config = AppConfig(
+        audio_source="original",
+        performance_preset="balanced",
+        dubbing_auto_match_audio=False,
+        dubbing_speed_percent=8,
+    )
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+
+    assert not worker._skip_tts_postprocess()
+
+
+def test_dubbing_worker_caps_original_segment_workers_by_default(monkeypatch, qapp) -> None:
+    monkeypatch.delenv("AI_PLAYER_DUBBING_SEGMENT_WORKERS", raising=False)
+    config = AppConfig(audio_source="original", dubbing_lookahead_segments=4)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+
+    assert worker._segment_worker_count() == 1
+
+
+def test_dubbing_worker_segment_worker_env_override(monkeypatch, qapp) -> None:
+    monkeypatch.setenv("AI_PLAYER_DUBBING_SEGMENT_WORKERS", "3")
+    config = AppConfig(audio_source="original", dubbing_lookahead_segments=4)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+
+    assert worker._segment_worker_count() == 3
+
+
+def test_dubbing_worker_source_cache_accepts_direct_https_media(qapp) -> None:
+    source = "https://cdn.example.test/video.mp4?token=abc"
+    config = AppConfig(audio_source="original")
+    worker = DubbingWorker(source, lambda: 0, lambda: False, config)
+
+    assert worker._source_audio_cache_input() == source
+
+
+def test_dubbing_worker_source_cache_rejects_stream_manifest(qapp) -> None:
+    config = AppConfig(audio_source="original")
+    worker = DubbingWorker("https://cdn.example.test/live.m3u8", lambda: 0, lambda: False, config)
+
+    assert worker._source_audio_cache_input() is None
+
+
+def test_dubbing_worker_http_extract_retries_with_output_seek(monkeypatch, qapp, tmp_path) -> None:
+    config = AppConfig(audio_source="original", segment_seconds=6)
+    worker = DubbingWorker("https://cdn.example.test/video.mp4", lambda: 0, lambda: False, config)
+    calls: list[tuple[list[object], dict[str, object]]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append((list(args), kwargs))
+        if len(calls) == 1:
+            raise subprocess.CalledProcessError(3199971767, ["ffmpeg", *args], stderr="HTTP 403 forbidden")
+        Path(args[-1]).write_bytes(b"audio")
+
+    monkeypatch.setattr(dubbing_worker, "run_ffmpeg_cancelable", fake_run)
+
+    worker._extract_audio(68.0, tmp_path / "source-68.wav")
+
+    assert len(calls) == 2
+    assert calls[0][1]["stderr"] == subprocess.PIPE
+    assert calls[0][1]["stdout"] == subprocess.PIPE
+    fallback = calls[1][0]
+    assert fallback.index("-i") < fallback.index("-ss")
+    assert calls[1][1]["loglevel"] == "error"
+
+
+def test_dubbing_worker_rejects_telegram_web_progressive_before_ffmpeg(monkeypatch, qapp, tmp_path) -> None:
+    config = AppConfig(audio_source="original", gui_language="en")
+    worker = DubbingWorker("https://web.telegram.org/a/progressive/document-demo", lambda: 0, lambda: False, config)
+
+    def fail_run(*_args, **_kwargs):
+        raise AssertionError("ffmpeg should not run for Telegram Web progressive URLs")
+
+    monkeypatch.setattr(dubbing_worker, "run_ffmpeg_cancelable", fail_run)
+
+    with pytest.raises(RuntimeError, match="Telegram Web progressive"):
+        worker._extract_audio(0.0, tmp_path / "source.wav")
+
+
+def test_dubbing_worker_process_error_includes_stderr() -> None:
+    error = subprocess.CalledProcessError(1, ["ffmpeg"], stderr="telegram url expired\nretry later")
+
+    message = dubbing_worker._format_worker_exception(error)
+
+    assert message.startswith("ffmpeg failed with exit code 1")
+    assert "telegram url expired retry later" in message
 
 
 def test_dubbing_worker_sanitizes_transcript_entry_timing(qapp, tmp_path) -> None:
