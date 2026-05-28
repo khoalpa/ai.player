@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -14,13 +15,19 @@ datas = [
 ]
 binaries = []
 hiddenimports = []
-hiddenimports += ["yt_dlp_plugins.extractor.adult_sites"]
+include_extra_ytdlp_plugins = os.getenv("AI_PLAYER_INCLUDE_EXTRA_YTDLP_PLUGINS", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 tmp_ret = collect_all("edge_tts")
 datas += tmp_ret[0]
 binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
-hiddenimports += collect_submodules("yt_dlp_plugins")
+if include_extra_ytdlp_plugins and find_spec("yt_dlp_plugins") is not None:
+    hiddenimports += collect_submodules("yt_dlp_plugins")
 
 if find_spec("telethon") is not None:
     hiddenimports += collect_submodules("telethon")

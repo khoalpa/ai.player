@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from types import SimpleNamespace
 
@@ -83,6 +84,94 @@ def test_list_telegram_channel_videos_reports_empty_preview(monkeypatch) -> None
 
     with pytest.raises(telegram_channel.TelegramChannelError, match="No public video posts"):
         telegram_channel.list_telegram_channel_videos("https://t.me/shunv8388", language_id="en")
+
+
+def test_save_telegram_login_config_protects_secret_fields(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "telegram_login.json"
+    monkeypatch.setattr(telegram_channel, "TELEGRAM_LOGIN_CONFIG_PATH", config_path)
+    monkeypatch.setattr(telegram_channel, "CONFIG_DIR", tmp_path)
+    protected_values = {
+        "hash-secret": {"scheme": "test", "value": "protected-hash"},
+        "+84901234567": {"scheme": "test", "value": "protected-phone"},
+    }
+    monkeypatch.setattr(
+        telegram_channel,
+        "protect_text",
+        lambda value: protected_values[value],
+    )
+
+    telegram_channel.save_telegram_login_config(
+        telegram_channel.TelegramLoginConfig(api_id=12345, api_hash="hash-secret", phone="+84901234567")
+    )
+
+    raw_text = config_path.read_text(encoding="utf-8")
+    payload = json.loads(raw_text)
+    assert payload["api_id"] == 12345
+    assert payload["api_hash_secret"] == {"scheme": "test", "value": "protected-hash"}
+    assert payload["phone_secret"] == {"scheme": "test", "value": "protected-phone"}
+    assert "hash-secret" not in raw_text
+    assert "+84901234567" not in raw_text
+    assert "api_hash" not in payload
+    assert "phone" not in payload
+
+
+def test_load_telegram_login_config_reveals_protected_fields(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "telegram_login.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "api_id": 12345,
+                "api_hash_secret": {"scheme": "test", "value": "hash-secret"},
+                "phone_secret": {"scheme": "test", "value": "+84901234567"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(telegram_channel, "TELEGRAM_LOGIN_CONFIG_PATH", config_path)
+    monkeypatch.setattr(telegram_channel, "reveal_text", lambda payload: payload["value"])
+
+    config = telegram_channel.load_telegram_login_config()
+
+    assert config == telegram_channel.TelegramLoginConfig(
+        api_id=12345,
+        api_hash="hash-secret",
+        phone="+84901234567",
+    )
+
+
+def test_load_telegram_login_config_accepts_legacy_plaintext_file(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "telegram_login.json"
+    config_path.write_text(
+        json.dumps({"api_id": 12345, "api_hash": "hash-secret", "phone": "+84901234567"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(telegram_channel, "TELEGRAM_LOGIN_CONFIG_PATH", config_path)
+
+    config = telegram_channel.load_telegram_login_config()
+
+    assert config == telegram_channel.TelegramLoginConfig(
+        api_id=12345,
+        api_hash="hash-secret",
+        phone="+84901234567",
+    )
+
+
+def test_save_telegram_login_config_omits_secrets_when_protection_unavailable(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "telegram_login.json"
+    monkeypatch.setattr(telegram_channel, "TELEGRAM_LOGIN_CONFIG_PATH", config_path)
+    monkeypatch.setattr(telegram_channel, "CONFIG_DIR", tmp_path)
+
+    def fail_protection(_value):
+        raise telegram_channel.SecretStoreError("unavailable")
+
+    monkeypatch.setattr(telegram_channel, "protect_text", fail_protection)
+
+    telegram_channel.save_telegram_login_config(
+        telegram_channel.TelegramLoginConfig(api_id=12345, api_hash="hash-secret", phone="+84901234567")
+    )
+
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload == {"api_id": 12345}
 
 
 def test_delete_telegram_login_data_removes_config_and_session_files(monkeypatch, tmp_path) -> None:

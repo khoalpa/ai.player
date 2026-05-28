@@ -9,12 +9,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from ai_player.core.cli_encoding import prefer_utf8_stdio  # noqa: E402
 from ai_player.core.config import LOCAL_WHISPER_MODEL_PATH  # noqa: E402
 from ai_player.services.whisper_runtime import clear_shared_whisper_models, get_shared_whisper_model  # noqa: E402
 
 
 def main() -> int:
-    _configure_stdout()
+    prefer_utf8_stdio(sys.stdout, sys.stderr)
     args = _parse_args()
     samples = _sample_paths(args.samples)
     if not samples:
@@ -109,13 +110,6 @@ def _levenshtein(left: list[str], right: list[str]) -> int:
             )
         previous = current
     return previous[-1]
-
-
-def _configure_stdout() -> None:
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
-    except Exception:
-        pass
 
 
 if __name__ == "__main__":

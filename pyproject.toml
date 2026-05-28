@@ -82,7 +82,7 @@ Documentation = "https://github.com/khoalpa/ai.player#readme"
 Source = "https://github.com/khoalpa/ai.player"
 
 [tool.setuptools.packages.find]
-include = ["ai_player*", "yt_dlp_plugins*"]
+include = ["ai_player*"]
 
 [tool.setuptools.package-data]
 ai_player = [

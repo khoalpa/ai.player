@@ -35,20 +35,25 @@ The script writes:
 - `data\tmp\dependency-audit\pip-audit-requirements.json`
 
 By default the script ignores the accepted advisory `CVE-2025-69872`, which is a
-`diskcache` finding pulled in by `llama-cpp-python`. The application does not
-read user-writable shared cache directories through `diskcache`; keep model and
-runtime cache folders under the per-user project/runtime directories. Remove the
-ignore once an upstream fixed `diskcache` release is available.
+`diskcache` finding pulled in by `llama-cpp-python`. AI Player depends on
+`llama-cpp-python` for offline VieNeu-TTS GGUF models and optional local GGUF
+transcript cleanup. The application does not configure or read shared
+user-writable `diskcache` cache directories through `llama-cpp-python`; keep
+model and runtime cache folders under the per-user project/runtime directories.
+Remove the ignore once an upstream fixed `diskcache` release is available.
 
-To run without accepted advisories:
+To review accepted advisories explicitly before release approval:
 
 ```powershell
-.\scripts\audit_dependencies.ps1 -AcceptedVulnerabilities @()
+.\scripts\audit_dependencies.ps1 -ReviewAcceptedVulnerabilities
 ```
+
+This command audits without ignoring advisories and passes only when every
+reported vulnerability is listed in `-AcceptedVulnerabilities`.
 
 ## Accepted Advisory Tracking
 
-- Re-run the strict command above before every release approval.
+- Re-run the accepted-advisory review command above before every release approval.
 - Keep each accepted advisory listed in this document with the affected package,
   why the current app usage is mitigated, and what upstream change should remove
   the exception.

@@ -8,10 +8,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from ai_player.core.cli_encoding import prefer_utf8_stdio
 from ai_player.core.runtime_diagnostics import collect_runtime_diagnostics, format_runtime_diagnostics
 
 
 def main() -> int:
+    prefer_utf8_stdio(sys.stdout, sys.stderr)
     parser = argparse.ArgumentParser(description="Check AI Player runtime dependencies.")
     parser.add_argument("--ci", action="store_true", help="Skip checks that are noisy in CI.")
     parser.add_argument(

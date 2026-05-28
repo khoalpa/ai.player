@@ -50,6 +50,16 @@ def test_package_section_marks_non_profile_package_optional(monkeypatch) -> None
     assert section.items[0].required is False
 
 
+def test_offline_profile_checks_llama_cpp_runtime() -> None:
+    packages = {
+        name
+        for package_info in diag.PYTHON_PACKAGES
+        for name, _profiles in (diag._package_requirement(package_info),)
+    }
+
+    assert "llama_cpp" in packages
+
+
 @pytest.mark.parametrize("candidate_index", [0, 1])
 def test_first_tool_uses_path_candidates(monkeypatch, tmp_path, candidate_index: int) -> None:
     tool = tmp_path / "tool.exe"

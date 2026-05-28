@@ -18,6 +18,18 @@ def test_player_window_constructs_offscreen(qapp) -> None:
     window = PlayerWindow()
     try:
         assert window.windowTitle()
+        assert window._source_filter_worker_mode == window._config.original_audio_voice_filter_mode
+        assert window._source_filter_worker_model == window._config.original_audio_voice_filter_model
+        assert window._source_filter_cache == {}
+        assert window._playback_compat_cache == {}
+        assert window._runtime_gpu_text == window._tr("status_checking_gpu")
+        assert window._runtime_media_info_text == window._tr("status_no_video")
+        assert window._dub_worker is None
+        assert window._export_worker is None
+        assert window._meeting_worker is None
+        assert window._telegram_worker is None
+        assert window._document_worker is None
+        assert window._pending_telegram_url == ""
     finally:
         window.close()
 
@@ -536,9 +548,7 @@ def test_player_window_guide_and_device_auto_follow_language(qapp) -> None:
         assert "Quy trình nhanh" in window._user_guide_html()
         assert "Sự cố thường gặp" in window._user_guide_html()
         assert "Nền tảng video phổ biến" in window._user_guide_html()
-        assert "BuomTV và mirror" not in window._user_guide_html()
-        assert "Adult video" in window._user_guide_html()
-        assert "buomtv.*" in window._user_guide_html()
+        assert "AI_PLAYER_EXTRA_YTDLP_HOSTS" in window._user_guide_html()
         assert len(window._user_guide_tabs()) == 4
         assert window._capture_system_device_combo.itemText(0) == "Tự động"
         window._settings_save_timer.stop()

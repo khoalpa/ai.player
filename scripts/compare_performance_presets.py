@@ -10,6 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from ai_player.core.cli_encoding import prefer_utf8_stdio  # noqa: E402
 from ai_player.core.config import DEFAULT_PERFORMANCE_PRESET  # noqa: E402
 from ai_player.core.runtime_catalog import available_dropdown_options, load_performance_presets  # noqa: E402
 
@@ -216,7 +217,7 @@ def _markdown_table(rows: list[PresetComparison]) -> str:
 
 
 def main() -> int:
-    _prefer_utf8_stdout()
+    prefer_utf8_stdio(sys.stdout, sys.stderr)
     parser = argparse.ArgumentParser(description="Compare AI Player performance preset tradeoffs.")
     parser.add_argument("--language", default="en", help="Language pack for preset labels, e.g. en or vi.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON instead of Markdown.")
@@ -228,12 +229,6 @@ def main() -> int:
     else:
         print(_markdown_table(rows))
     return 0
-
-
-def _prefer_utf8_stdout() -> None:
-    reconfigure = getattr(sys.stdout, "reconfigure", None)
-    if callable(reconfigure):
-        reconfigure(encoding="utf-8", errors="replace")
 
 
 if __name__ == "__main__":

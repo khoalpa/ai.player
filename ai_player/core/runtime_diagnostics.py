@@ -51,6 +51,7 @@ PYTHON_PACKAGES = (
     ("faster_whisper", ("offline-ai",)),
     ("ctranslate2", ("offline-ai",)),
     ("transformers", ("offline-ai",)),
+    ("llama_cpp", ("offline-ai",)),
 )
 
 TOOLS = {

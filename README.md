@@ -156,7 +156,8 @@ URL media trực tiếp:
 Trang video qua `yt-dlp`:
 
 - YouTube, TikTok, Facebook, Instagram, Threads, X/Twitter, Vimeo, Dailymotion, Telegram.
-- Một số extractor bổ sung trong `yt_dlp_plugins`, bao gồm các site adult/cam đã được test bằng smoke tests.
+- Internal builds can install private `yt-dlp` plugin packages and declare their
+  extra hosts with `AI_PLAYER_EXTRA_YTDLP_HOSTS`.
 
 Tài liệu:
 
@@ -294,7 +295,6 @@ ai_player/
   ui/                    # main window, media player, dialogs, settings tabs
   resources/languages/   # gói ngôn ngữ UI và dropdown vi/en
   vieneu_tts/            # runtime VieNeu-TTS nội bộ
-yt_dlp_plugins/          # extractor bổ sung cho yt-dlp
 docs/                    # MVP, recovery notes, release checklist, portable build
 samples/                 # demo transcript/video nhỏ
 scripts/                 # tải model, build portable, doctor, benchmark, backup

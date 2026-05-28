@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from ai_player.core.config import CONFIG_DIR, RUNTIME_DIR
 from ai_player.core.i18n import ui_text
+from ai_player.core.secret_store import SecretStoreError, protect_text, reveal_text
 from ai_player.services.video_source import _url_host
 
 
@@ -93,23 +94,33 @@ def load_telegram_login_config() -> TelegramLoginConfig | None:
     except Exception:
         return None
     try:
+        api_hash = _load_saved_secret(payload, "api_hash")
+        phone = _load_saved_secret(payload, "phone")
+        if not api_hash or not phone:
+            return None
         return TelegramLoginConfig(
             api_id=int(payload.get("api_id") or 0),
-            api_hash=str(payload.get("api_hash") or "").strip(),
-            phone=str(payload.get("phone") or "").strip(),
+            api_hash=api_hash,
+            phone=phone,
         )
-    except (TypeError, ValueError):
+    except (SecretStoreError, TypeError, ValueError):
         return None
 
 
 def save_telegram_login_config(config: TelegramLoginConfig) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    data: dict[str, object] = {"api_id": int(config.api_id)}
+    try:
+        data.update(
+            {
+                "api_hash_secret": protect_text(config.api_hash),
+                "phone_secret": protect_text(config.phone),
+            }
+        )
+    except SecretStoreError:
+        pass
     TELEGRAM_LOGIN_CONFIG_PATH.write_text(
-        json.dumps(
-            {"api_id": int(config.api_id), "api_hash": config.api_hash, "phone": config.phone},
-            ensure_ascii=False,
-            indent=2,
-        ),
+        json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -142,6 +153,13 @@ def validate_telegram_login_config(
     if not parsed_phone:
         raise TelegramChannelError(ui_text("telegram_login_missing_phone", language_id))
     return TelegramLoginConfig(parsed_api_id, parsed_api_hash, parsed_phone)
+
+
+def _load_saved_secret(payload: dict, name: str) -> str:
+    protected = reveal_text(payload.get(f"{name}_secret"))
+    if protected:
+        return protected.strip()
+    return str(payload.get(name) or "").strip()
 
 
 def start_telegram_login(config: TelegramLoginConfig, language_id: str | None = None) -> TelegramLoginRequest | None:

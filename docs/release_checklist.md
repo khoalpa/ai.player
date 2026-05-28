@@ -11,7 +11,15 @@ Use this checklist before sharing a build.
 - Run `.\.venv\Scripts\python.exe -m ruff check .`.
 - Run `.\.venv\Scripts\python.exe -m pytest`.
 - Run `.\.venv\Scripts\python.exe .\scripts\runtime_doctor.py`.
-- Run `.\scripts\audit_dependencies.ps1` and triage any unresolved advisories. If audit tools are not installed yet, run it once with `-InstallTools`. Run `.\scripts\audit_dependencies.ps1 -AcceptedVulnerabilities @()` before release approval to review accepted advisories explicitly.
+- Review `docs\test_coverage_map.md` and note any workflow gaps that must be
+  covered by manual smoke for this release.
+- Leave `AI_PLAYER_INCLUDE_EXTRA_YTDLP_PLUGINS` unset for public release builds.
+  Use `scripts\build_internal.ps1` only for internal builds that install private
+  yt-dlp plugin packages.
+- Run `.\scripts\audit_dependencies.ps1` and triage any unresolved advisories. If audit tools are not installed yet, run it once with `-InstallTools`.
+- Run `.\scripts\audit_dependencies.ps1 -ReviewAcceptedVulnerabilities`
+  before release approval to verify the only remaining findings are explicitly
+  accepted in `docs\dependency_audit.md`.
 
 ## Runtime Smoke Test
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import Qt, QThread, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QFrame,
     QMainWindow,
@@ -28,18 +28,18 @@ from ai_player.ui.player_window_offline_models import PlayerOfflineModelsMixin
 from ai_player.ui.player_window_runtime import PlayerRuntimeMixin
 from ai_player.ui.player_window_settings import PlayerSettingsMixin
 from ai_player.ui.player_window_sources import PlayerSourceMixin
-from ai_player.ui.player_window_state import DocumentPlaybackState, SubtitleOverlayState
+from ai_player.ui.player_window_state import (
+    DocumentPlaybackState,
+    MediaProcessingState,
+    RuntimeStatusState,
+    SubtitleOverlayState,
+    WorkerLifecycleState,
+)
 from ai_player.ui.player_window_transcript import PlayerTranscriptMixin
 from ai_player.ui.player_window_ui import PlayerUiMixin
 from ai_player.ui.runtime_warmup_controller import RuntimeWarmupController
 from ai_player.ui.user_guide import UserGuideMixin
 from ai_player.ui.video_url_controller import VideoUrlController
-from ai_player.workers.dubbing_worker import DubbingWorker
-from ai_player.workers.meeting_worker import MeetingWorker
-from ai_player.workers.player_window_workers import (
-    PlaybackCompatibilityWorker,
-    SourceAudioFilterWorker,
-)
 
 
 class PlayerWindow(
@@ -64,6 +64,18 @@ class PlayerWindow(
         self._config = load_app_config(AppConfig.from_env())
         self._document_state = DocumentPlaybackState()
         self._subtitle_state = SubtitleOverlayState()
+        self._media_processing_state = MediaProcessingState(
+            source_filter_worker_mode=self._config.original_audio_voice_filter_mode,
+            source_filter_worker_model=self._config.original_audio_voice_filter_model,
+        )
+        self._runtime_state = RuntimeStatusState(
+            last_wall=time.perf_counter(),
+            last_process=time.process_time(),
+            last_system_cpu=self._read_system_cpu_times(),
+            gpu_text=self._tr("status_checking_gpu"),
+            media_info_text=self._tr("status_no_video"),
+        )
+        self._worker_lifecycle_state = WorkerLifecycleState()
         self._video_path: str | None = None
         self._media_frame: QFrame | None = None
         self._media_frame_parent = None
@@ -86,25 +98,10 @@ class PlayerWindow(
         self._live_subtitle_expires_at = 0.0
         self._live_subtitle_entries: list[tuple[float, float, str, str]] = []
         self._clamping_to_screen = False
-        self._dub_worker: DubbingWorker | None = None
-        self._dub_worker_generation = 0
-        self._export_worker: QThread | None = None
-        self._meeting_worker: MeetingWorker | None = None
-        self._meeting_elapsed = "00:00:00"
         self._video_url = VideoUrlController(self)
-        self._telegram_worker: QThread | None = None
-        self._pending_telegram_url = ""
         self._runtime_warmup = RuntimeWarmupController(self)
-        self._document_worker = None
-        self._source_filter_worker: SourceAudioFilterWorker | None = None
-        self._source_filter_worker_mode = self._config.original_audio_voice_filter_mode
-        self._source_filter_worker_model = self._config.original_audio_voice_filter_model
-        self._source_filter_restart_pending = False
-        self._playback_compat_worker: PlaybackCompatibilityWorker | None = None
         self._sidebar_panel_hidden = False
         self._sidebar_panel_sizes: list[int] = [900, 460]
-        self._source_filter_cache: dict[str, str] = {}
-        self._playback_compat_cache: dict[str, str] = {}
         self._is_seeking = False
         self._video_delay_timer = QTimer(self)
         self._video_delay_timer.setSingleShot(True)
@@ -120,14 +117,6 @@ class PlayerWindow(
         self._settings_save_timer.setInterval(600)
         self._settings_save_timer.timeout.connect(self._save_settings)
         self._video_fullscreen = False
-        self._runtime_last_wall = time.perf_counter()
-        self._runtime_last_process = time.process_time()
-        self._runtime_last_system_cpu = self._read_system_cpu_times()
-        self._runtime_gpu_text = self._tr("status_checking_gpu")
-        self._runtime_gpu_tick = 0
-        self._runtime_media_path = ""
-        self._runtime_media_info_path = ""
-        self._runtime_media_info_text = self._tr("status_no_video")
 
         self._transcript_segments: list[tuple[str, str]] = []
 
@@ -270,6 +259,190 @@ class PlayerWindow(
     @_live_subtitle_entries.setter
     def _live_subtitle_entries(self, value: list[tuple[float, float, str, str]]) -> None:
         self._subtitle_state.live_entries = list(value or [])
+
+    @property
+    def _source_filter_worker(self) -> object | None:
+        return self._media_processing_state.source_filter_worker
+
+    @_source_filter_worker.setter
+    def _source_filter_worker(self, value: object | None) -> None:
+        self._media_processing_state.source_filter_worker = value
+
+    @property
+    def _source_filter_worker_mode(self) -> str:
+        return self._media_processing_state.source_filter_worker_mode
+
+    @_source_filter_worker_mode.setter
+    def _source_filter_worker_mode(self, value: str) -> None:
+        self._media_processing_state.source_filter_worker_mode = str(value or "")
+
+    @property
+    def _source_filter_worker_model(self) -> str:
+        return self._media_processing_state.source_filter_worker_model
+
+    @_source_filter_worker_model.setter
+    def _source_filter_worker_model(self, value: str) -> None:
+        self._media_processing_state.source_filter_worker_model = str(value or "")
+
+    @property
+    def _source_filter_restart_pending(self) -> bool:
+        return self._media_processing_state.source_filter_restart_pending
+
+    @_source_filter_restart_pending.setter
+    def _source_filter_restart_pending(self, value: bool) -> None:
+        self._media_processing_state.source_filter_restart_pending = bool(value)
+
+    @property
+    def _playback_compat_worker(self) -> object | None:
+        return self._media_processing_state.playback_compat_worker
+
+    @_playback_compat_worker.setter
+    def _playback_compat_worker(self, value: object | None) -> None:
+        self._media_processing_state.playback_compat_worker = value
+
+    @property
+    def _source_filter_cache(self) -> dict[str, str]:
+        return self._media_processing_state.source_filter_cache
+
+    @_source_filter_cache.setter
+    def _source_filter_cache(self, value: dict[str, str]) -> None:
+        self._media_processing_state.source_filter_cache = dict(value or {})
+
+    @property
+    def _playback_compat_cache(self) -> dict[str, str]:
+        return self._media_processing_state.playback_compat_cache
+
+    @_playback_compat_cache.setter
+    def _playback_compat_cache(self, value: dict[str, str]) -> None:
+        self._media_processing_state.playback_compat_cache = dict(value or {})
+
+    @property
+    def _dub_worker(self) -> object | None:
+        return self._worker_lifecycle_state.dubbing_worker
+
+    @_dub_worker.setter
+    def _dub_worker(self, value: object | None) -> None:
+        self._worker_lifecycle_state.dubbing_worker = value
+
+    @property
+    def _dub_worker_generation(self) -> int:
+        return self._worker_lifecycle_state.dubbing_worker_generation
+
+    @_dub_worker_generation.setter
+    def _dub_worker_generation(self, value: int) -> None:
+        self._worker_lifecycle_state.dubbing_worker_generation = int(value or 0)
+
+    @property
+    def _export_worker(self) -> object | None:
+        return self._worker_lifecycle_state.export_worker
+
+    @_export_worker.setter
+    def _export_worker(self, value: object | None) -> None:
+        self._worker_lifecycle_state.export_worker = value
+
+    @property
+    def _meeting_worker(self) -> object | None:
+        return self._worker_lifecycle_state.meeting_worker
+
+    @_meeting_worker.setter
+    def _meeting_worker(self, value: object | None) -> None:
+        self._worker_lifecycle_state.meeting_worker = value
+
+    @property
+    def _meeting_elapsed(self) -> str:
+        return self._worker_lifecycle_state.meeting_elapsed
+
+    @_meeting_elapsed.setter
+    def _meeting_elapsed(self, value: str) -> None:
+        self._worker_lifecycle_state.meeting_elapsed = str(value or "")
+
+    @property
+    def _telegram_worker(self) -> object | None:
+        return self._worker_lifecycle_state.telegram_worker
+
+    @_telegram_worker.setter
+    def _telegram_worker(self, value: object | None) -> None:
+        self._worker_lifecycle_state.telegram_worker = value
+
+    @property
+    def _pending_telegram_url(self) -> str:
+        return self._worker_lifecycle_state.pending_telegram_url
+
+    @_pending_telegram_url.setter
+    def _pending_telegram_url(self, value: str) -> None:
+        self._worker_lifecycle_state.pending_telegram_url = str(value or "")
+
+    @property
+    def _document_worker(self) -> object | None:
+        return self._worker_lifecycle_state.document_worker
+
+    @_document_worker.setter
+    def _document_worker(self, value: object | None) -> None:
+        self._worker_lifecycle_state.document_worker = value
+
+    @property
+    def _runtime_last_wall(self) -> float:
+        return self._runtime_state.last_wall
+
+    @_runtime_last_wall.setter
+    def _runtime_last_wall(self, value: float) -> None:
+        self._runtime_state.last_wall = float(value or 0.0)
+
+    @property
+    def _runtime_last_process(self) -> float:
+        return self._runtime_state.last_process
+
+    @_runtime_last_process.setter
+    def _runtime_last_process(self, value: float) -> None:
+        self._runtime_state.last_process = float(value or 0.0)
+
+    @property
+    def _runtime_last_system_cpu(self) -> object | None:
+        return self._runtime_state.last_system_cpu
+
+    @_runtime_last_system_cpu.setter
+    def _runtime_last_system_cpu(self, value: object | None) -> None:
+        self._runtime_state.last_system_cpu = value
+
+    @property
+    def _runtime_gpu_text(self) -> str:
+        return self._runtime_state.gpu_text
+
+    @_runtime_gpu_text.setter
+    def _runtime_gpu_text(self, value: str) -> None:
+        self._runtime_state.gpu_text = str(value or "")
+
+    @property
+    def _runtime_gpu_tick(self) -> int:
+        return self._runtime_state.gpu_tick
+
+    @_runtime_gpu_tick.setter
+    def _runtime_gpu_tick(self, value: int) -> None:
+        self._runtime_state.gpu_tick = int(value or 0)
+
+    @property
+    def _runtime_media_path(self) -> str:
+        return self._runtime_state.media_path
+
+    @_runtime_media_path.setter
+    def _runtime_media_path(self, value: str) -> None:
+        self._runtime_state.media_path = str(value or "")
+
+    @property
+    def _runtime_media_info_path(self) -> str:
+        return self._runtime_state.media_info_path
+
+    @_runtime_media_info_path.setter
+    def _runtime_media_info_path(self, value: str) -> None:
+        self._runtime_state.media_info_path = str(value or "")
+
+    @property
+    def _runtime_media_info_text(self) -> str:
+        return self._runtime_state.media_info_text
+
+    @_runtime_media_info_text.setter
+    def _runtime_media_info_text(self, value: str) -> None:
+        self._runtime_state.media_info_text = str(value or "")
 
     def _start_runtime_warmup(self) -> None:
         self._runtime_warmup.start()

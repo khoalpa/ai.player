@@ -93,7 +93,7 @@ def test_playback_compat_worker_removes_partial_output_when_stopped(monkeypatch,
 def test_ytdlp_cache_compatible_video_does_not_need_playback_transcode(monkeypatch, tmp_path) -> None:
     cache_root = tmp_path / "ai-player-sources"
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
-    source = cache_root / "buomtv" / "best" / "demo.mp4"
+    source = cache_root / "example-provider" / "best" / "demo.mp4"
     source.parent.mkdir(parents=True)
     source.write_bytes(b"demo")
     monkeypatch.setattr(PlayerMediaMixin, "_is_qt_compatible_local_video", staticmethod(lambda _path: True))
@@ -104,7 +104,7 @@ def test_ytdlp_cache_compatible_video_does_not_need_playback_transcode(monkeypat
 def test_ytdlp_cache_incompatible_video_still_needs_playback_transcode(monkeypatch, tmp_path) -> None:
     cache_root = tmp_path / "ai-player-sources"
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
-    source = cache_root / "buomtv" / "best" / "demo.mp4"
+    source = cache_root / "example-provider" / "best" / "demo.mp4"
     source.parent.mkdir(parents=True)
     source.write_bytes(b"demo")
     monkeypatch.setattr(PlayerMediaMixin, "_is_qt_compatible_local_video", staticmethod(lambda _path: False))

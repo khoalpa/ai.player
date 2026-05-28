@@ -82,8 +82,7 @@ GUIDE_TEXT = {
             "<b>Nền tảng video phổ biến</b>: YouTube (<code>youtube.com</code>, <code>m.youtube.com</code>, <code>music.youtube.com</code>, <code>youtu.be</code>), Vimeo (<code>vimeo.com</code>), Dailymotion (<code>dailymotion.com</code>, <code>dai.ly</code>).",
             "<b>Mạng xã hội và video ngắn</b>: TikTok (<code>tiktok.com</code>, <code>vm.tiktok.com</code>, <code>vt.tiktok.com</code>), Facebook (<code>facebook.com</code>, <code>m.facebook.com</code>, <code>web.facebook.com</code>, <code>fb.watch</code>), Instagram/Threads (<code>instagram.com</code>, <code>threads.net</code>), X/Twitter (<code>x.com</code>, <code>twitter.com</code>).",
             "<b>Cộng đồng và kênh chat</b>: Telegram (<code>t.me</code>, <code>telegram.me</code>).",
-            "<b>Adult video</b>: <code>buomtv.*</code>, <code>*.buomtv.*</code>, <code>missav.ai</code>, <code>missav.com</code>, <code>missav.ws</code>, <code>supjav.com</code>, <code>javmost.com</code>, <code>javmost.cx</code>, <code>javgg.net</code>, <code>javgg.to</code>, <code>r18.com</code>, <code>javlibrary.com</code>, <code>javhd.com</code>.",
-            "<b>Live/cam</b>: <code>chaturbate.com</code>, <code>chaturbate.eu</code>, <code>chaturbate.global</code>, <code>stripchat.com</code>, <code>bongacams*.com</code>, <code>bongacams*.net</code>, <code>livejasmin.com</code>, <code>cam4.com</code>, <code>camsoda.com</code>.",
+            "<b>Tiá»‡n Ã­ch ná»™i bá»™</b>: báº£n build riÃªng cÃ³ thá»ƒ cÃ i thÃªm plugin yt-dlp private vÃ  khai bÃ¡o host báº±ng <code>AI_PLAYER_EXTRA_YTDLP_HOSTS</code>.",
         ],
         "supported_document_items": [
             "PowerPoint: <code>.pptx</code>.",
@@ -574,8 +573,7 @@ GUIDE_TEXT = {
             "<b>Mainstream video platforms</b>: YouTube (<code>youtube.com</code>, <code>m.youtube.com</code>, <code>music.youtube.com</code>, <code>youtu.be</code>), Vimeo (<code>vimeo.com</code>), Dailymotion (<code>dailymotion.com</code>, <code>dai.ly</code>).",
             "<b>Social and short video</b>: TikTok (<code>tiktok.com</code>, <code>vm.tiktok.com</code>, <code>vt.tiktok.com</code>), Facebook (<code>facebook.com</code>, <code>m.facebook.com</code>, <code>web.facebook.com</code>, <code>fb.watch</code>), Instagram/Threads (<code>instagram.com</code>, <code>threads.net</code>), X/Twitter (<code>x.com</code>, <code>twitter.com</code>).",
             "<b>Community and chat channels</b>: Telegram (<code>t.me</code>, <code>telegram.me</code>).",
-            "<b>Adult video</b>: <code>buomtv.*</code>, <code>*.buomtv.*</code>, <code>missav.ai</code>, <code>missav.com</code>, <code>missav.ws</code>, <code>supjav.com</code>, <code>javmost.com</code>, <code>javmost.cx</code>, <code>javgg.net</code>, <code>javgg.to</code>, <code>r18.com</code>, <code>javlibrary.com</code>, <code>javhd.com</code>.",
-            "<b>Live/cam</b>: <code>chaturbate.com</code>, <code>chaturbate.eu</code>, <code>chaturbate.global</code>, <code>stripchat.com</code>, <code>bongacams*.com</code>, <code>bongacams*.net</code>, <code>livejasmin.com</code>, <code>cam4.com</code>, <code>camsoda.com</code>.",
+            "<b>Internal add-ons</b>: internal builds can install private yt-dlp plugins and declare hosts with <code>AI_PLAYER_EXTRA_YTDLP_HOSTS</code>.",
         ],
         "supported_document_items": [
             "PowerPoint: <code>.pptx</code>.",
