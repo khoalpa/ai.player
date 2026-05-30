@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -34,8 +35,11 @@ from ai_player.services.telegram_channel import (
     list_telegram_channel_videos,
     list_telegram_channel_videos_authenticated,
     start_telegram_login,
+    telegram_channel_item_translation_text,
 )
+from ai_player.services.translation_runtime import get_shared_vietnamese_translator
 from ai_player.services.video_source import resolve_video_source
+from ai_player.workers.worker_values import selected_source_language
 
 LOGGER = get_logger(__name__)
 
@@ -278,6 +282,77 @@ class TelegramChannelWorker(QThread):
             if not self._stop_requested and not self.isInterruptionRequested():
                 LOGGER.exception("Telegram channel worker failed.")
                 self.failed.emit(str(exc))
+
+
+class TelegramContentTranslationWorker(QThread):
+    ready = Signal(object)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        config: AppConfig,
+        items: object,
+        *,
+        language_id: str | None = None,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._config = config
+        self._language_id = language_id
+        self._items = [
+            (
+                str(getattr(item, "post_id", "") or ""),
+                str(getattr(item, "url", "") or ""),
+                telegram_channel_item_translation_text(item),
+            )
+            for item in list(items or [])
+        ]
+        self._stop_requested = False
+
+    def stop(self) -> None:
+        self._stop_requested = True
+        self.requestInterruption()
+
+    def run(self) -> None:
+        try:
+            active_items = [(post_id, url, text) for post_id, url, text in self._items if text.strip()]
+            if not active_items:
+                self.ready.emit([])
+                return
+            source_language = selected_source_language(self._config) or _infer_telegram_content_language(
+                [text for _post_id, _url, text in active_items]
+            )
+            translator = get_shared_vietnamese_translator(self._config)
+            translated = translator.translate_many([text for _post_id, _url, text in active_items], source_language)
+            if self._stop_requested or self.isInterruptionRequested():
+                return
+            self.ready.emit(
+                [
+                    (post_id, url, translated_text)
+                    for (post_id, url, _text), translated_text in zip(active_items, translated, strict=False)
+                ]
+            )
+        except Exception as exc:
+            if not self._stop_requested and not self.isInterruptionRequested():
+                LOGGER.exception("Telegram content translation worker failed.")
+                self.failed.emit(str(exc))
+
+
+def _infer_telegram_content_language(texts: list[str]) -> str | None:
+    text = "\n".join(str(item or "") for item in texts)
+    if re.search(r"[\u4e00-\u9fff]", text):
+        return "zh"
+    if re.search(r"[\u3040-\u30ff]", text):
+        return "ja"
+    if re.search(r"[\uac00-\ud7af]", text):
+        return "ko"
+    if re.search(r"[\u0e00-\u0e7f]", text):
+        return "th"
+    if re.search(r"[\u0600-\u06ff]", text):
+        return "ar"
+    if re.search(r"[\u0400-\u04ff]", text):
+        return "ru"
+    return None
 
 
 class SourceAudioFilterWorker(QThread):

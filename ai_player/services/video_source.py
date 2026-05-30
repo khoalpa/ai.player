@@ -97,6 +97,19 @@ def is_supported_video_url(value: str) -> bool:
     return parsed.scheme.lower() in {"http", "https", "rtsp", "rtmp", "mms"} and bool(parsed.hostname)
 
 
+def is_supported_browser_video_url(value: str) -> bool:
+    parsed = urlparse(value.strip())
+    scheme = parsed.scheme.lower()
+    if scheme in {"rtsp", "rtmp", "mms"}:
+        return bool(parsed.hostname)
+    if scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    if _looks_like_direct_media_url(parsed.path):
+        return True
+    host = _url_host(parsed)
+    return host in YTDLP_PAGE_HOSTS or _is_extra_ytdlp_host(host) or _has_plugin_ytdlp_extractor(value)
+
+
 def is_telegram_web_progressive_url(value: str) -> bool:
     parsed = urlparse(value.strip())
     host = _url_host(parsed)

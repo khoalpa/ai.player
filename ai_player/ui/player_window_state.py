@@ -50,6 +50,25 @@ class RuntimeStatusState:
 
 
 @dataclass
+class TelegramChannelState:
+    channel_items: list[object] = field(default_factory=list)
+    channel_all_items: list[object] = field(default_factory=list)
+    channel_authenticated: bool = False
+    channel_translations: dict[str, str] = field(default_factory=dict)
+    pending_post_id: str = ""
+    current_channel_item: object | None = None
+    current_post_id: str = ""
+    current_url: str = ""
+    pending_navigation_direction: int = 0
+    pending_autoplay: bool = False
+    browser_return_available: bool = False
+    channel_thumbnail_source: object | None = None
+    auto_load_pending_before_post_id: str = ""
+    side_panel_visible: bool = True
+    side_panel_sizes: list[int] = field(default_factory=lambda: [1, 1])
+
+
+@dataclass
 class WorkerLifecycleState:
     dubbing_worker: object | None = None
     dubbing_worker_generation: int = 0
@@ -57,5 +76,6 @@ class WorkerLifecycleState:
     meeting_worker: object | None = None
     meeting_elapsed: str = "00:00:00"
     telegram_worker: object | None = None
+    telegram_translation_worker: object | None = None
     pending_telegram_url: str = ""
     document_worker: object | None = None

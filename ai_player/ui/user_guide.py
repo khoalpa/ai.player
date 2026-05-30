@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QTabWidget, 
 from ai_player.core.config import AppConfig
 from ai_player.services.translation import normalize_translator_provider
 from ai_player.services.tts import normalize_tts_provider
+from ai_player.ui.user_guide_render import html_items, html_list, table_rows
 from ai_player.ui.user_guide_text import GUIDE_TEXT
 
 
@@ -105,23 +106,8 @@ class UserGuideMixin:
 
     def _quick_start_html(self) -> str:
         text = GUIDE_TEXT[self._guide_language()]
-        items = "".join(f"<li>{item}</li>" for item in text["quick_items"])
-        slow_items = "".join(f"<li>{item}</li>" for item in text["slow_items"])
-        goal_rows = "\n".join(
-            "<tr>"
-            f"<td>{goal}</td>"
-            f"<td>{settings}</td>"
-            f"<td>{note}</td>"
-            "</tr>"
-            for goal, settings, note in text["goal_rows"]
-        )
-        troubleshooting_rows = "\n".join(
-            "<tr>"
-            f"<td>{symptom}</td>"
-            f"<td>{fix}</td>"
-            "</tr>"
-            for symptom, fix in text["troubleshooting_rows"]
-        )
+        goal_rows = table_rows(text["goal_rows"])
+        troubleshooting_rows = table_rows(text["troubleshooting_rows"])
         return f"""
         <h2>{html.escape(text["goal_title"])}</h2>
         <table class="decision-table">
@@ -133,9 +119,9 @@ class UserGuideMixin:
             {goal_rows}
         </table>
         <h2>{html.escape(text["quick_title"])}</h2>
-        <ol>{items}</ol>
+        {html_list(text["quick_items"], ordered=True)}
         <h2>{html.escape(text["slow_title"])}</h2>
-        <ul>{slow_items}</ul>
+        {html_list(text["slow_items"])}
         <h2>{html.escape(text["troubleshooting_title"])}</h2>
         <table class="troubleshooting-table">
             <tr>
@@ -148,17 +134,14 @@ class UserGuideMixin:
 
     def _supported_sources_html(self) -> str:
         text = GUIDE_TEXT[self._guide_language()]
-        video_items = "".join(f"<li>{item}</li>" for item in text["supported_video_items"])
-        website_items = "".join(f"<li>{item}</li>" for item in text["supported_website_items"])
-        document_items = "".join(f"<li>{item}</li>" for item in text["supported_document_items"])
         return f"""
         <h2>{html.escape(text["supported_title"])}</h2>
         <h3>{html.escape(text["supported_video_title"])}</h3>
-        <ul>{video_items}</ul>
+        {html_list(text["supported_video_items"])}
         <h3>{html.escape(text["supported_website_title"])}</h3>
-        <ul>{website_items}</ul>
+        {html_list(text["supported_website_items"])}
         <h3>{html.escape(text["supported_document_title"])}</h3>
-        <ul>{document_items}</ul>
+        {html_list(text["supported_document_items"])}
         """
 
     def _settings_evaluation_html(self) -> str:
@@ -166,8 +149,8 @@ class UserGuideMixin:
         setting_tables = "\n".join(
             self._settings_group_table(title, rows) for title, rows in self._current_settings_groups()
         )
-        finding_items = "\n".join(
-            f"<li><span class='{level}'>{html.escape(label)}</span>: {html.escape(message)}</li>"
+        finding_items = html_items(
+            f"<span class='{level}'>{html.escape(label)}</span>: {html.escape(message)}"
             for level, label, message in self._settings_findings()
         )
         return f"""
@@ -200,13 +183,12 @@ class UserGuideMixin:
         provider_model_tables = "\n".join(
             self._reference_option_table(title, rows) for title, rows in self._provider_model_reference_groups()
         )
-        advanced_items = "".join(f"<li>{item}</li>" for item in text["advanced_items"])
         return f"""
         <h2>{html.escape(text["reference_title"])}</h2>
         <p class="muted">{html.escape(text["reference_intro"])}</p>
         {provider_model_tables}
         <h3>{html.escape(text["advanced_title"])}</h3>
-        <ul>{advanced_items}</ul>
+        {html_list(text["advanced_items"])}
         """
 
     def _reference_option_table(self, title: str, rows: list[tuple[str, str, str, str]]) -> str:

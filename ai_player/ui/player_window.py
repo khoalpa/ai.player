@@ -34,6 +34,7 @@ from ai_player.ui.player_window_state import (
     MediaProcessingState,
     RuntimeStatusState,
     SubtitleOverlayState,
+    TelegramChannelState,
     WorkerLifecycleState,
 )
 from ai_player.ui.player_window_transcript import PlayerTranscriptMixin
@@ -77,6 +78,7 @@ class PlayerWindow(
             media_info_text=self._tr("status_no_video"),
         )
         self._worker_lifecycle_state = WorkerLifecycleState()
+        self._telegram_channel_state = TelegramChannelState(channel_thumbnail_source=QPixmap())
         self._video_path: str | None = None
         self._media_frame: QFrame | None = None
         self._media_frame_parent = None
@@ -117,6 +119,7 @@ class PlayerWindow(
         self._telegram_channel_items = []
         self._telegram_channel_all_items = []
         self._telegram_channel_authenticated = False
+        self._telegram_channel_translations: dict[str, str] = {}
         self._pending_telegram_post_id = ""
         self._current_telegram_channel_item = None
         self._current_telegram_post_id = ""
@@ -125,6 +128,9 @@ class PlayerWindow(
         self._pending_telegram_autoplay = False
         self._telegram_browser_return_available = False
         self._telegram_channel_thumbnail_source = QPixmap()
+        self._telegram_auto_load_pending_before_post_id = ""
+        self._telegram_side_panel_visible = True
+        self._telegram_side_panel_sizes: list[int] = [1, 1]
         self._settings_save_timer = QTimer(self)
         self._settings_save_timer.setSingleShot(True)
         self._settings_save_timer.setInterval(600)
@@ -378,6 +384,14 @@ class PlayerWindow(
         self._worker_lifecycle_state.telegram_worker = value
 
     @property
+    def _telegram_translation_worker(self) -> object | None:
+        return self._worker_lifecycle_state.telegram_translation_worker
+
+    @_telegram_translation_worker.setter
+    def _telegram_translation_worker(self, value: object | None) -> None:
+        self._worker_lifecycle_state.telegram_translation_worker = value
+
+    @property
     def _pending_telegram_url(self) -> str:
         return self._worker_lifecycle_state.pending_telegram_url
 
@@ -392,6 +406,126 @@ class PlayerWindow(
     @_document_worker.setter
     def _document_worker(self, value: object | None) -> None:
         self._worker_lifecycle_state.document_worker = value
+
+    @property
+    def _telegram_channel_items(self) -> list[object]:
+        return self._telegram_channel_state.channel_items
+
+    @_telegram_channel_items.setter
+    def _telegram_channel_items(self, value: list[object]) -> None:
+        self._telegram_channel_state.channel_items = list(value or [])
+
+    @property
+    def _telegram_channel_all_items(self) -> list[object]:
+        return self._telegram_channel_state.channel_all_items
+
+    @_telegram_channel_all_items.setter
+    def _telegram_channel_all_items(self, value: list[object]) -> None:
+        self._telegram_channel_state.channel_all_items = list(value or [])
+
+    @property
+    def _telegram_channel_authenticated(self) -> bool:
+        return self._telegram_channel_state.channel_authenticated
+
+    @_telegram_channel_authenticated.setter
+    def _telegram_channel_authenticated(self, value: bool) -> None:
+        self._telegram_channel_state.channel_authenticated = bool(value)
+
+    @property
+    def _telegram_channel_translations(self) -> dict[str, str]:
+        return self._telegram_channel_state.channel_translations
+
+    @_telegram_channel_translations.setter
+    def _telegram_channel_translations(self, value: dict[str, str]) -> None:
+        self._telegram_channel_state.channel_translations = dict(value or {})
+
+    @property
+    def _pending_telegram_post_id(self) -> str:
+        return self._telegram_channel_state.pending_post_id
+
+    @_pending_telegram_post_id.setter
+    def _pending_telegram_post_id(self, value: str) -> None:
+        self._telegram_channel_state.pending_post_id = str(value or "")
+
+    @property
+    def _current_telegram_channel_item(self) -> object | None:
+        return self._telegram_channel_state.current_channel_item
+
+    @_current_telegram_channel_item.setter
+    def _current_telegram_channel_item(self, value: object | None) -> None:
+        self._telegram_channel_state.current_channel_item = value
+
+    @property
+    def _current_telegram_post_id(self) -> str:
+        return self._telegram_channel_state.current_post_id
+
+    @_current_telegram_post_id.setter
+    def _current_telegram_post_id(self, value: str) -> None:
+        self._telegram_channel_state.current_post_id = str(value or "")
+
+    @property
+    def _current_telegram_url(self) -> str:
+        return self._telegram_channel_state.current_url
+
+    @_current_telegram_url.setter
+    def _current_telegram_url(self, value: str) -> None:
+        self._telegram_channel_state.current_url = str(value or "")
+
+    @property
+    def _pending_telegram_navigation_direction(self) -> int:
+        return self._telegram_channel_state.pending_navigation_direction
+
+    @_pending_telegram_navigation_direction.setter
+    def _pending_telegram_navigation_direction(self, value: int) -> None:
+        self._telegram_channel_state.pending_navigation_direction = int(value or 0)
+
+    @property
+    def _pending_telegram_autoplay(self) -> bool:
+        return self._telegram_channel_state.pending_autoplay
+
+    @_pending_telegram_autoplay.setter
+    def _pending_telegram_autoplay(self, value: bool) -> None:
+        self._telegram_channel_state.pending_autoplay = bool(value)
+
+    @property
+    def _telegram_browser_return_available(self) -> bool:
+        return self._telegram_channel_state.browser_return_available
+
+    @_telegram_browser_return_available.setter
+    def _telegram_browser_return_available(self, value: bool) -> None:
+        self._telegram_channel_state.browser_return_available = bool(value)
+
+    @property
+    def _telegram_channel_thumbnail_source(self) -> object | None:
+        return self._telegram_channel_state.channel_thumbnail_source
+
+    @_telegram_channel_thumbnail_source.setter
+    def _telegram_channel_thumbnail_source(self, value: object | None) -> None:
+        self._telegram_channel_state.channel_thumbnail_source = value
+
+    @property
+    def _telegram_auto_load_pending_before_post_id(self) -> str:
+        return self._telegram_channel_state.auto_load_pending_before_post_id
+
+    @_telegram_auto_load_pending_before_post_id.setter
+    def _telegram_auto_load_pending_before_post_id(self, value: str) -> None:
+        self._telegram_channel_state.auto_load_pending_before_post_id = str(value or "")
+
+    @property
+    def _telegram_side_panel_visible(self) -> bool:
+        return self._telegram_channel_state.side_panel_visible
+
+    @_telegram_side_panel_visible.setter
+    def _telegram_side_panel_visible(self, value: bool) -> None:
+        self._telegram_channel_state.side_panel_visible = bool(value)
+
+    @property
+    def _telegram_side_panel_sizes(self) -> list[int]:
+        return self._telegram_channel_state.side_panel_sizes
+
+    @_telegram_side_panel_sizes.setter
+    def _telegram_side_panel_sizes(self, value: list[int]) -> None:
+        self._telegram_channel_state.side_panel_sizes = [int(item or 0) for item in list(value or [])]
 
     @property
     def _runtime_last_wall(self) -> float:

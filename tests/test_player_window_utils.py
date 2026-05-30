@@ -5,10 +5,21 @@ from pathlib import Path
 
 from ai_player.core.config import AppConfig
 from ai_player.ui import player_window_utils as utils
+from ai_player.ui.user_guide_text import GUIDE_TEXT
 
 
 def test_repair_mojibake_repairs_common_vietnamese_text() -> None:
     assert utils.repair_mojibake("KhÃ´ng") == "Không"
+
+
+def test_user_guide_text_has_no_repairable_mojibake() -> None:
+    changed = [
+        (path, value)
+        for path, value in _walk_strings("GUIDE_TEXT", GUIDE_TEXT)
+        if utils.repair_mojibake(value) != value
+    ]
+
+    assert changed == []
 
 
 def test_html_with_breaks_escapes_and_preserves_lines() -> None:
@@ -77,3 +88,21 @@ def _dropdown_values(path: Path) -> list[str]:
         else:
             values.append(str(item))
     return values
+
+
+def _walk_strings(path: str, value: object) -> list[tuple[str, str]]:
+    if isinstance(value, str):
+        return [(path, value)]
+    if isinstance(value, dict):
+        return [
+            item
+            for key, child in value.items()
+            for item in _walk_strings(f"{path}.{key}", child)
+        ]
+    if isinstance(value, list | tuple):
+        return [
+            item
+            for index, child in enumerate(value)
+            for item in _walk_strings(f"{path}[{index}]", child)
+        ]
+    return []

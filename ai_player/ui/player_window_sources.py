@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape as html_escape
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QStyle,
     QVBoxLayout,
 )
 
@@ -32,13 +34,21 @@ from ai_player.services.telegram_channel import (
     delete_telegram_login_data,
     is_telegram_channel_url,
     load_telegram_login_config,
+    telegram_channel_item_translation_text,
     telegram_private_available,
     validate_telegram_login_config,
 )
 from ai_player.services.video_source import is_supported_video_url
 from ai_player.ui.cache_progress_dialog import CacheProgressDialog
 from ai_player.ui.player_window_utils import repair_mojibake as _repair_mojibake
-from ai_player.workers.player_window_workers import DocumentTranscriptWorker, TelegramChannelWorker
+from ai_player.workers.player_window_workers import (
+    DocumentTranscriptWorker,
+    TelegramChannelWorker,
+    TelegramContentTranslationWorker,
+)
+
+TELEGRAM_ITEM_HTML_ROLE = Qt.ItemDataRole.UserRole.value + 10
+TELEGRAM_TRANSLATION_COLOR = "#0f766e"
 
 
 class PlayerSourceMixin:
@@ -61,7 +71,7 @@ class PlayerSourceMixin:
         self._video_path = path
         self._auto_select_video_aspect_ratio()
         self._load_current_video_for_playback()
-        self._media_stack.setCurrentWidget(self._video_widget)
+        self._show_video_output()
         self._source_label.setText(path)
         self._save_settings()
         self.statusBar().showMessage(self._tr("status_opened_path").format(path=path))
@@ -177,8 +187,21 @@ class PlayerSourceMixin:
 
         self._open_resolved_video_url(url)
 
-    def _open_resolved_video_url(self, url: str) -> None:
-        if not is_telegram_channel_url(url):
+    def _open_url_from_browser(self, url: str) -> None:
+        url = str(url or "").strip()
+        if not url:
+            return
+        if self._url_is_opening() or self._telegram_is_busy():
+            self.statusBar().showMessage(self._tr("msg_url_opening"))
+            return
+        if is_telegram_channel_url(url):
+            self._start_telegram_channel_flow(url)
+            return
+        if is_supported_video_url(url):
+            self._open_resolved_video_url(url)
+
+    def _open_resolved_video_url(self, url: str, *, keep_telegram_context: bool = False) -> None:
+        if not keep_telegram_context and not is_telegram_channel_url(url):
             self._clear_active_telegram_channel_video()
         forced_full_cache = self._source_filter_forces_video_url_full_cache()
         full_cache = self._effective_video_url_full_cache()
@@ -265,8 +288,10 @@ class PlayerSourceMixin:
     def _telegram_items_ready(self, items, operation: str = "") -> None:
         items = list(items)
         if operation.endswith("_more"):
+            self._telegram_auto_load_pending_before_post_id = ""
             self._append_telegram_channel_items(items)
         else:
+            self._telegram_auto_load_pending_before_post_id = ""
             self._set_telegram_channel_items(items)
         if operation in {"list_authenticated", "list_authenticated_more"}:
             self._telegram_channel_authenticated = True
@@ -280,6 +305,7 @@ class PlayerSourceMixin:
         if pending_direction and operation.endswith("_more"):
             self._pending_telegram_navigation_direction = 0
             self._open_adjacent_telegram_channel_video(pending_direction, allow_load_more=False)
+        self._maybe_auto_translate_telegram_channel()
 
     def _telegram_videos_ready(self, videos) -> None:
         self._telegram_items_ready(videos)
@@ -294,6 +320,8 @@ class PlayerSourceMixin:
         self._telegram_channel_items = []
         self._telegram_channel_all_items = []
         self._telegram_channel_authenticated = False
+        self._telegram_channel_translations.clear()
+        self._telegram_auto_load_pending_before_post_id = ""
         self._telegram_channel_list.clear()
         self._telegram_channel_preview.clear()
         self._clear_telegram_channel_thumbnail()
@@ -303,9 +331,12 @@ class PlayerSourceMixin:
         self._telegram_channel_login_button.setEnabled(telegram_private_available())
         self._telegram_channel_refresh_button.setEnabled(True)
         self._telegram_channel_load_more_button.setEnabled(True)
+        self._telegram_channel_thumbnail.setText("")
+        self._show_telegram_browser_media_output()
         self._media_stack.setCurrentWidget(self._telegram_channel_view)
         self._source_label.setText(url)
         self._sync_telegram_browser_button()
+        self._sync_telegram_side_panel_toggle_button()
         self._apply_media_aspect_ratio()
 
     def _return_to_telegram_channel_browser(self) -> None:
@@ -324,11 +355,120 @@ class PlayerSourceMixin:
         )
         current = self._current_telegram_channel_item_for_navigation()
         if current is not None:
-            self._select_telegram_channel_item(current)
+            self._telegram_suppress_auto_open_selection = True
+            try:
+                self._select_telegram_channel_item(current)
+            finally:
+                self._telegram_suppress_auto_open_selection = False
+        self._show_telegram_browser_media_output()
         self._media_stack.setCurrentWidget(self._telegram_channel_view)
         self._source_label.setText(url)
         self._sync_telegram_browser_button()
+        self._sync_telegram_side_panel_toggle_button()
         self._apply_media_aspect_ratio()
+
+    def _show_video_output(self) -> None:
+        if self._should_embed_telegram_video_output():
+            self._player.set_video_output(self._telegram_video_widget)
+            self._telegram_channel_media_stack.setCurrentWidget(self._telegram_video_widget)
+            self._media_stack.setCurrentWidget(self._telegram_channel_view)
+        else:
+            self._player.set_video_output(self._video_widget)
+            self._media_stack.setCurrentWidget(self._video_widget)
+        self._apply_media_aspect_ratio()
+
+    def _show_telegram_browser_media_output(self) -> None:
+        set_video_output = getattr(getattr(self, "_player", None), "set_video_output", None)
+        if callable(set_video_output):
+            set_video_output(self._video_widget)
+        self._show_telegram_thumbnail_output()
+
+    def _should_embed_telegram_video_output(self) -> bool:
+        return bool(
+            getattr(self, "_current_telegram_channel_item", None) is not None
+            and getattr(self, "_telegram_browser_return_available", False)
+            and getattr(self, "_telegram_channel_view", None) is not None
+        )
+
+    def _show_telegram_thumbnail_output(self) -> None:
+        telegram_stack = getattr(self, "_telegram_channel_media_stack", None)
+        thumbnail = getattr(self, "_telegram_channel_thumbnail", None)
+        if telegram_stack is not None and thumbnail is not None:
+            telegram_stack.setCurrentWidget(thumbnail)
+
+    def _video_widget_in_telegram_media(self) -> bool:
+        telegram_stack = getattr(self, "_telegram_channel_media_stack", None)
+        video_widget = getattr(self, "_telegram_video_widget", None)
+        return bool(
+            telegram_stack is not None
+            and video_widget is not None
+            and telegram_stack.currentWidget() is video_widget
+        )
+
+    def _telegram_video_output_is_visible(self) -> bool:
+        telegram_stack = getattr(self, "_telegram_channel_media_stack", None)
+        video_widget = getattr(self, "_telegram_video_widget", None)
+        return bool(
+            telegram_stack is not None
+            and video_widget is not None
+            and telegram_stack.currentWidget() is video_widget
+            and self._media_stack.currentWidget() is self._telegram_channel_view
+        )
+
+    def _telegram_side_panel_toggled(self, visible: bool) -> None:
+        self._set_telegram_side_panel_visible(visible)
+
+    def _telegram_side_panel_splitter_moved(self, *_args) -> None:
+        splitter = getattr(self, "_telegram_channel_splitter", None)
+        side_panel = getattr(self, "_telegram_channel_side_panel", None)
+        if splitter is None or side_panel is None or side_panel.isHidden():
+            return
+        sizes = splitter.sizes()
+        if len(sizes) < 2:
+            return
+        visible = sizes[1] > 0
+        self._telegram_side_panel_visible = visible
+        if visible:
+            self._telegram_side_panel_sizes = sizes[:2]
+        self._sync_telegram_side_panel_toggle_button()
+
+    def _set_telegram_side_panel_visible(self, visible: bool) -> None:
+        splitter = getattr(self, "_telegram_channel_splitter", None)
+        side_panel = getattr(self, "_telegram_channel_side_panel", None)
+        if splitter is None or side_panel is None:
+            return
+        sizes = splitter.sizes()
+        if len(sizes) < 2:
+            sizes = [1, 1]
+        visible = bool(visible)
+        if visible:
+            side_panel.setVisible(True)
+            restore_sizes = list(getattr(self, "_telegram_side_panel_sizes", [1, 1]) or [1, 1])
+            if len(restore_sizes) < 2 or restore_sizes[0] <= 0 or restore_sizes[1] <= 0:
+                restore_sizes = [1, 1]
+            splitter.setSizes(restore_sizes[:2])
+        else:
+            if not side_panel.isHidden() and sizes[1] > 0:
+                self._telegram_side_panel_sizes = sizes[:2]
+            side_panel.setVisible(False)
+            splitter.setSizes([max(1, sum(sizes) or splitter.width() or 1), 0])
+        self._telegram_side_panel_visible = visible
+        self._sync_telegram_side_panel_toggle_button()
+        self._apply_media_aspect_ratio()
+
+    def _sync_telegram_side_panel_toggle_button(self) -> None:
+        button = getattr(self, "_telegram_channel_side_toggle_button", None)
+        if button is None:
+            return
+        visible = bool(getattr(self, "_telegram_side_panel_visible", True))
+        icon = QStyle.StandardPixmap.SP_ArrowRight if visible else QStyle.StandardPixmap.SP_ArrowLeft
+        button.setIcon(self.style().standardIcon(icon))
+        tooltip_key = "telegram_channel_side_hide" if visible else "telegram_channel_side_show"
+        button.setToolTip(self._tr(tooltip_key))
+        button.setAccessibleName(self._tr(tooltip_key))
+        was_blocked = button.blockSignals(True)
+        button.setChecked(visible)
+        button.blockSignals(was_blocked)
 
     def _sync_telegram_browser_button(self) -> None:
         button = getattr(self, "_telegram_browser_button", None)
@@ -345,24 +485,59 @@ class PlayerSourceMixin:
     def _populate_telegram_channel_browser(self, items) -> None:
         self._telegram_channel_items = list(items)
         self._telegram_channel_list.clear()
+        self._telegram_populating_browser = True
         for index, channel_item in enumerate(self._telegram_channel_items):
             label = self._telegram_channel_item_label(channel_item)
             item = QListWidgetItem(label)
-            item.setToolTip(label)
+            item.setToolTip(str(getattr(channel_item, "url", "") or "").strip())
             item.setSizeHint(QSize(0, self._telegram_channel_item_height(label)))
             item.setData(Qt.ItemDataRole.UserRole, index)
+            item.setData(TELEGRAM_ITEM_HTML_ROLE, self._telegram_channel_item_html(channel_item, summary=True))
             self._set_telegram_item_thumbnail(item, channel_item, index)
             self._telegram_channel_list.addItem(item)
         if self._telegram_channel_items:
             target_row = self._telegram_target_row()
             self._telegram_channel_list.setCurrentRow(target_row if target_row >= 0 else 0)
+        self._telegram_populating_browser = False
         self._telegram_channel_status.setText(
             self._tr("telegram_channel_browser_ready").format(count=len(self._telegram_channel_all_items))
         )
         self._telegram_channel_login_button.setEnabled(telegram_private_available())
 
     def _telegram_channel_item_label(self, channel_item) -> str:
-        return "\n".join(self._telegram_channel_item_lines(channel_item))
+        return "\n".join(self._telegram_channel_item_summary_lines(channel_item))
+
+    def _telegram_channel_item_summary_lines(self, channel_item) -> list[str]:
+        kind_label = self._telegram_media_kind_label(channel_item)
+        post_id = str(getattr(channel_item, "post_id", "") or "").strip()
+        heading_parts = [kind_label]
+        if post_id:
+            heading_parts.append(self._tr("telegram_channel_item_post_id").format(post_id=post_id))
+        lines = [" ".join(heading_parts)]
+
+        source_text = telegram_channel_item_translation_text(channel_item)
+        if source_text:
+            lines.append(self._telegram_summary_excerpt(source_text))
+        translated = self._telegram_channel_item_translation(channel_item)
+        if translated and translated != source_text:
+            lines.append(self._telegram_summary_excerpt(translated))
+
+        details = []
+        date = str(getattr(channel_item, "date", "") or "").strip()
+        if date:
+            details.append(date)
+        duration = str(getattr(channel_item, "duration", "") or "").strip()
+        if duration:
+            details.append(duration)
+        file_size = int(getattr(channel_item, "file_size", 0) or 0)
+        if file_size:
+            details.append(self._format_bytes(file_size))
+        file_name = str(getattr(channel_item, "file_name", "") or "").strip()
+        if file_name:
+            details.append(self._telegram_summary_excerpt(file_name, max_chars=70))
+        if details:
+            lines.append(" | ".join(details))
+        return lines
 
     def _telegram_channel_item_lines(self, channel_item) -> list[str]:
         kind_label = self._telegram_media_kind_label(channel_item)
@@ -378,6 +553,9 @@ class PlayerSourceMixin:
             lines.append(text)
         elif title:
             lines.append(title)
+        translated = self._telegram_channel_item_translation(channel_item)
+        if translated and translated != telegram_channel_item_translation_text(channel_item):
+            lines.append(translated)
 
         date = str(getattr(channel_item, "date", "") or "").strip()
         if date:
@@ -402,6 +580,23 @@ class PlayerSourceMixin:
             lines.append(self._tr("telegram_channel_item_media_url").format(url=media_url))
         return lines
 
+    def _telegram_channel_item_html(self, channel_item, *, summary: bool = False) -> str:
+        translated = self._telegram_channel_item_translation(channel_item)
+        source_text = telegram_channel_item_translation_text(channel_item)
+        html_lines = []
+        lines = (
+            self._telegram_channel_item_summary_lines(channel_item)
+            if summary
+            else self._telegram_channel_item_lines(channel_item)
+        )
+        translated_summary = self._telegram_summary_excerpt(translated) if translated else ""
+        for line in lines:
+            text = html_escape(str(line or ""))
+            if translated and translated != source_text and line in {translated, translated_summary}:
+                text = f'<span style="color:{TELEGRAM_TRANSLATION_COLOR};">{text}</span>'
+            html_lines.append(text)
+        return "<br>".join(html_lines)
+
     @staticmethod
     def _telegram_channel_item_height(label: str) -> int:
         text = str(label or "")
@@ -411,6 +606,13 @@ class PlayerSourceMixin:
             line_count += max(1, (len(line) + chars_per_line - 1) // chars_per_line)
         text_height = line_count * 18
         return max(104, text_height + 14)
+
+    @staticmethod
+    def _telegram_summary_excerpt(value: str, *, max_chars: int = 220) -> str:
+        text = " ".join(str(value or "").split())
+        if len(text) <= max_chars:
+            return text
+        return f"{text[: max_chars - 1].rstrip()}..."
 
     def _set_telegram_channel_items(self, items) -> None:
         self._telegram_channel_all_items = list(items)
@@ -452,6 +654,7 @@ class PlayerSourceMixin:
             for value in (
                 getattr(channel_item, "title", ""),
                 getattr(channel_item, "text", ""),
+                self._telegram_channel_item_translation(channel_item),
                 getattr(channel_item, "file_name", ""),
                 getattr(channel_item, "duration", ""),
                 getattr(channel_item, "url", ""),
@@ -485,10 +688,169 @@ class PlayerSourceMixin:
             self._clear_telegram_channel_thumbnail()
             self._telegram_channel_open_button.setEnabled(False)
             return
-        lines = self._telegram_channel_item_lines(channel_item)
-        self._telegram_channel_preview.setPlainText("\n".join(lines))
-        self._show_telegram_channel_thumbnail(channel_item)
+        self._telegram_channel_preview.setHtml(self._telegram_channel_item_html(channel_item, summary=False))
+        current_key = self._telegram_channel_item_key(channel_item)
+        active_key = self._telegram_channel_item_key_values(self._current_telegram_post_id, self._current_telegram_url)
+        active_video_visible = current_key and current_key == active_key and self._telegram_video_output_is_visible()
+        if not active_video_visible:
+            self._show_telegram_channel_thumbnail(channel_item)
         self._telegram_channel_open_button.setEnabled(bool(getattr(channel_item, "has_video", True)))
+        if not getattr(channel_item, "has_video", True) and self._video_widget_in_telegram_media():
+            self._player.stop()
+        self._maybe_auto_open_telegram_video(channel_item)
+
+    def _maybe_auto_open_telegram_video(self, channel_item) -> None:
+        if getattr(self, "_telegram_populating_browser", False):
+            return
+        if getattr(self, "_telegram_suppress_auto_open_selection", False):
+            return
+        if getattr(self, "_telegram_selection_auto_opening", False):
+            return
+        if not getattr(channel_item, "has_video", True):
+            return
+        if self._telegram_is_busy() or self._url_is_opening():
+            return
+        current_key = self._telegram_channel_item_key(channel_item)
+        active_key = self._telegram_channel_item_key_values(self._current_telegram_post_id, self._current_telegram_url)
+        if current_key and current_key == active_key and self._telegram_video_output_is_visible():
+            return
+        self._telegram_selection_auto_opening = True
+        try:
+            self._open_telegram_channel_item(channel_item)
+        finally:
+            self._telegram_selection_auto_opening = False
+
+    def _telegram_load_more_toggled(self, enabled: bool) -> None:
+        if enabled:
+            self._maybe_auto_load_more_telegram_channel()
+
+    def _telegram_channel_scroll_changed(self, *_args) -> None:
+        self._maybe_auto_load_more_telegram_channel()
+
+    def _maybe_auto_load_more_telegram_channel(self) -> None:
+        button = getattr(self, "_telegram_channel_load_more_button", None)
+        if button is None or not button.isChecked():
+            return
+        if self._telegram_is_busy() or self._url_is_opening():
+            return
+        scroll_bar = self._telegram_channel_list.verticalScrollBar()
+        if scroll_bar.maximum() <= 0:
+            return
+        threshold = max(24, scroll_bar.pageStep())
+        if scroll_bar.value() < scroll_bar.maximum() - threshold:
+            return
+        before_post_id = self._oldest_telegram_post_id()
+        if not before_post_id:
+            return
+        if before_post_id == getattr(self, "_telegram_auto_load_pending_before_post_id", ""):
+            return
+        self._telegram_auto_load_pending_before_post_id = before_post_id
+        self._load_more_current_telegram_channel()
+
+    def _telegram_translation_toggled(self, enabled: bool) -> None:
+        if enabled:
+            self._translate_current_telegram_channel()
+            return
+        worker = getattr(self, "_telegram_translation_worker", None)
+        if worker is not None and worker.isRunning():
+            worker.stop()
+
+    def _maybe_auto_translate_telegram_channel(self) -> None:
+        button = getattr(self, "_telegram_channel_translate_button", None)
+        if button is not None and button.isChecked():
+            self._translate_current_telegram_channel(auto=True)
+
+    def _translate_current_telegram_channel(self, *args, auto: bool = False) -> None:
+        if self._telegram_translation_worker is not None and self._telegram_translation_worker.isRunning():
+            if not auto:
+                self.statusBar().showMessage(self._tr("status_telegram_translation_loading"))
+            return
+        items = self._telegram_channel_items_to_translate()
+        if not items:
+            if not auto:
+                self.statusBar().showMessage(self._tr("telegram_channel_no_text_to_translate"))
+            return
+
+        self.statusBar().showMessage(self._tr("status_telegram_translation_loading"))
+        worker = TelegramContentTranslationWorker(
+            self._current_runtime_config(),
+            items,
+            language_id=self._config.gui_language,
+            parent=self,
+        )
+        self._telegram_translation_worker = worker
+        worker.ready.connect(self._telegram_translation_ready)
+        worker.failed.connect(self._telegram_translation_failed)
+        worker.finished.connect(self._telegram_translation_worker_finished)
+        worker.start()
+
+    def _telegram_channel_items_to_translate(self) -> list[object]:
+        pending = []
+        for item in getattr(self, "_telegram_channel_all_items", []):
+            if not telegram_channel_item_translation_text(item):
+                continue
+            if self._telegram_channel_item_translation(item):
+                continue
+            pending.append(item)
+        return pending
+
+    def _telegram_translation_ready(self, results) -> None:
+        current_key = self._telegram_channel_item_key(
+            self._telegram_channel_item_from_list_item(self._telegram_channel_list.currentItem())
+        )
+        count = 0
+        for post_id, url, translated in list(results or []):
+            text = " ".join(str(translated or "").split())
+            if not text:
+                continue
+            self._telegram_channel_translations[self._telegram_channel_item_key_values(post_id, url)] = text
+            count += 1
+        self._filter_telegram_channel_items()
+        if current_key:
+            self._select_telegram_channel_item_key(current_key)
+        self.statusBar().showMessage(self._tr("status_telegram_translation_ready").format(count=count))
+
+    def _telegram_translation_failed(self, message: str) -> None:
+        QMessageBox.warning(self, self._tr("open_url_error_title"), _repair_mojibake(str(message)))
+        self.statusBar().showMessage(self._tr("status_telegram_translation_failed"))
+
+    def _telegram_translation_worker_finished(self) -> None:
+        worker = self.sender()
+        if worker is not None:
+            worker.deleteLater()
+        if self._telegram_translation_worker is worker:
+            self._telegram_translation_worker = None
+            self._set_telegram_translation_controls(not self._telegram_is_busy() and not self._url_is_opening())
+
+    def _set_telegram_translation_controls(self, enabled: bool) -> None:
+        button = getattr(self, "_telegram_channel_translate_button", None)
+        if button is not None:
+            button.setEnabled(enabled)
+
+    def _telegram_channel_item_translation(self, channel_item) -> str:
+        return self._telegram_channel_translations.get(self._telegram_channel_item_key(channel_item), "")
+
+    def _select_telegram_channel_item_key(self, key: str) -> None:
+        if not key:
+            return
+        for row, channel_item in enumerate(getattr(self, "_telegram_channel_items", [])):
+            if self._telegram_channel_item_key(channel_item) == key:
+                self._telegram_channel_list.setCurrentRow(row)
+                return
+
+    def _telegram_channel_item_key(self, channel_item) -> str:
+        if channel_item is None:
+            return ""
+        return self._telegram_channel_item_key_values(
+            str(getattr(channel_item, "post_id", "") or ""),
+            str(getattr(channel_item, "url", "") or ""),
+        )
+
+    @staticmethod
+    def _telegram_channel_item_key_values(post_id: object, url: object) -> str:
+        post_id_text = str(post_id or "").strip()
+        url_text = str(url or "").strip()
+        return post_id_text or url_text
 
     def _set_telegram_item_thumbnail(self, item: QListWidgetItem, channel_item, index: int) -> None:
         thumbnail = str(getattr(channel_item, "thumbnail_url", "") or "").strip()
@@ -515,7 +877,8 @@ class PlayerSourceMixin:
     def _clear_telegram_channel_thumbnail(self) -> None:
         self._telegram_channel_thumbnail_source = QPixmap()
         self._telegram_channel_thumbnail.clear()
-        self._telegram_channel_thumbnail.hide()
+        self._telegram_channel_thumbnail.show()
+        self._show_telegram_thumbnail_output()
 
     def _set_telegram_channel_thumbnail_pixmap(self, pixmap: QPixmap) -> None:
         if pixmap.isNull():
@@ -523,7 +886,8 @@ class PlayerSourceMixin:
             return
         self._telegram_channel_thumbnail_source = pixmap
         self._refresh_telegram_channel_thumbnail()
-        self._telegram_channel_thumbnail.hide()
+        self._telegram_channel_thumbnail.show()
+        self._show_telegram_thumbnail_output()
 
     def _refresh_telegram_channel_thumbnail(self) -> None:
         pixmap = getattr(self, "_telegram_channel_thumbnail_source", QPixmap())
@@ -622,7 +986,7 @@ class PlayerSourceMixin:
             return
         media_url = str(getattr(channel_item, "media_url", "") or "").strip()
         if media_url:
-            self._open_resolved_video_url(media_url)
+            self._open_resolved_video_url(media_url, keep_telegram_context=True)
             return
         self._open_resolved_video_url(channel_item.url)
 
@@ -863,7 +1227,7 @@ class PlayerSourceMixin:
         self._video_path = path
         self._auto_select_video_aspect_ratio()
         self._load_current_video_for_playback()
-        self._media_stack.setCurrentWidget(self._video_widget)
+        self._show_video_output()
         self._sync_telegram_browser_button()
         self._source_label.setText(path)
         self._save_settings()
@@ -892,6 +1256,8 @@ class PlayerSourceMixin:
 
     def _telegram_worker_failed(self, operation: str, message: str) -> None:
         detail = _repair_mojibake(message)
+        if operation.endswith("_more"):
+            self._telegram_auto_load_pending_before_post_id = ""
         if operation in {"list_public", "list_public_more"} and not telegram_private_available():
             QMessageBox.warning(self, self._tr("open_url_error_title"), self._tr("telegram_login_private_unavailable"))
             self.statusBar().showMessage(self._tr("status_open_url_failed"))
@@ -966,7 +1332,11 @@ class PlayerSourceMixin:
     def _set_telegram_opening_controls(self, enabled: bool) -> None:
         if hasattr(self, "_open_url_button"):
             self._open_url_button.setEnabled(enabled)
-        for widget_name in ("_telegram_channel_refresh_button", "_telegram_channel_load_more_button"):
+        for widget_name in (
+            "_telegram_channel_refresh_button",
+            "_telegram_channel_load_more_button",
+            "_telegram_channel_translate_button",
+        ):
             widget = getattr(self, widget_name, None)
             if widget is not None:
                 widget.setEnabled(enabled)
@@ -1035,7 +1405,7 @@ class PlayerSourceMixin:
         self._video_path = source.playback_url
         self._auto_select_video_aspect_ratio(source)
         self._load_current_video_for_playback()
-        self._media_stack.setCurrentWidget(self._video_widget)
+        self._show_video_output()
         self._sync_telegram_browser_button()
         label = source.title if source.is_resolved else source.input_url
         self._source_label.setText(label)

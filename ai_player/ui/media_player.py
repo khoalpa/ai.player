@@ -14,6 +14,11 @@ class VideoPlayer(QObject):
         self._player.setAudioOutput(self._audio)
         self._player.setVideoOutput(video_widget)
 
+    def set_video_output(self, video_widget: QVideoWidget | None) -> None:
+        if self._disposed:
+            return
+        self._player.setVideoOutput(video_widget)
+
     def load(self, path: str) -> None:
         if self._disposed:
             return

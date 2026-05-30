@@ -762,6 +762,8 @@ class PlayerSettingsMixin:
             self._telegram_channel_title.setText(
                 self._tr("telegram_channel_browser_title").format(url=self._pending_telegram_url or "")
             )
+        if hasattr(self, "_sync_telegram_side_panel_toggle_button"):
+            self._sync_telegram_side_panel_toggle_button()
         self._retranslate_inline_option_combos()
 
     def _refresh_language_pack_combos(self) -> None:

@@ -35,3 +35,6 @@ Current extracted owners:
 - `ai_player.ui.player_window_state.WorkerLifecycleState` owns long-lived worker
   references for dubbing, export, meeting, Telegram, and document loading while
   preserving the existing mixin attribute API.
+- `ai_player.ui.player_window_state.TelegramChannelState` owns Telegram channel
+  browser items, translations, navigation flags, thumbnail source, and side panel
+  state while preserving the existing mixin attribute API.

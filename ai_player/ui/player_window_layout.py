@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, QUrl
-from PySide6.QtGui import QColor, QKeySequence, QPainter, QPalette, QShortcut
+import re
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QUrl
+from PySide6.QtGui import QColor, QKeySequence, QPainter, QPalette, QShortcut, QTextDocument
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -20,6 +23,8 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QStatusBar,
     QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -27,8 +32,12 @@ from PySide6.QtWidgets import (
 )
 
 try:
+    from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings
     from PySide6.QtWebEngineWidgets import QWebEngineView
 except ImportError:
+    QWebEnginePage = None
+    QWebEngineScript = None
+    QWebEngineSettings = None
     QWebEngineView = None
 
 from ai_player.core.runtime_catalog import (
@@ -50,6 +59,7 @@ from ai_player.services.source_voice_filter import (
 from ai_player.services.speaker_voice_selector import normalize_voice_gender_mode
 from ai_player.services.translation import normalize_translator_provider
 from ai_player.services.tts import available_tts_providers, available_vieneu_modes, normalize_tts_provider
+from ai_player.services.video_source import is_supported_browser_video_url
 from ai_player.ui.player_window_media import DEFAULT_SIDEBAR_PANEL_SIZES, DEFAULT_SIDEBAR_PANEL_WIDTH
 from ai_player.ui.player_window_utils import (
     dropdown_options as _dropdown_options,
@@ -60,6 +70,509 @@ from ai_player.ui.player_window_utils import (
 
 DEFAULT_MEDIA_HOME_URL = "https://www.google.com"
 DEFAULT_MEDIA_ASPECT_RATIO = "16:9"
+TELEGRAM_ITEM_HTML_ROLE = Qt.ItemDataRole.UserRole.value + 10
+TELEGRAM_TRANSLATION_COLOR = "#0f766e"
+TELEGRAM_BROWSER_HOSTS = {"t.me", "telegram.me", "web.telegram.org", "telegram.org"}
+TELEGRAM_PUBLIC_CHANNEL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
+TELEGRAM_IN_PLAYER_SCRIPT_NAME = "ai-player-telegram-in-player-links"
+TELEGRAM_IN_PLAYER_SCRIPT_SOURCE = r"""
+(function() {
+  if (window.__aiPlayerTelegramLinksInstalled) {
+    return;
+  }
+  window.__aiPlayerTelegramLinksInstalled = true;
+
+  function firstParam(params, name) {
+    var value = params.get(name);
+    return value ? value.replace(/^\/+|\/+$/g, '') : '';
+  }
+
+  function inPlayerUrl(href) {
+    if (!href || href.indexOf('tg://') !== 0) {
+      return '';
+    }
+    var parsed;
+    try {
+      parsed = new URL(href);
+    } catch (e) {
+      return '';
+    }
+    var action = parsed.hostname || parsed.pathname.replace(/^\/+/, '').split('/')[0];
+    var params = parsed.searchParams;
+    if (action === 'resolve') {
+      var domain = firstParam(params, 'domain');
+      if (!domain) {
+        return 'https://t.me/';
+      }
+      var post = firstParam(params, 'post');
+      return 'https://t.me/' + domain + (post ? '/' + post : '');
+    }
+    if (action === 'privatepost') {
+      var channel = firstParam(params, 'channel').replace(/^-100/, '');
+      var privatePost = firstParam(params, 'post');
+      if (channel && privatePost) {
+        return 'https://t.me/c/' + channel + '/' + privatePost;
+      }
+    }
+    if (action === 'join') {
+      var invite = firstParam(params, 'invite');
+      if (invite) {
+        return 'https://t.me/+' + invite;
+      }
+    }
+    if (action === 'msg_url') {
+      return params.get('url') || '';
+    }
+    return 'https://t.me/';
+  }
+
+  function publicChannelName(value) {
+    return /^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(value || '');
+  }
+
+  function httpTelegramPreviewUrl(href) {
+    var parsed;
+    try {
+      parsed = new URL(href, window.location.href);
+    } catch (e) {
+      return '';
+    }
+    var host = parsed.hostname.toLowerCase();
+    if (host !== 't.me' && host !== 'telegram.me') {
+      return '';
+    }
+    var parts = parsed.pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
+    if (parts.length === 1 && publicChannelName(parts[0])) {
+      return 'https://t.me/' + parts[0];
+    }
+    if (parts.length === 2 && publicChannelName(parts[0]) && /^\d+$/.test(parts[1])) {
+      return 'https://t.me/' + parts[0] + '/' + parts[1];
+    }
+    return href;
+  }
+
+  function googleResultTelegramTarget(href) {
+    var parsed;
+    try {
+      parsed = new URL(href, window.location.href);
+    } catch (e) {
+      return '';
+    }
+    var host = parsed.hostname.toLowerCase();
+    if (!(host === 'google.com' || host.endsWith('.google.com')) || parsed.pathname !== '/url') {
+      return '';
+    }
+    return httpTelegramPreviewUrl(parsed.searchParams.get('url') || parsed.searchParams.get('q') || '');
+  }
+
+  function linkTarget(href) {
+    return inPlayerUrl(href) || googleResultTelegramTarget(href) || httpTelegramPreviewUrl(href);
+  }
+
+  function patchLinks() {
+    var links = document.querySelectorAll('a[href]');
+    for (var index = 0; index < links.length; index += 1) {
+      var link = links[index];
+      var target = linkTarget(link.getAttribute('href') || link.href || '');
+      if (!target) {
+        continue;
+      }
+      link.href = target;
+      link.target = '_self';
+      link.removeAttribute('rel');
+      link.onclick = function(event) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+        window.location.href = this.href;
+        return false;
+      };
+    }
+  }
+
+  function handleClick(event) {
+    var link = event.target && event.target.closest ? event.target.closest('a') : null;
+    var target = link ? linkTarget(link.getAttribute('href') || '') : '';
+    if (!target) {
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    event.stopPropagation();
+    window.location.href = target;
+  }
+
+  window.addEventListener('click', handleClick, true);
+  document.addEventListener('click', handleClick, true);
+
+  var originalOpen = window.open;
+  window.open = function(url, name, features) {
+    var target = linkTarget(url || '');
+    if (target) {
+      window.location.href = target;
+      return window;
+    }
+    return originalOpen ? originalOpen.apply(window, arguments) : null;
+  };
+
+  patchLinks();
+  window.setTimeout(patchLinks, 250);
+  window.setTimeout(patchLinks, 1000);
+  window.setTimeout(patchLinks, 2500);
+})();
+"""
+
+
+def _telegram_in_player_url(value: QUrl | str, *, channel_preview: bool = False) -> QUrl | None:
+    url = value.toString() if isinstance(value, QUrl) else str(value or "")
+    parsed = urlparse(url.strip())
+    scheme = parsed.scheme.lower()
+    host = parsed.netloc.lower()
+    google_target = _google_result_telegram_target(parsed, channel_preview=channel_preview)
+    if google_target is not None:
+        return google_target
+    if scheme in {"http", "https"} and host in TELEGRAM_BROWSER_HOSTS:
+        if channel_preview:
+            preview = _telegram_http_channel_preview_url(parsed)
+            if preview is not None:
+                return preview
+        return QUrl(url)
+    if scheme != "tg":
+        return None
+
+    action = host or parsed.path.strip("/").split("/", 1)[0].lower()
+    query = parse_qs(parsed.query)
+    if action == "resolve":
+        domain = _first_query_value(query, "domain")
+        if not domain:
+            return QUrl("https://t.me/")
+        post = _first_query_value(query, "post")
+        path = f"/{domain.strip('/')}"
+        if post:
+            path = f"{path}/{post.strip('/')}"
+        if channel_preview:
+            preview_path = f"/s{path}"
+            return QUrl(urlunparse(("https", "t.me", preview_path, "", "", "")))
+        passthrough = {
+            key: values
+            for key, values in query.items()
+            if key not in {"domain", "post"} and any(str(value or "").strip() for value in values)
+        }
+        return QUrl(urlunparse(("https", "t.me", path, "", urlencode(passthrough, doseq=True), "")))
+    if action == "privatepost":
+        channel = _first_query_value(query, "channel")
+        post = _first_query_value(query, "post")
+        if channel and post:
+            channel = channel.removeprefix("-100").strip("/")
+            return QUrl(f"https://t.me/c/{channel}/{post.strip('/')}")
+    if action == "join":
+        invite = _first_query_value(query, "invite")
+        if invite:
+            return QUrl(f"https://t.me/+{invite.strip('/')}")
+    if action == "msg_url":
+        shared_url = _first_query_value(query, "url")
+        if shared_url:
+            return QUrl(shared_url)
+    return QUrl("https://t.me/")
+
+
+def _player_supported_browser_url(value: QUrl | str) -> QUrl | None:
+    telegram_target = _telegram_in_player_url(value, channel_preview=False)
+    if telegram_target is not None:
+        return telegram_target
+    url = value.toString() if isinstance(value, QUrl) else str(value or "")
+    parsed = urlparse(url.strip())
+    google_target = _google_result_supported_target(parsed)
+    if google_target is not None:
+        return google_target
+    return QUrl(url) if is_supported_browser_video_url(url) else None
+
+
+def _first_query_value(query: dict[str, list[str]], key: str) -> str:
+    values = query.get(key) or []
+    return str(values[0] or "").strip() if values else ""
+
+
+def _telegram_http_channel_preview_url(parsed) -> QUrl | None:
+    host = parsed.netloc.lower()
+    if host not in {"t.me", "telegram.me"}:
+        return None
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if len(parts) == 1 and _telegram_public_channel_name(parts[0]):
+        return QUrl(urlunparse(("https", "t.me", f"/s/{parts[0]}", "", "", "")))
+    if len(parts) == 2 and _telegram_public_channel_name(parts[0]) and parts[1].isdigit():
+        return QUrl(urlunparse(("https", "t.me", f"/s/{parts[0]}/{parts[1]}", "", "", "")))
+    return None
+
+
+def _google_result_telegram_target(parsed, *, channel_preview: bool = False) -> QUrl | None:
+    host = parsed.netloc.lower()
+    if not (host == "google.com" or host.endswith(".google.com")):
+        return None
+    if parsed.path != "/url":
+        return None
+    query = parse_qs(parsed.query)
+    target = _first_query_value(query, "url") or _first_query_value(query, "q")
+    if not target:
+        return None
+    target_url = _telegram_in_player_url(target, channel_preview=channel_preview)
+    return target_url if target_url is not None else None
+
+
+def _google_result_supported_target(parsed) -> QUrl | None:
+    host = parsed.netloc.lower()
+    if not (host == "google.com" or host.endswith(".google.com")):
+        return None
+    if parsed.path != "/url":
+        return None
+    query = parse_qs(parsed.query)
+    target = _first_query_value(query, "url") or _first_query_value(query, "q")
+    if not target:
+        return None
+    telegram_target = _telegram_in_player_url(target, channel_preview=False)
+    if telegram_target is not None:
+        return telegram_target
+    return QUrl(target) if is_supported_browser_video_url(target) else None
+
+
+def _telegram_public_channel_name(value: str) -> bool:
+    return bool(TELEGRAM_PUBLIC_CHANNEL_RE.fullmatch(str(value or "")))
+
+
+if QWebEnginePage is not None:
+
+    class _InPlayerWebEngineView(QWebEngineView):
+        def __init__(self, parent=None) -> None:
+            super().__init__(parent)
+            self._install_web_child_event_filters()
+
+        def childEvent(self, event) -> None:  # noqa: N802
+            super().childEvent(event)
+            if event.type() == QEvent.Type.ChildAdded:
+                self._install_web_child_event_filter(event.child())
+
+        def eventFilter(self, watched, event) -> bool:
+            if self._handle_web_mouse_event(event):
+                return True
+            return super().eventFilter(watched, event)
+
+        def mousePressEvent(self, event) -> None:  # noqa: N802
+            self._open_supported_link_at(event)
+            super().mousePressEvent(event)
+
+        def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+            if self._open_hovered_supported_url():
+                event.accept()
+                return
+            super().mouseReleaseEvent(event)
+
+        def _install_web_child_event_filters(self) -> None:
+            for child in self.findChildren(QWidget):
+                self._install_web_child_event_filter(child)
+
+        def _install_web_child_event_filter(self, child) -> None:
+            if child is None or child is self:
+                return
+            if child.property("ai_player_web_event_filter"):
+                return
+            child.setProperty("ai_player_web_event_filter", True)
+            child.installEventFilter(self)
+
+        def _handle_web_mouse_event(self, event) -> bool:
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                self._open_supported_link_at(event)
+                return False
+            if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+                return self._open_hovered_supported_url()
+            return False
+
+        def _open_hovered_supported_url(self) -> bool:
+            page = self.page()
+            open_hovered = getattr(page, "_open_hovered_supported_url", None)
+            return bool(callable(open_hovered) and open_hovered())
+
+        def _open_supported_link_at(self, event) -> None:
+            point = self._event_view_position(event)
+            script = (
+                "(() => {"
+                f"const el = document.elementFromPoint({point.x()}, {point.y()});"
+                "const a = el && el.closest ? el.closest('a') : null;"
+                "return a ? (a.href || a.getAttribute('href') || '') : '';"
+                "})()"
+            )
+            self.page().runJavaScript(script, self._open_supported_link_from_js)
+
+        def _open_telegram_link_at(self, event) -> None:
+            self._open_supported_link_at(event)
+
+        def _event_view_position(self, event) -> QPoint:
+            global_position = getattr(event, "globalPosition", None)
+            if callable(global_position):
+                return self.mapFromGlobal(global_position().toPoint())
+            return event.position().toPoint()
+
+        def _open_supported_link_from_js(self, href) -> None:
+            target = _player_supported_browser_url(str(href or ""))
+            if target is not None:
+                self._open_supported_url_in_player(target)
+
+        def _open_supported_url_in_player(self, url: QUrl) -> None:
+            window = self.window()
+            open_url = getattr(window, "_open_url_from_browser", None)
+            if callable(open_url):
+                open_url(url.toString())
+                return
+            self.setUrl(url)
+
+    class _InPlayerWebEnginePage(QWebEnginePage):
+        def __init__(self, parent=None) -> None:
+            super().__init__(parent)
+            if QWebEngineSettings is not None:
+                self.settings().setUnknownUrlSchemePolicy(
+                    QWebEngineSettings.UnknownUrlSchemePolicy.AllowAllUnknownUrlSchemes
+                )
+            self._install_telegram_link_script()
+            self.urlChanged.connect(self._redirect_telegram_channel_landing)
+            self.loadFinished.connect(self._page_load_finished)
+            self.newWindowRequested.connect(self._open_new_window_in_player)
+            self.linkHovered.connect(self._supported_link_hovered)
+            self._hovered_supported_url = QUrl()
+
+        def acceptNavigationRequest(self, url, navigation_type, is_main_frame):  # noqa: N802
+            link_clicked = navigation_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked
+            target = _player_supported_browser_url(url)
+            scheme = url.scheme().lower()
+            if link_clicked and target is not None:
+                self._open_url_in_player(target)
+                return False
+            if scheme == "tg":
+                return False
+            if target is not None and self._is_telegram_http_url(target):
+                self._open_url_in_player(target)
+                return False
+            if target is not None and target != url:
+                self._open_url_in_player(target)
+                return False
+            if scheme not in {"about", "blob", "data", "file", "http", "https"}:
+                return False
+            return super().acceptNavigationRequest(url, navigation_type, is_main_frame)
+
+        def createWindow(self, window_type):  # noqa: N802
+            page = _InPlayerPopupPage(self)
+            if not hasattr(self, "_popup_pages"):
+                self._popup_pages = []
+            self._popup_pages.append(page)
+            page.destroyed.connect(lambda _obj=None, page=page: self._forget_popup_page(page))
+            return page
+
+        def _install_telegram_link_script(self) -> None:
+            if QWebEngineScript is None:
+                return
+            script = QWebEngineScript()
+            script.setName(TELEGRAM_IN_PLAYER_SCRIPT_NAME)
+            script.setSourceCode(TELEGRAM_IN_PLAYER_SCRIPT_SOURCE)
+            script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+            script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+            script.setRunsOnSubFrames(True)
+            self.scripts().insert(script)
+
+        def _page_load_finished(self, _ok: bool) -> None:
+            self._redirect_telegram_channel_landing(self.url())
+            self.runJavaScript(TELEGRAM_IN_PLAYER_SCRIPT_SOURCE)
+
+        def _supported_link_hovered(self, url: str) -> None:
+            target = _player_supported_browser_url(url)
+            self._hovered_supported_url = target if target is not None else QUrl()
+
+        def _telegram_link_hovered(self, url: str) -> None:
+            self._supported_link_hovered(url)
+
+        def _open_hovered_supported_url(self) -> bool:
+            target = getattr(self, "_hovered_supported_url", QUrl())
+            if not target.isValid() or not target.toString():
+                return False
+            self._open_url_in_player(target)
+            return True
+
+        def _open_hovered_telegram_url(self) -> bool:
+            return self._open_hovered_supported_url()
+
+        def _redirect_telegram_channel_landing(self, url: QUrl) -> None:
+            target = _telegram_in_player_url(url, channel_preview=False)
+            if target is not None and self._is_telegram_http_url(target):
+                self._open_url_in_player(target)
+
+        @staticmethod
+        def _is_telegram_http_url(url: QUrl) -> bool:
+            parsed = urlparse(url.toString())
+            return parsed.scheme.lower() in {"http", "https"} and parsed.netloc.lower() in {"t.me", "telegram.me"}
+
+        def _open_new_window_in_player(self, request) -> None:
+            target = _player_supported_browser_url(request.requestedUrl())
+            if target is None:
+                return
+            self._open_url_in_player(target)
+
+        def _open_popup_url(self, url: QUrl) -> None:
+            if not url.isValid() or url.toString() in {"", "about:blank"}:
+                return
+            target = _player_supported_browser_url(url)
+            if target is not None:
+                self._open_url_in_player(target)
+                return
+            self._set_player_url(url)
+
+        def _forget_popup_page(self, page) -> None:
+            pages = getattr(self, "_popup_pages", None)
+            if pages is not None and page in pages:
+                pages.remove(page)
+
+        def _set_player_url(self, url: QUrl) -> None:
+            view = self._attached_view()
+            if view is not None:
+                view.setUrl(url)
+                return
+            self.setUrl(url)
+
+        def _open_url_in_player(self, url: QUrl) -> None:
+            view = self._attached_view()
+            window = view.window() if view is not None else None
+            open_url = getattr(window, "_open_url_from_browser", None)
+            if callable(open_url):
+                open_url(url.toString())
+                return
+            self._set_player_url(url)
+
+        def _attached_view(self):
+            page_view = getattr(self, "view", None)
+            if callable(page_view):
+                return page_view()
+            parent = self.parent()
+            return parent if QWebEngineView is not None and isinstance(parent, QWebEngineView) else None
+
+
+    class _InPlayerPopupPage(QWebEnginePage):
+        def __init__(self, owner: _InPlayerWebEnginePage) -> None:
+            super().__init__(owner)
+            self._owner = owner
+            self.urlChanged.connect(self._url_changed)
+
+        def acceptNavigationRequest(self, url, navigation_type, is_main_frame):  # noqa: N802
+            if not url.isValid() or url.toString() in {"", "about:blank"}:
+                return True
+            self._owner._open_popup_url(url)
+            self.deleteLater()
+            return False
+
+        def _url_changed(self, url: QUrl) -> None:
+            if not url.isValid() or url.toString() in {"", "about:blank"}:
+                return
+            self._owner._open_popup_url(url)
+            self.deleteLater()
+
+else:
+    _InPlayerWebEnginePage = None
+    _InPlayerWebEngineView = None
 
 
 class SubtitleOverlayLabel(QLabel):
@@ -80,6 +593,38 @@ class SubtitleOverlayLabel(QLabel):
             painter.fillRect(self.rect(), self._subtitle_background_color)
             painter.end()
         super().paintEvent(event)
+
+
+class TelegramChannelItemDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index) -> None:
+        html = str(index.data(TELEGRAM_ITEM_HTML_ROLE) or "")
+        if not html:
+            super().paint(painter, option, index)
+            return
+
+        item_option = QStyleOptionViewItem(option)
+        self.initStyleOption(item_option, index)
+        style = item_option.widget.style() if item_option.widget is not None else None
+        if style is None:
+            super().paint(painter, option, index)
+            return
+
+        item_option.text = ""
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, item_option, painter, item_option.widget)
+        text_rect = style.subElementRect(
+            QStyle.SubElement.SE_ItemViewItemText,
+            item_option,
+            item_option.widget,
+        )
+        document = QTextDocument()
+        document.setDefaultFont(item_option.font)
+        document.setHtml(html)
+        document.setTextWidth(text_rect.width())
+
+        painter.save()
+        painter.translate(text_rect.topLeft())
+        document.drawContents(painter, QRectF(0, 0, text_rect.width(), text_rect.height()))
+        painter.restore()
 
 
 def _subtitle_qcolor(value: str) -> QColor:
@@ -213,8 +758,22 @@ class PlayerLayoutMixin:
         self._video_widget.setStyleSheet("background-color: #0f172a;")
         self._video_widget.setAutoFillBackground(True)
         self._video_widget.installEventFilter(self)
+        self._telegram_video_widget = QVideoWidget()
+        self._telegram_video_widget.setObjectName("telegramVideoSurface")
+        self._telegram_video_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._telegram_video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
+        self._telegram_video_widget.setPalette(video_palette)
+        self._telegram_video_widget.setAttribute(Qt.WA_NoSystemBackground, False)
+        self._telegram_video_widget.setStyleSheet("background-color: #0f172a;")
+        self._telegram_video_widget.setAutoFillBackground(True)
+        self._telegram_video_widget.installEventFilter(self)
         if QWebEngineView is not None:
-            self._video_placeholder = QWebEngineView()
+            if _InPlayerWebEngineView is not None:
+                self._video_placeholder = _InPlayerWebEngineView()
+            else:
+                self._video_placeholder = QWebEngineView()
+            if _InPlayerWebEnginePage is not None:
+                self._video_placeholder.setPage(_InPlayerWebEnginePage(self._video_placeholder))
             self._video_placeholder.setUrl(QUrl(DEFAULT_MEDIA_HOME_URL))
         else:
             self._video_placeholder = QFrame()
@@ -273,11 +832,18 @@ class PlayerLayoutMixin:
         self._telegram_channel_filter_combo.currentIndexChanged.connect(self._filter_telegram_channel_items)
         self._telegram_channel_load_more_button = QPushButton(self._tr("telegram_channel_load_more"))
         self._telegram_channel_load_more_button.setFixedSize(96, 36)
+        self._telegram_channel_load_more_button.setCheckable(True)
         self._telegram_channel_load_more_button.setProperty("i18n_key", "telegram_channel_load_more")
-        self._telegram_channel_load_more_button.clicked.connect(self._load_more_current_telegram_channel)
+        self._telegram_channel_load_more_button.toggled.connect(self._telegram_load_more_toggled)
+        self._telegram_channel_translate_button = QPushButton(self._tr("telegram_channel_translate"))
+        self._telegram_channel_translate_button.setFixedSize(88, 36)
+        self._telegram_channel_translate_button.setCheckable(True)
+        self._telegram_channel_translate_button.setProperty("i18n_key", "telegram_channel_translate")
+        self._telegram_channel_translate_button.toggled.connect(self._telegram_translation_toggled)
         telegram_tools.addWidget(self._telegram_channel_search, 1)
         telegram_tools.addWidget(self._telegram_channel_filter_combo)
         telegram_tools.addWidget(self._telegram_channel_load_more_button)
+        telegram_tools.addWidget(self._telegram_channel_translate_button)
         self._telegram_channel_list = QListWidget()
         self._telegram_channel_list.setObjectName("telegramChannelList")
         self._telegram_channel_list.setAlternatingRowColors(True)
@@ -286,22 +852,54 @@ class PlayerLayoutMixin:
         self._telegram_channel_list.setTextElideMode(Qt.TextElideMode.ElideNone)
         self._telegram_channel_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._telegram_channel_list.setWordWrap(True)
+        self._telegram_channel_list.setItemDelegate(TelegramChannelItemDelegate(self._telegram_channel_list))
         self._telegram_channel_list.installEventFilter(self)
         self._telegram_channel_list.currentItemChanged.connect(self._telegram_channel_selection_changed)
         self._telegram_channel_list.itemDoubleClicked.connect(self._telegram_channel_item_activated)
+        self._telegram_channel_list.verticalScrollBar().valueChanged.connect(self._telegram_channel_scroll_changed)
         self._telegram_channel_preview = QTextEdit()
         self._telegram_channel_preview.setObjectName("telegramChannelPreview")
         self._telegram_channel_preview.setReadOnly(True)
+        self._telegram_channel_preview.setMinimumHeight(160)
+        self._telegram_channel_preview.setMaximumHeight(240)
         self._telegram_channel_preview.installEventFilter(self)
-        self._telegram_channel_preview.hide()
         self._telegram_channel_thumbnail = QLabel()
         self._telegram_channel_thumbnail.setObjectName("telegramChannelThumbnail")
         self._telegram_channel_thumbnail.setAlignment(Qt.AlignCenter)
-        self._telegram_channel_thumbnail.setMinimumSize(360, 360)
+        self._telegram_channel_thumbnail.setMinimumSize(320, 320)
         self._telegram_channel_thumbnail.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._telegram_channel_thumbnail.setScaledContents(False)
         self._telegram_channel_thumbnail.installEventFilter(self)
-        self._telegram_channel_thumbnail.hide()
+        self._telegram_channel_thumbnail.setText("")
+        self._telegram_channel_media_stack = QStackedWidget()
+        self._telegram_channel_media_stack.setObjectName("telegramChannelMediaStack")
+        self._telegram_channel_media_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._telegram_channel_media_stack.addWidget(self._telegram_channel_thumbnail)
+        self._telegram_channel_media_stack.addWidget(self._telegram_video_widget)
+        self._telegram_channel_media_panel = QFrame()
+        self._telegram_channel_media_panel.setObjectName("telegramChannelMediaPanel")
+        self._telegram_channel_media_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        telegram_media_layout = QGridLayout(self._telegram_channel_media_panel)
+        telegram_media_layout.setContentsMargins(12, 12, 12, 12)
+        telegram_media_layout.setSpacing(0)
+        telegram_media_layout.addWidget(self._telegram_channel_media_stack, 0, 0)
+        self._telegram_channel_side_toggle_button = QPushButton(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowRight),
+            "",
+        )
+        self._telegram_channel_side_toggle_button.setObjectName("telegramChannelSideToggle")
+        self._telegram_channel_side_toggle_button.setFixedSize(36, 36)
+        self._telegram_channel_side_toggle_button.setCheckable(True)
+        self._telegram_channel_side_toggle_button.setChecked(True)
+        self._telegram_channel_side_toggle_button.setCursor(Qt.PointingHandCursor)
+        self._telegram_channel_side_toggle_button.toggled.connect(self._telegram_side_panel_toggled)
+        telegram_media_layout.addWidget(
+            self._telegram_channel_side_toggle_button,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
+        )
+        self._telegram_channel_side_toggle_button.raise_()
         telegram_buttons = QHBoxLayout()
         telegram_buttons.setContentsMargins(0, 0, 0, 0)
         telegram_buttons.setSpacing(8)
@@ -329,8 +927,19 @@ class PlayerLayoutMixin:
         telegram_side_layout.setSpacing(8)
         telegram_side_layout.addLayout(telegram_tools)
         telegram_side_layout.addWidget(self._telegram_channel_list, 1)
+        telegram_side_layout.addWidget(self._telegram_channel_preview)
         telegram_side_layout.addLayout(telegram_buttons)
-        telegram_layout.addWidget(self._telegram_channel_side_panel, 1)
+        self._telegram_channel_splitter = QSplitter(Qt.Horizontal)
+        self._telegram_channel_splitter.setObjectName("telegramChannelSplitter")
+        self._telegram_channel_splitter.addWidget(self._telegram_channel_media_panel)
+        self._telegram_channel_splitter.addWidget(self._telegram_channel_side_panel)
+        self._telegram_channel_splitter.setSizes([1, 1])
+        self._telegram_channel_splitter.setStretchFactor(0, 1)
+        self._telegram_channel_splitter.setStretchFactor(1, 1)
+        self._telegram_channel_splitter.setCollapsible(0, False)
+        self._telegram_channel_splitter.setCollapsible(1, False)
+        self._telegram_channel_splitter.splitterMoved.connect(self._telegram_side_panel_splitter_moved)
+        telegram_layout.addWidget(self._telegram_channel_splitter, 1)
         self._aspect_combo = self._option_combo(
             _dropdown_options("video_aspects", self._config.gui_language), DEFAULT_MEDIA_ASPECT_RATIO
         )

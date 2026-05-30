@@ -50,6 +50,14 @@ class TelegramPasswordRequired(TelegramChannelError):
     pass
 
 
+def telegram_channel_item_translation_text(item: object) -> str:
+    text = str(getattr(item, "text", "") or "").strip()
+    if text:
+        return " ".join(text.split())
+    title = str(getattr(item, "title", "") or "").strip()
+    return " ".join(title.split())
+
+
 TELEGRAM_SESSION_LOCK_RETRIES = 5
 TELEGRAM_SESSION_LOCK_RETRY_DELAY_SECONDS = 0.35
 

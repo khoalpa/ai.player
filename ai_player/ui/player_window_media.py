@@ -388,8 +388,13 @@ class PlayerMediaMixin:
             self._update_document_page(force=True)
         else:
             if hasattr(self, "_media_stack"):
-                target = self._video_widget if self._video_path else self._video_placeholder
-                self._media_stack.setCurrentWidget(target)
+                if self._video_path and hasattr(self, "_show_video_output"):
+                    self._show_video_output()
+                else:
+                    set_video_output = getattr(getattr(self, "_player", None), "set_video_output", None)
+                    if callable(set_video_output) and hasattr(self, "_video_widget"):
+                        set_video_output(self._video_widget)
+                    self._media_stack.setCurrentWidget(self._video_placeholder)
             self._apply_media_aspect_ratio()
             if hasattr(self, "_document_view"):
                 self._document_view.clear()
@@ -990,6 +995,18 @@ class PlayerMediaMixin:
             getattr(self, "_media_frame", None),
         }
         if watched in media_widgets:
+            if (
+                watched is getattr(self, "_video_placeholder", None)
+                and event.type() == QEvent.Type.MouseButtonRelease
+                and event.button() == Qt.MouseButton.LeftButton
+            ):
+                page_getter = getattr(watched, "page", None)
+                page = page_getter() if callable(page_getter) else None
+                open_hovered = getattr(page, "_open_hovered_supported_url", None)
+                if not callable(open_hovered):
+                    open_hovered = getattr(page, "_open_hovered_telegram_url", None)
+                if callable(open_hovered) and open_hovered():
+                    return True
             if event.type() == QEvent.Type.MouseButtonDblClick:
                 self._toggle_video_fullscreen()
                 return True

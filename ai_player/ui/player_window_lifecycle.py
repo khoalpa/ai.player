@@ -15,6 +15,7 @@ class PlayerLifecycleMixin:
         stopped = self._stop_dubbing() and stopped
         stopped = self._stop_meeting(wait_ms=15000) and stopped
         stopped = self._stop_worker_attr("_telegram_worker", wait_ms=5000) and stopped
+        stopped = self._stop_worker_attr("_telegram_translation_worker", wait_ms=5000) and stopped
         stopped = self._stop_video_url(wait_ms=5000) and stopped
         stopped = self._stop_worker_attr("_document_worker", wait_ms=5000) and stopped
         stopped = self._stop_runtime_warmup(wait_ms=5000) and stopped

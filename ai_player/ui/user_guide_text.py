@@ -82,7 +82,7 @@ GUIDE_TEXT = {
             "<b>Nền tảng video phổ biến</b>: YouTube (<code>youtube.com</code>, <code>m.youtube.com</code>, <code>music.youtube.com</code>, <code>youtu.be</code>), Vimeo (<code>vimeo.com</code>), Dailymotion (<code>dailymotion.com</code>, <code>dai.ly</code>).",
             "<b>Mạng xã hội và video ngắn</b>: TikTok (<code>tiktok.com</code>, <code>vm.tiktok.com</code>, <code>vt.tiktok.com</code>), Facebook (<code>facebook.com</code>, <code>m.facebook.com</code>, <code>web.facebook.com</code>, <code>fb.watch</code>), Instagram/Threads (<code>instagram.com</code>, <code>threads.net</code>), X/Twitter (<code>x.com</code>, <code>twitter.com</code>).",
             "<b>Cộng đồng và kênh chat</b>: Telegram public preview (<code>t.me</code>, <code>telegram.me</code>).",
-            "<b>Tiá»‡n Ã­ch ná»™i bá»™</b>: báº£n build riÃªng cÃ³ thá»ƒ cÃ i thÃªm plugin yt-dlp private, khai bÃ¡o host báº±ng <code>AI_PLAYER_EXTRA_YTDLP_HOSTS</code>, vÃ  cÃ i private Telegram client plugin cho Ä‘Äƒng nháº­p/táº£i Telegram.",
+            "<b>Tiện ích nội bộ</b>: bản build riêng có thể cài thêm plugin yt-dlp private, khai báo host bằng <code>AI_PLAYER_EXTRA_YTDLP_HOSTS</code>, và cài private Telegram client plugin cho đăng nhập/tải Telegram.",
         ],
         "supported_document_items": [
             "PowerPoint: <code>.pptx</code>.",
