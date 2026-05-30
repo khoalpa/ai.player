@@ -50,6 +50,30 @@ class RuntimeStatusState:
 
 
 @dataclass
+class PlaybackUiState:
+    seeking: bool = False
+    sidebar_panel_hidden: bool = False
+    sidebar_panel_sizes: list[int] = field(default_factory=list)
+    video_delay_active: bool = False
+    dubbing_ready: bool = False
+    dubbing_auto_enabled: bool = False
+    export_dialog: object | None = None
+    export_terminal: bool = False
+    cache_dialog: object | None = None
+    video_fullscreen: bool = False
+
+
+@dataclass
+class MediaFrameState:
+    frame: object | None = None
+    parent: object | None = None
+    layout: object | None = None
+    index: int = -1
+    alignment: object | None = None
+    detached_for_fullscreen: bool = False
+
+
+@dataclass
 class TelegramChannelState:
     channel_items: list[object] = field(default_factory=list)
     channel_all_items: list[object] = field(default_factory=list)

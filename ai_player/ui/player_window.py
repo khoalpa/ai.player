@@ -5,7 +5,6 @@ import time
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QFrame,
     QMainWindow,
 )
 
@@ -16,8 +15,6 @@ from ai_player.core.settings_store import load_app_config
 from ai_player.services.translation import (
     configured_translation_backend,
 )
-from ai_player.ui.cache_progress_dialog import CacheProgressDialog
-from ai_player.ui.export_progress_dialog import ExportProgressDialog
 from ai_player.ui.media_player import VideoPlayer
 from ai_player.ui.player_window_dubbing import PlayerDubbingMixin
 from ai_player.ui.player_window_export import PlayerExportMixin
@@ -31,7 +28,9 @@ from ai_player.ui.player_window_settings import PlayerSettingsMixin
 from ai_player.ui.player_window_sources import PlayerSourceMixin
 from ai_player.ui.player_window_state import (
     DocumentPlaybackState,
+    MediaFrameState,
     MediaProcessingState,
+    PlaybackUiState,
     RuntimeStatusState,
     SubtitleOverlayState,
     TelegramChannelState,
@@ -77,15 +76,14 @@ class PlayerWindow(
             gpu_text=self._tr("status_checking_gpu"),
             media_info_text=self._tr("status_no_video"),
         )
+        self._playback_ui_state = PlaybackUiState(
+            sidebar_panel_sizes=list(DEFAULT_SIDEBAR_PANEL_SIZES),
+            dubbing_auto_enabled=self._config.dubbing_enabled_by_default,
+        )
+        self._media_frame_state = MediaFrameState(alignment=Qt.AlignmentFlag(0))
         self._worker_lifecycle_state = WorkerLifecycleState()
         self._telegram_channel_state = TelegramChannelState(channel_thumbnail_source=QPixmap())
         self._video_path: str | None = None
-        self._media_frame: QFrame | None = None
-        self._media_frame_parent = None
-        self._media_frame_layout = None
-        self._media_frame_index = -1
-        self._media_frame_alignment = Qt.AlignmentFlag(0)
-        self._media_frame_detached_for_fullscreen = False
         self._document_mode = False
         self._document_elapsed_ms = 0
         self._document_started_at: float | None = None
@@ -104,18 +102,9 @@ class PlayerWindow(
         self._clamping_to_screen = False
         self._video_url = VideoUrlController(self)
         self._runtime_warmup = RuntimeWarmupController(self)
-        self._sidebar_panel_hidden = False
-        self._sidebar_panel_sizes: list[int] = list(DEFAULT_SIDEBAR_PANEL_SIZES)
-        self._is_seeking = False
         self._video_delay_timer = QTimer(self)
         self._video_delay_timer.setSingleShot(True)
         self._video_delay_timer.timeout.connect(self._finish_delayed_video_playback)
-        self._video_delay_active = False
-        self._dubbing_ready = False
-        self._export_dialog: ExportProgressDialog | None = None
-        self._export_terminal = False
-        self._cache_dialog: CacheProgressDialog | None = None
-        self._dubbing_auto_enabled = self._config.dubbing_enabled_by_default
         self._telegram_channel_items = []
         self._telegram_channel_all_items = []
         self._telegram_channel_authenticated = False
@@ -135,7 +124,6 @@ class PlayerWindow(
         self._settings_save_timer.setSingleShot(True)
         self._settings_save_timer.setInterval(600)
         self._settings_save_timer.timeout.connect(self._save_settings)
-        self._video_fullscreen = False
 
         self._transcript_segments: list[tuple[str, str]] = []
 
@@ -334,6 +322,134 @@ class PlayerWindow(
     @_playback_compat_cache.setter
     def _playback_compat_cache(self, value: dict[str, str]) -> None:
         self._media_processing_state.playback_compat_cache = dict(value or {})
+
+    @property
+    def _media_frame(self) -> object | None:
+        return self._media_frame_state.frame
+
+    @_media_frame.setter
+    def _media_frame(self, value: object | None) -> None:
+        self._media_frame_state.frame = value
+
+    @property
+    def _media_frame_parent(self) -> object | None:
+        return self._media_frame_state.parent
+
+    @_media_frame_parent.setter
+    def _media_frame_parent(self, value: object | None) -> None:
+        self._media_frame_state.parent = value
+
+    @property
+    def _media_frame_layout(self) -> object | None:
+        return self._media_frame_state.layout
+
+    @_media_frame_layout.setter
+    def _media_frame_layout(self, value: object | None) -> None:
+        self._media_frame_state.layout = value
+
+    @property
+    def _media_frame_index(self) -> int:
+        return self._media_frame_state.index
+
+    @_media_frame_index.setter
+    def _media_frame_index(self, value: int) -> None:
+        self._media_frame_state.index = int(value or 0)
+
+    @property
+    def _media_frame_alignment(self) -> object | None:
+        return self._media_frame_state.alignment
+
+    @_media_frame_alignment.setter
+    def _media_frame_alignment(self, value: object | None) -> None:
+        self._media_frame_state.alignment = value
+
+    @property
+    def _media_frame_detached_for_fullscreen(self) -> bool:
+        return self._media_frame_state.detached_for_fullscreen
+
+    @_media_frame_detached_for_fullscreen.setter
+    def _media_frame_detached_for_fullscreen(self, value: bool) -> None:
+        self._media_frame_state.detached_for_fullscreen = bool(value)
+
+    @property
+    def _is_seeking(self) -> bool:
+        return self._playback_ui_state.seeking
+
+    @_is_seeking.setter
+    def _is_seeking(self, value: bool) -> None:
+        self._playback_ui_state.seeking = bool(value)
+
+    @property
+    def _sidebar_panel_hidden(self) -> bool:
+        return self._playback_ui_state.sidebar_panel_hidden
+
+    @_sidebar_panel_hidden.setter
+    def _sidebar_panel_hidden(self, value: bool) -> None:
+        self._playback_ui_state.sidebar_panel_hidden = bool(value)
+
+    @property
+    def _sidebar_panel_sizes(self) -> list[int]:
+        return self._playback_ui_state.sidebar_panel_sizes
+
+    @_sidebar_panel_sizes.setter
+    def _sidebar_panel_sizes(self, value: list[int]) -> None:
+        self._playback_ui_state.sidebar_panel_sizes = [int(item or 0) for item in list(value or [])]
+
+    @property
+    def _video_delay_active(self) -> bool:
+        return self._playback_ui_state.video_delay_active
+
+    @_video_delay_active.setter
+    def _video_delay_active(self, value: bool) -> None:
+        self._playback_ui_state.video_delay_active = bool(value)
+
+    @property
+    def _dubbing_ready(self) -> bool:
+        return self._playback_ui_state.dubbing_ready
+
+    @_dubbing_ready.setter
+    def _dubbing_ready(self, value: bool) -> None:
+        self._playback_ui_state.dubbing_ready = bool(value)
+
+    @property
+    def _dubbing_auto_enabled(self) -> bool:
+        return self._playback_ui_state.dubbing_auto_enabled
+
+    @_dubbing_auto_enabled.setter
+    def _dubbing_auto_enabled(self, value: bool) -> None:
+        self._playback_ui_state.dubbing_auto_enabled = bool(value)
+
+    @property
+    def _export_dialog(self) -> object | None:
+        return self._playback_ui_state.export_dialog
+
+    @_export_dialog.setter
+    def _export_dialog(self, value: object | None) -> None:
+        self._playback_ui_state.export_dialog = value
+
+    @property
+    def _export_terminal(self) -> bool:
+        return self._playback_ui_state.export_terminal
+
+    @_export_terminal.setter
+    def _export_terminal(self, value: bool) -> None:
+        self._playback_ui_state.export_terminal = bool(value)
+
+    @property
+    def _cache_dialog(self) -> object | None:
+        return self._playback_ui_state.cache_dialog
+
+    @_cache_dialog.setter
+    def _cache_dialog(self, value: object | None) -> None:
+        self._playback_ui_state.cache_dialog = value
+
+    @property
+    def _video_fullscreen(self) -> bool:
+        return self._playback_ui_state.video_fullscreen
+
+    @_video_fullscreen.setter
+    def _video_fullscreen(self, value: bool) -> None:
+        self._playback_ui_state.video_fullscreen = bool(value)
 
     @property
     def _dub_worker(self) -> object | None:

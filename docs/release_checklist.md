@@ -4,6 +4,8 @@ Use this checklist before sharing a build.
 
 ## Source Baseline
 
+- Pick the target profile from `docs\release_profiles.md` and use its install,
+  smoke, model, and distribution expectations for this build.
 - Confirm the working tree contains only intended changes with `git status --short --branch`.
 - Review untracked files with `git ls-files -o --exclude-standard` and either add them intentionally or move generated scratch files under ignored paths.
 - Review binary fixture changes separately with `git diff --stat` so regenerated samples are not bundled by accident.
@@ -27,6 +29,9 @@ Use this checklist before sharing a build.
 - Open a short local video and confirm playback starts.
 - Open a transcript file and confirm transcript mode can be selected.
 - Open a small text/PDF document and confirm segments are created.
+- Enter text in the document editor source and confirm a transcript timeline is created.
+- If an OpenAI cleanup API key is configured, restart the app and confirm the key
+  remains configured without plaintext in `data\config\settings.json`.
 
 ## AI Pipeline Smoke Test
 
@@ -50,5 +55,6 @@ Use this checklist before sharing a build.
 - If multiple signing certificates are available, add `-CodeSigningCertThumbprint "<real-thumbprint>"`.
 - If the signing certificate is provided as a `.pfx` or `.p12` file, use `-CodeSigningPfxPath` and pass the password as a `SecureString`.
 - Launch the app from `dist\portable`.
+- Run `.\scripts\smoke_launch_app.ps1 -AppPath "dist\portable\AI Player Lite\AI Player\AI Player.exe"` and confirm it stays running for the smoke window.
 - Run Runtime Doctor from the portable app.
 - Record the completed smoke results in `docs\manual_smoke_results.md`.

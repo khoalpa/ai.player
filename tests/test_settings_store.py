@@ -32,8 +32,48 @@ def test_save_app_config_omits_secret_and_resets_session_fields(tmp_path, monkey
     data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
 
     assert "transcript_cleanup_api_key" not in data
+    assert data.get("transcript_cleanup_api_key_secret", {}).get("value") != "secret"
     assert data["transcript_path"] == ""
     assert data["audio_source"] == "original"
+
+
+def test_save_and_load_app_config_round_trips_secret_payload(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(
+        settings_store,
+        "protect_text",
+        lambda value: {"scheme": "test", "value": f"protected:{value}"},
+    )
+    monkeypatch.setattr(
+        settings_store,
+        "reveal_text",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
+        if isinstance(payload, dict)
+        else "",
+    )
+
+    settings_store.save_app_config(AppConfig(transcript_cleanup_api_key="cleanup-secret"))
+    data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    config = settings_store.load_app_config(AppConfig(transcript_cleanup_api_key=""))
+
+    assert "transcript_cleanup_api_key" not in data
+    assert data["transcript_cleanup_api_key_secret"] == {"scheme": "test", "value": "protected:cleanup-secret"}
+    assert config.transcript_cleanup_api_key == "cleanup-secret"
+
+
+def test_load_app_config_keeps_env_secret_over_saved_secret(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(
+        json.dumps({"transcript_cleanup_api_key_secret": {"scheme": "test", "value": "saved-secret"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+    monkeypatch.setattr(settings_store, "reveal_text", lambda _payload: "saved-secret")
+
+    config = settings_store.load_app_config(AppConfig(transcript_cleanup_api_key="env-secret"))
+
+    assert config.transcript_cleanup_api_key == "env-secret"
 
 
 def test_load_app_config_ignores_unknown_secret_and_session_values(tmp_path, monkeypatch) -> None:

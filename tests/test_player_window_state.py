@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from ai_player.ui.player_window_state import (
+    MediaFrameState,
     MediaProcessingState,
+    PlaybackUiState,
     RuntimeStatusState,
     TelegramChannelState,
     WorkerLifecycleState,
@@ -51,6 +53,66 @@ def test_runtime_status_state_keeps_runtime_tab_values() -> None:
     assert state.media_path == "demo.mp4"
     assert state.media_info_path == "demo.mp4"
     assert state.media_info_text == "duration 4s"
+
+
+def test_playback_ui_state_uses_independent_sidebar_sizes() -> None:
+    first = PlaybackUiState(sidebar_panel_sizes=[1500, 360])
+    second = PlaybackUiState()
+
+    first.sidebar_panel_sizes[1] = 480
+
+    assert first.sidebar_panel_sizes == [1500, 480]
+    assert second.sidebar_panel_sizes == []
+
+
+def test_playback_ui_state_tracks_playback_and_dialog_values() -> None:
+    dialog = object()
+    cache_dialog = object()
+    state = PlaybackUiState(
+        seeking=True,
+        sidebar_panel_hidden=True,
+        sidebar_panel_sizes=[1200, 400],
+        video_delay_active=True,
+        dubbing_ready=True,
+        dubbing_auto_enabled=True,
+        export_dialog=dialog,
+        export_terminal=True,
+        cache_dialog=cache_dialog,
+        video_fullscreen=True,
+    )
+
+    assert state.seeking is True
+    assert state.sidebar_panel_hidden is True
+    assert state.sidebar_panel_sizes == [1200, 400]
+    assert state.video_delay_active is True
+    assert state.dubbing_ready is True
+    assert state.dubbing_auto_enabled is True
+    assert state.export_dialog is dialog
+    assert state.export_terminal is True
+    assert state.cache_dialog is cache_dialog
+    assert state.video_fullscreen is True
+
+
+def test_media_frame_state_tracks_fullscreen_detach_values() -> None:
+    frame = object()
+    parent = object()
+    layout = object()
+    alignment = object()
+    state = MediaFrameState(
+        frame=frame,
+        parent=parent,
+        layout=layout,
+        index=2,
+        alignment=alignment,
+        detached_for_fullscreen=True,
+    )
+
+    assert state.frame is frame
+    assert state.parent is parent
+    assert state.layout is layout
+    assert state.index == 2
+    assert state.alignment is alignment
+    assert state.detached_for_fullscreen is True
 
 
 def test_telegram_channel_state_uses_independent_collections() -> None:

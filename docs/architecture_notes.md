@@ -29,6 +29,12 @@ Current extracted owners:
 - `ai_player.ui.player_window_state.MediaProcessingState` owns source voice
   filter worker state, playback compatibility worker state, and their cache maps
   while preserving the existing mixin attribute API.
+- `ai_player.ui.player_window_state.PlaybackUiState` owns playback UI toggles,
+  sidebar sizing, dialog references, and fullscreen flags while preserving the
+  existing mixin attribute API.
+- `ai_player.ui.player_window_state.MediaFrameState` owns media frame placement
+  and fullscreen detach/restore bookkeeping while preserving the existing mixin
+  attribute API.
 - `ai_player.ui.player_window_state.RuntimeStatusState` owns Runtime tab timing,
   GPU status, and media probe cache state while preserving the existing mixin
   attribute API.

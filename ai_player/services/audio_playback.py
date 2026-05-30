@@ -10,7 +10,10 @@ from typing import Protocol
 
 import numpy as np
 
+from ai_player.core.app_logging import get_logger
 from ai_player.services.ffmpeg import ffplay_executable
+
+LOGGER = get_logger(__name__)
 
 
 class AudioPlaybackHandle(Protocol):
@@ -90,7 +93,8 @@ def _start_soundcard_wav_playback(audio_path: Path, *, volume: int) -> ThreadAud
         import soundcard as sc
 
         speaker = sc.default_speaker()
-    except Exception:
+    except Exception as exc:
+        LOGGER.info("Soundcard WAV playback is unavailable; falling back to ffplay: %s", exc)
         return None
 
     stop_event = threading.Event()
@@ -100,7 +104,8 @@ def _start_soundcard_wav_playback(audio_path: Path, *, volume: int) -> ThreadAud
         return_code = 0
         try:
             _play_wav_with_soundcard(audio_path, volume=volume, stop_event=stop_event, speaker=speaker)
-        except Exception:
+        except Exception as exc:
+            LOGGER.warning("Soundcard WAV playback failed: %s", exc)
             return_code = 1
         handle_box["handle"].mark_finished(return_code)
 

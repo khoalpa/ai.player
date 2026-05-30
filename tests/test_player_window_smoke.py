@@ -8,6 +8,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QFrame, QPushButton, QScrollArea, QSizePolicy
 
 from ai_player.core.config import LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH, LOCAL_TRANSLATION_MODEL_PATH, AppConfig
+from ai_player.services import document_reader
 from ai_player.services.document_reader import DocumentPage
 from ai_player.services.telegram_channel import TelegramChannelVideo
 from ai_player.ui.player_window import PlayerWindow
@@ -121,6 +122,48 @@ def test_player_window_media_home_button_click_resets_placeholder_url(qapp) -> N
         assert window._media_stack.currentWidget() is window._video_placeholder
         assert get_url().toString() == DEFAULT_MEDIA_HOME_URL
         assert window._source_label.text() == DEFAULT_MEDIA_HOME_URL
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_audio_source_transcript_selection_toggles_transcript_controls(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window._set_combo_data(window._audio_source_combo, "original")
+        qapp.processEvents()
+        assert window._selected_audio_source() == "original"
+        assert not window._transcript_path_edit.isEnabled()
+        assert not window._transcript_file_button.isEnabled()
+
+        window._set_combo_data(window._audio_source_combo, "transcript")
+        qapp.processEvents()
+
+        assert window._selected_audio_source() == "transcript"
+        assert window._transcript_path_edit.isEnabled()
+        assert window._transcript_file_button.isEnabled()
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_document_editor_source_creates_transcript_timeline(qapp, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(document_reader, "CONFIG_DIR", tmp_path)
+    window = PlayerWindow()
+    try:
+        window._set_combo_data(window._audio_source_combo, "document_editor")
+        qapp.processEvents()
+        window._document_view.setPlainText("First paragraph for playback.\n\nSecond paragraph for export.")
+
+        assert window._prepare_document_editor_source() is True
+
+        transcript_path = Path(window._transcript_path_edit.text())
+        assert window._selected_audio_source() == "document_editor"
+        assert window._document_mode is True
+        assert window._document_pages
+        assert transcript_path.exists()
+        assert "-->" in transcript_path.read_text(encoding="utf-8")
+        assert window._video_path == str(transcript_path)
         window._settings_save_timer.stop()
     finally:
         window.close()
