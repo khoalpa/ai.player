@@ -5,6 +5,7 @@ import re
 import tempfile
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -26,6 +27,8 @@ class VideoSource:
     title: str
     provider: str = "direct"
     is_resolved: bool = False
+    width: int = 0
+    height: int = 0
 
 
 YTDLP_PAGE_HOSTS = {
@@ -108,7 +111,7 @@ def _should_resolve_with_ytdlp(value: str) -> bool:
         return False
     if _looks_like_direct_media_url(parsed.path):
         return False
-    return host in YTDLP_PAGE_HOSTS or _is_extra_ytdlp_host(host)
+    return host in YTDLP_PAGE_HOSTS or _is_extra_ytdlp_host(host) or _has_plugin_ytdlp_extractor(value)
 
 
 def _looks_like_direct_media_url(path: str) -> bool:
@@ -178,6 +181,9 @@ def _resolve_page_url(
         "format": _format_selector(quality) if full_cache else _stream_format_selector(quality),
         "windowsfilenames": True,
     }
+    allowed_extractors = _allowed_extractors(provider)
+    if allowed_extractors:
+        options["allowed_extractors"] = allowed_extractors
     if full_cache and cache_dir is not None:
         options.update(
             {
@@ -193,7 +199,11 @@ def _resolve_page_url(
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=full_cache)
         check_cancelled()
+        if not isinstance(info, dict):
+            raise VideoSourceError(ui_text("video_error_info_missing", language_id, provider=provider))
     except VideoSourceCancelled:
+        raise
+    except VideoSourceError:
         raise
     except Exception as exc:
         raise VideoSourceError(
@@ -204,12 +214,15 @@ def _resolve_page_url(
         playback_url = _stream_playback_url(info)
         if not playback_url:
             raise VideoSourceError(ui_text("video_error_stream_url_missing", language_id, provider=provider))
+        width, height = _video_dimensions_from_info(info)
         return VideoSource(
             input_url=url,
             playback_url=playback_url,
             title=str(info.get("title") or url),
             provider=provider,
             is_resolved=True,
+            width=width,
+            height=height,
         )
 
     if cache_dir is None:
@@ -230,12 +243,15 @@ def _resolve_page_url(
             }
         )
 
+    width, height = _video_dimensions_from_info(info)
     return VideoSource(
         input_url=url,
         playback_url=local_path,
         title=str(info.get("title") or url),
         provider=provider,
         is_resolved=True,
+        width=width,
+        height=height,
     )
 
 
@@ -272,6 +288,12 @@ def _format_selector(playback_quality: str) -> str:
         "best[ext=mp4][vcodec!=none][acodec!=none]/"
         "best[vcodec!=none][acodec!=none]/best"
     )
+
+
+def _allowed_extractors(provider: str) -> list[str]:
+    if provider == "telegram":
+        return ["telegram:embed"]
+    return []
 
 
 def _stream_format_selector(playback_quality: str) -> str:
@@ -321,11 +343,46 @@ def _url_host(parsed) -> str:
 
 
 def _host_matches(host: str, domain: str) -> bool:
+    if "*" in domain:
+        pattern = re.escape(domain).replace(r"\*", r"[^.]+")
+        return bool(re.fullmatch(pattern, host))
     return host == domain or host.endswith(f".{domain}")
 
 
 def _is_extra_ytdlp_host(host: str) -> bool:
     return any(_host_matches(host, extra_host) for extra_host in _extra_ytdlp_hosts())
+
+
+def _has_plugin_ytdlp_extractor(value: str) -> bool:
+    return any(_extractor_suitable(extractor, value) for extractor in _plugin_ytdlp_extractors())
+
+
+@lru_cache(maxsize=1)
+def _plugin_ytdlp_extractors() -> tuple[object, ...]:
+    try:
+        import yt_dlp
+    except ImportError:
+        return ()
+    try:
+        extractors = yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True})._ies.values()
+    except Exception:
+        return ()
+    return tuple(
+        extractor
+        for extractor in extractors
+        if getattr(extractor, "IE_NAME", "") != "generic"
+        and str(getattr(extractor, "__module__", "")).startswith("yt_dlp_plugins.")
+    )
+
+
+def _extractor_suitable(extractor: object, value: str) -> bool:
+    suitable = getattr(extractor, "suitable", None)
+    if not callable(suitable):
+        return False
+    try:
+        return bool(suitable(value))
+    except Exception:
+        return False
 
 
 def _extra_ytdlp_hosts() -> tuple[str, ...]:
@@ -344,8 +401,10 @@ def _normalize_extra_ytdlp_host(value: str) -> str:
     if "://" in text:
         text = _url_host(urlparse(text))
     else:
-        text = text.split("/", 1)[0].split(":", 1)[0].removeprefix("www.")
-    return text.lstrip("*.").strip(".")
+        text = text.split("/", 1)[0].split(":", 1)[0]
+        if not text.startswith("*."):
+            text = text.removeprefix("www.")
+    return text.strip(".")
 
 
 def _source_cache_dir(provider: str, playback_quality: str = "720p") -> Path:
@@ -465,3 +524,35 @@ def _stream_playback_url(info: dict) -> str:
     if playable_formats:
         return str(playable_formats[-1].get("url") or "").strip()
     return ""
+
+
+def _video_dimensions_from_info(info: dict) -> tuple[int, int]:
+    for candidate in _video_dimension_candidates(info):
+        if not isinstance(candidate, dict):
+            continue
+        width = _positive_dimension(candidate.get("width"))
+        height = _positive_dimension(candidate.get("height"))
+        if width and height:
+            return width, height
+    return 0, 0
+
+
+def _video_dimension_candidates(info: dict):
+    yield info
+    requested_downloads = info.get("requested_downloads") if isinstance(info, dict) else None
+    if isinstance(requested_downloads, list):
+        yield from requested_downloads
+    requested_formats = info.get("requested_formats") if isinstance(info, dict) else None
+    if isinstance(requested_formats, list):
+        yield from requested_formats
+    formats = info.get("formats") if isinstance(info, dict) else None
+    if isinstance(formats, list):
+        yield from formats
+
+
+def _positive_dimension(value: object) -> int:
+    try:
+        parsed = int(float(str(value or "").strip()))
+    except (OverflowError, TypeError, ValueError):
+        return 0
+    return parsed if parsed > 0 else 0

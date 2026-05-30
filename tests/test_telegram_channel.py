@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 from types import SimpleNamespace
 
@@ -14,6 +13,7 @@ SAMPLE_CHANNEL_HTML = """
 </div>
 <div class="tgme_widget_message" data-post="shunv8388/102">
   <a class="tgme_widget_message_video_player" href="/shunv8388/102">
+    <i class="tgme_widget_message_video_thumb" style="background-image:url('/file/thumb102.jpg')"></i>
     <span class="message_video_duration">02:36</span>
   </a>
   <div class="tgme_widget_message_text">Demo <b>video</b><br/>caption</div>
@@ -31,7 +31,7 @@ SAMPLE_CHANNEL_HTML = """
         ("https://t.me/shunv8388", True),
         ("https://t.me/s/shunv8388", True),
         ("https://telegram.me/shunv8388", True),
-        ("https://t.me/shunv8388/123", False),
+        ("https://t.me/shunv8388/123", True),
         ("https://web.telegram.org/a/progressive/document123", False),
         ("https://example.com/shunv8388", False),
     ],
@@ -48,7 +48,47 @@ def test_parse_telegram_channel_videos_extracts_public_video_posts() -> None:
         "https://t.me/shunv8388/103",
     ]
     assert videos[0].title == "Demo video caption [02:36]"
+    assert videos[0].thumbnail_url == "https://t.me/file/thumb102.jpg"
     assert videos[1].title == "#103 2026-05-28 10:30"
+    assert videos[1].media_url == "https://cdn.example.test/video.mp4"
+
+
+def test_parse_telegram_channel_items_keeps_text_posts_for_browser() -> None:
+    items = telegram_channel.parse_telegram_channel_items(SAMPLE_CHANNEL_HTML, "shunv8388")
+
+    assert [item.post_id for item in items] == ["101", "102", "103"]
+    assert items[0].title == "First image only"
+    assert items[0].has_video is False
+    assert items[0].media_kind == "text"
+    assert items[1].has_video is True
+    assert items[1].media_kind == "video"
+    assert items[1].text == "Demo video caption"
+    assert items[1].media_count == 1
+
+
+def test_parse_telegram_channel_items_keeps_full_caption_text() -> None:
+    long_caption = " ".join(f"word{i}" for i in range(40))
+    html = f"""
+    <div class="tgme_widget_message" data-post="shunv8388/104">
+      <a class="tgme_widget_message_photo_wrap" style="background-image:url('/file/photo104.jpg')"></a>
+      <img src="/file/photo104-b.jpg"/>
+      <div class="tgme_widget_message_text">{long_caption}</div>
+      <time datetime="2026-05-28T10:30:00+00:00"></time>
+    </div>
+    """
+
+    items = telegram_channel.parse_telegram_channel_items(html, "shunv8388")
+
+    assert items[0].media_kind == "photo"
+    assert items[0].text == long_caption
+    assert len(items[0].title) < len(long_caption)
+    assert items[0].media_count == 2
+
+
+def test_parse_telegram_channel_items_filters_search() -> None:
+    items = telegram_channel.parse_telegram_channel_items(SAMPLE_CHANNEL_HTML, "shunv8388", search="caption")
+
+    assert [item.post_id for item in items] == ["102"]
 
 
 def test_list_telegram_channel_videos_loads_public_preview(monkeypatch) -> None:
@@ -86,108 +126,120 @@ def test_list_telegram_channel_videos_reports_empty_preview(monkeypatch) -> None
         telegram_channel.list_telegram_channel_videos("https://t.me/shunv8388", language_id="en")
 
 
-def test_save_telegram_login_config_protects_secret_fields(monkeypatch, tmp_path) -> None:
-    config_path = tmp_path / "telegram_login.json"
-    monkeypatch.setattr(telegram_channel, "TELEGRAM_LOGIN_CONFIG_PATH", config_path)
-    monkeypatch.setattr(telegram_channel, "CONFIG_DIR", tmp_path)
-    protected_values = {
-        "hash-secret": {"scheme": "test", "value": "protected-hash"},
-        "+84901234567": {"scheme": "test", "value": "protected-phone"},
-    }
-    monkeypatch.setattr(
-        telegram_channel,
-        "protect_text",
-        lambda value: protected_values[value],
-    )
+def test_list_telegram_channel_items_reports_empty_preview(monkeypatch) -> None:
+    class FakeResponse:
+        text = "<html></html>"
 
-    telegram_channel.save_telegram_login_config(
-        telegram_channel.TelegramLoginConfig(api_id=12345, api_hash="hash-secret", phone="+84901234567")
-    )
+        def raise_for_status(self):
+            return None
 
-    raw_text = config_path.read_text(encoding="utf-8")
-    payload = json.loads(raw_text)
-    assert payload["api_id"] == 12345
-    assert payload["api_hash_secret"] == {"scheme": "test", "value": "protected-hash"}
-    assert payload["phone_secret"] == {"scheme": "test", "value": "protected-phone"}
-    assert "hash-secret" not in raw_text
-    assert "+84901234567" not in raw_text
-    assert "api_hash" not in payload
-    assert "phone" not in payload
+    monkeypatch.setitem(sys.modules, "requests", SimpleNamespace(get=lambda *_args, **_kwargs: FakeResponse()))
+
+    with pytest.raises(telegram_channel.TelegramChannelError, match="No posts"):
+        telegram_channel.list_telegram_channel_items("https://t.me/shunv8388", language_id="en")
 
 
-def test_load_telegram_login_config_reveals_protected_fields(monkeypatch, tmp_path) -> None:
-    config_path = tmp_path / "telegram_login.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "api_id": 12345,
-                "api_hash_secret": {"scheme": "test", "value": "hash-secret"},
-                "phone_secret": {"scheme": "test", "value": "+84901234567"},
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(telegram_channel, "TELEGRAM_LOGIN_CONFIG_PATH", config_path)
-    monkeypatch.setattr(telegram_channel, "reveal_text", lambda payload: payload["value"])
+def test_private_adapter_missing_disables_login_config(monkeypatch) -> None:
+    monkeypatch.setattr(telegram_channel, "_telegram_private_adapter", lambda: None)
 
-    config = telegram_channel.load_telegram_login_config()
-
-    assert config == telegram_channel.TelegramLoginConfig(
-        api_id=12345,
-        api_hash="hash-secret",
-        phone="+84901234567",
-    )
-
-
-def test_load_telegram_login_config_accepts_legacy_plaintext_file(monkeypatch, tmp_path) -> None:
-    config_path = tmp_path / "telegram_login.json"
-    config_path.write_text(
-        json.dumps({"api_id": 12345, "api_hash": "hash-secret", "phone": "+84901234567"}),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(telegram_channel, "TELEGRAM_LOGIN_CONFIG_PATH", config_path)
-
-    config = telegram_channel.load_telegram_login_config()
-
-    assert config == telegram_channel.TelegramLoginConfig(
-        api_id=12345,
-        api_hash="hash-secret",
-        phone="+84901234567",
-    )
-
-
-def test_save_telegram_login_config_omits_secrets_when_protection_unavailable(monkeypatch, tmp_path) -> None:
-    config_path = tmp_path / "telegram_login.json"
-    monkeypatch.setattr(telegram_channel, "TELEGRAM_LOGIN_CONFIG_PATH", config_path)
-    monkeypatch.setattr(telegram_channel, "CONFIG_DIR", tmp_path)
-
-    def fail_protection(_value):
-        raise telegram_channel.SecretStoreError("unavailable")
-
-    monkeypatch.setattr(telegram_channel, "protect_text", fail_protection)
-
-    telegram_channel.save_telegram_login_config(
-        telegram_channel.TelegramLoginConfig(api_id=12345, api_hash="hash-secret", phone="+84901234567")
-    )
-
-    payload = json.loads(config_path.read_text(encoding="utf-8"))
-    assert payload == {"api_id": 12345}
-
-
-def test_delete_telegram_login_data_removes_config_and_session_files(monkeypatch, tmp_path) -> None:
-    config_path = tmp_path / "telegram_login.json"
-    session_path = tmp_path / "telegram_user.session"
-    config_path.write_text("{}", encoding="utf-8")
-    session_path.write_text("session", encoding="utf-8")
-    session_path.with_suffix(".session-journal").write_text("journal", encoding="utf-8")
-    unrelated = tmp_path / "settings.json"
-    unrelated.write_text("keep", encoding="utf-8")
-    monkeypatch.setattr(telegram_channel, "TELEGRAM_LOGIN_CONFIG_PATH", config_path)
-    monkeypatch.setattr(telegram_channel, "TELEGRAM_SESSION_PATH", session_path)
-
+    assert telegram_channel.telegram_private_available() is False
+    assert telegram_channel.load_telegram_login_config() is None
     telegram_channel.delete_telegram_login_data()
 
-    assert not config_path.exists()
-    assert not session_path.exists()
-    assert not session_path.with_suffix(".session-journal").exists()
-    assert unrelated.read_text(encoding="utf-8") == "keep"
+    with pytest.raises(telegram_channel.TelegramChannelError, match="private Telegram client plugin"):
+        telegram_channel.start_telegram_login(
+            telegram_channel.TelegramLoginConfig(api_id=12345, api_hash="hash-secret", phone="+84901234567"),
+            language_id="en",
+        )
+
+
+def test_authenticated_operations_forward_to_private_adapter(monkeypatch) -> None:
+    calls = []
+    config = telegram_channel.TelegramLoginConfig(api_id=12345, api_hash="hash-secret", phone="+84901234567")
+    request = telegram_channel.TelegramLoginRequest(config=config, phone_code_hash="code-hash")
+    loaded = telegram_channel.TelegramLoginConfig(api_id=67890, api_hash="cached", phone="+84000000000")
+    videos = [telegram_channel.TelegramChannelVideo("Demo", "https://t.me/demo/1", "1", authenticated=True)]
+
+    adapter = SimpleNamespace(
+        load_telegram_login_config=lambda: loaded,
+        delete_telegram_login_data=lambda: calls.append(("delete",)),
+        start_telegram_login=lambda received, language_id=None: calls.append(("start", received, language_id))
+        or request,
+        complete_telegram_login=lambda received, code, password="", language_id=None: calls.append(
+            ("complete", received, code, password, language_id)
+        ),
+        list_telegram_channel_videos_authenticated=lambda value,
+        received,
+        limit=50,
+        before_post_id="",
+        search="",
+        language_id=None: calls.append(
+            ("list", value, received, limit, before_post_id, search, language_id)
+        )
+        or videos,
+        list_telegram_channel_items_authenticated=lambda value,
+        received,
+        limit=50,
+        before_post_id="",
+        search="",
+        language_id=None: calls.append(
+            ("items", value, received, limit, before_post_id, search, language_id)
+        )
+        or videos,
+        download_telegram_channel_video=lambda value, post_id, received, language_id=None: calls.append(
+            ("download", value, post_id, received, language_id)
+        )
+        or "video.mp4",
+    )
+    monkeypatch.setattr(telegram_channel, "_telegram_private_adapter", lambda: adapter)
+
+    assert telegram_channel.telegram_private_available() is True
+    assert telegram_channel.load_telegram_login_config() == loaded
+    telegram_channel.delete_telegram_login_data()
+    assert telegram_channel.start_telegram_login(config, language_id="en") == request
+    telegram_channel.complete_telegram_login(request, "12345", password="secret", language_id="en")
+    assert telegram_channel.list_telegram_channel_videos_authenticated(
+        "https://t.me/demo", config, limit=10, before_post_id="99", search="demo", language_id="en"
+    ) == videos
+    assert telegram_channel.list_telegram_channel_items_authenticated(
+        "https://t.me/demo", config, limit=10, before_post_id="99", search="demo", language_id="en"
+    ) == videos
+    assert telegram_channel.download_telegram_channel_video("https://t.me/demo", "1", config, language_id="en") == (
+        "video.mp4"
+    )
+    assert calls == [
+        ("delete",),
+        ("start", config, "en"),
+        ("complete", request, "12345", "secret", "en"),
+        ("list", "https://t.me/demo", config, 10, "99", "demo", "en"),
+        ("items", "https://t.me/demo", config, 10, "99", "demo", "en"),
+        ("download", "https://t.me/demo", "1", config, "en"),
+    ]
+
+
+def test_authenticated_download_retries_locked_session(monkeypatch) -> None:
+    calls = []
+    sleeps = []
+    config = telegram_channel.TelegramLoginConfig(api_id=12345, api_hash="hash-secret", phone="+84901234567")
+
+    def download(_value, _post_id, _config, language_id=None):
+        calls.append(language_id)
+        if len(calls) < 3:
+            raise telegram_channel.TelegramChannelError("database is locked")
+        return "video.mp4"
+
+    adapter = SimpleNamespace(download_telegram_channel_video=download)
+    monkeypatch.setattr(telegram_channel, "_telegram_private_adapter", lambda: adapter)
+    monkeypatch.setattr(telegram_channel.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    assert telegram_channel.download_telegram_channel_video("https://t.me/demo", "1", config, language_id="en") == (
+        "video.mp4"
+    )
+    assert calls == ["en", "en", "en"]
+    assert sleeps == [0.35, 0.7]
+
+
+def test_validate_telegram_login_config() -> None:
+    assert telegram_channel.validate_telegram_login_config("12345", "hash", "+84901234567") == (
+        telegram_channel.TelegramLoginConfig(api_id=12345, api_hash="hash", phone="+84901234567")
+    )

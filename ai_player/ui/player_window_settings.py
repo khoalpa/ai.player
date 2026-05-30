@@ -731,7 +731,10 @@ class PlayerSettingsMixin:
         self.setWindowTitle(self._tr("window_title"))
         self._translate_child_widgets(self)
         if not self._video_path:
-            self._source_label.setText(self._tr("source_empty"))
+            if hasattr(self, "_sync_media_browser_address"):
+                self._sync_media_browser_address()
+            else:
+                self._source_label.setText(self._tr("source_empty"))
         if hasattr(self, "_settings_tabs"):
             self._settings_tabs.setTabText(0, self._tr("basic_tab"))
             self._settings_tabs.setTabText(1, self._tr("models_tab"))
@@ -755,6 +758,10 @@ class PlayerSettingsMixin:
             self._transcript_view_combo.setAccessibleName(self._tr("show_transcript"))
         if hasattr(self, "_transcript_type_combo"):
             self._transcript_type_combo.setAccessibleName(self._tr("transcript_type"))
+        if hasattr(self, "_telegram_channel_title"):
+            self._telegram_channel_title.setText(
+                self._tr("telegram_channel_browser_title").format(url=self._pending_telegram_url or "")
+            )
         self._retranslate_inline_option_combos()
 
     def _refresh_language_pack_combos(self) -> None:
@@ -836,6 +843,16 @@ class PlayerSettingsMixin:
                 ("ai", "source_filter_mode_ai"),
             ):
                 self._set_combo_item_text(self._source_filter_mode_combo, value, self._tr(key))
+        if hasattr(self, "_telegram_channel_filter_combo"):
+            for value, key in (
+                ("all", "telegram_filter_all"),
+                ("video", "telegram_filter_video"),
+                ("photo", "telegram_filter_photo"),
+                ("document", "telegram_filter_document"),
+                ("audio", "telegram_filter_audio"),
+                ("text", "telegram_filter_text"),
+            ):
+                self._set_combo_item_text(self._telegram_channel_filter_combo, value, self._tr(key))
         if hasattr(self, "_source_filter_model_combo"):
             self._set_combo_item_text(
                 self._source_filter_model_combo,

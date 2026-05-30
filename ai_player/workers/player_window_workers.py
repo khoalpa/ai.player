@@ -29,6 +29,8 @@ from ai_player.services.telegram_channel import (
     TelegramPasswordRequired,
     complete_telegram_login,
     download_telegram_channel_video,
+    list_telegram_channel_items,
+    list_telegram_channel_items_authenticated,
     list_telegram_channel_videos,
     list_telegram_channel_videos_authenticated,
     start_telegram_login,
@@ -171,6 +173,8 @@ class TelegramChannelWorker(QThread):
         code: str = "",
         password: str = "",
         post_id: str = "",
+        before_post_id: str = "",
+        search: str = "",
         language_id: str | None = None,
         parent=None,
     ) -> None:
@@ -182,6 +186,8 @@ class TelegramChannelWorker(QThread):
         self._code = code
         self._password = password
         self._post_id = post_id
+        self._before_post_id = before_post_id
+        self._search = search
         self._language_id = language_id
         self._stop_requested = False
 
@@ -191,15 +197,45 @@ class TelegramChannelWorker(QThread):
 
     def run(self) -> None:
         try:
-            if self.operation == "list_public":
-                self.videos_ready.emit(list_telegram_channel_videos(self._url, language_id=self._language_id))
-            elif self.operation == "list_authenticated":
+            if self.operation in {"list_public", "list_public_more"}:
+                self.videos_ready.emit(
+                    list_telegram_channel_items(
+                        self._url,
+                        before_post_id=self._before_post_id,
+                        search=self._search,
+                        language_id=self._language_id,
+                    )
+                )
+            elif self.operation == "list_public_videos":
+                self.videos_ready.emit(
+                    list_telegram_channel_videos(
+                        self._url,
+                        before_post_id=self._before_post_id,
+                        search=self._search,
+                        language_id=self._language_id,
+                    )
+                )
+            elif self.operation in {"list_authenticated", "list_authenticated_more"}:
+                if self._config is None:
+                    raise RuntimeError("Telegram login config is missing.")
+                self.videos_ready.emit(
+                    list_telegram_channel_items_authenticated(
+                        self._url,
+                        self._config,
+                        before_post_id=self._before_post_id,
+                        search=self._search,
+                        language_id=self._language_id,
+                    )
+                )
+            elif self.operation == "list_authenticated_videos":
                 if self._config is None:
                     raise RuntimeError("Telegram login config is missing.")
                 self.videos_ready.emit(
                     list_telegram_channel_videos_authenticated(
                         self._url,
                         self._config,
+                        before_post_id=self._before_post_id,
+                        search=self._search,
                         language_id=self._language_id,
                     )
                 )

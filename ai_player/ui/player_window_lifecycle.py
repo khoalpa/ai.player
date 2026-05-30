@@ -27,7 +27,11 @@ class PlayerLifecycleMixin:
             event.ignore()
             QTimer.singleShot(500, self.close)
             return
-        self._player.stop()
+        dispose_player = getattr(self._player, "dispose", None)
+        if callable(dispose_player):
+            dispose_player()
+        else:
+            self._player.stop()
         event.accept()
 
     def resizeEvent(self, event) -> None:

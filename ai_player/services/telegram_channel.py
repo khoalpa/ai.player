@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import html
-import json
+import importlib
 import re
+import time
 from dataclasses import dataclass
-from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
-from ai_player.core.config import CONFIG_DIR, RUNTIME_DIR
 from ai_player.core.i18n import ui_text
-from ai_player.core.secret_store import SecretStoreError, protect_text, reveal_text
 from ai_player.services.video_source import _url_host
 
 
@@ -22,6 +18,15 @@ class TelegramChannelVideo:
     post_id: str
     duration: str = ""
     authenticated: bool = False
+    text: str = ""
+    has_video: bool = True
+    thumbnail_url: str = ""
+    date: str = ""
+    media_kind: str = "video"
+    file_name: str = ""
+    file_size: int = 0
+    media_count: int = 1
+    media_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -45,9 +50,8 @@ class TelegramPasswordRequired(TelegramChannelError):
     pass
 
 
-TELEGRAM_LOGIN_CONFIG_PATH = CONFIG_DIR / "telegram_login.json"
-TELEGRAM_SESSION_PATH = CONFIG_DIR / "telegram_user.session"
-TELEGRAM_CACHE_DIR = RUNTIME_DIR / "telegram"
+TELEGRAM_SESSION_LOCK_RETRIES = 5
+TELEGRAM_SESSION_LOCK_RETRY_DELAY_SECONDS = 0.35
 
 
 def is_telegram_channel_url(value: str) -> bool:
@@ -58,17 +62,50 @@ def is_telegram_channel_url(value: str) -> bool:
     parts = _path_parts(parsed.path)
     if len(parts) == 1:
         return _valid_public_channel_name(parts[0])
-    return len(parts) == 2 and parts[0] == "s" and _valid_public_channel_name(parts[1])
+    if len(parts) == 2 and parts[0] == "s":
+        return _valid_public_channel_name(parts[1])
+    return len(parts) == 2 and _valid_public_channel_name(parts[0]) and parts[1].isdigit()
 
 
 def list_telegram_channel_videos(
     value: str,
     *,
     limit: int = 50,
+    before_post_id: str = "",
+    search: str = "",
+    language_id: str | None = None,
+) -> list[TelegramChannelVideo]:
+    try:
+        items = list_telegram_channel_items(
+            value,
+            limit=limit,
+            before_post_id=before_post_id,
+            search=search,
+            language_id=language_id,
+        )
+    except TelegramChannelError as exc:
+        if str(exc) == ui_text("telegram_channel_no_items", language_id):
+            raise TelegramChannelError(ui_text("telegram_channel_no_videos", language_id)) from exc
+        raise
+    videos = [item for item in items if item.has_video]
+    if not videos:
+        raise TelegramChannelError(ui_text("telegram_channel_no_videos", language_id))
+    return videos
+
+
+def list_telegram_channel_items(
+    value: str,
+    *,
+    limit: int = 50,
+    before_post_id: str = "",
+    search: str = "",
     language_id: str | None = None,
 ) -> list[TelegramChannelVideo]:
     channel = _channel_name(value, language_id)
     preview_url = f"https://t.me/s/{channel}"
+    before_post_id = _post_id_text(before_post_id)
+    if before_post_id:
+        preview_url = f"{preview_url}?before={before_post_id}"
     try:
         import requests
     except ImportError as exc:
@@ -82,56 +119,27 @@ def list_telegram_channel_videos(
             ui_text("telegram_channel_load_failed", language_id, detail=_clean_error(exc))
         ) from exc
 
-    videos = parse_telegram_channel_videos(response.text, channel, limit=limit)
-    if not videos:
-        raise TelegramChannelError(ui_text("telegram_channel_no_videos", language_id))
-    return videos
+    items = parse_telegram_channel_items(response.text, channel, limit=limit, search=search)
+    if not items:
+        raise TelegramChannelError(ui_text("telegram_channel_no_items", language_id))
+    return items
+
+
+def telegram_private_available() -> bool:
+    return _telegram_private_adapter() is not None
 
 
 def load_telegram_login_config() -> TelegramLoginConfig | None:
-    try:
-        payload = json.loads(TELEGRAM_LOGIN_CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
+    adapter = _require_telegram_private_adapter(required=False)
+    if adapter is None:
         return None
-    try:
-        api_hash = _load_saved_secret(payload, "api_hash")
-        phone = _load_saved_secret(payload, "phone")
-        if not api_hash or not phone:
-            return None
-        return TelegramLoginConfig(
-            api_id=int(payload.get("api_id") or 0),
-            api_hash=api_hash,
-            phone=phone,
-        )
-    except (SecretStoreError, TypeError, ValueError):
-        return None
-
-
-def save_telegram_login_config(config: TelegramLoginConfig) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    data: dict[str, object] = {"api_id": int(config.api_id)}
-    try:
-        data.update(
-            {
-                "api_hash_secret": protect_text(config.api_hash),
-                "phone_secret": protect_text(config.phone),
-            }
-        )
-    except SecretStoreError:
-        pass
-    TELEGRAM_LOGIN_CONFIG_PATH.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    return adapter.load_telegram_login_config()
 
 
 def delete_telegram_login_data() -> None:
-    with contextlib.suppress(OSError):
-        TELEGRAM_LOGIN_CONFIG_PATH.unlink(missing_ok=True)
-    for path in TELEGRAM_SESSION_PATH.parent.glob(f"{TELEGRAM_SESSION_PATH.name}*"):
-        if path.is_file() or path.is_symlink():
-            with contextlib.suppress(OSError):
-                path.unlink()
+    adapter = _require_telegram_private_adapter(required=False)
+    if adapter is not None:
+        adapter.delete_telegram_login_data()
 
 
 def validate_telegram_login_config(
@@ -155,24 +163,9 @@ def validate_telegram_login_config(
     return TelegramLoginConfig(parsed_api_id, parsed_api_hash, parsed_phone)
 
 
-def _load_saved_secret(payload: dict, name: str) -> str:
-    protected = reveal_text(payload.get(f"{name}_secret"))
-    if protected:
-        return protected.strip()
-    return str(payload.get(name) or "").strip()
-
-
 def start_telegram_login(config: TelegramLoginConfig, language_id: str | None = None) -> TelegramLoginRequest | None:
-    save_telegram_login_config(config)
-    try:
-        phone_code_hash = _run_async(_start_telegram_login(config))
-    except TelegramChannelError:
-        raise
-    except Exception as exc:
-        raise TelegramChannelError(ui_text("telegram_login_failed", language_id, detail=_clean_error(exc))) from exc
-    if not phone_code_hash:
-        return None
-    return TelegramLoginRequest(config=config, phone_code_hash=str(phone_code_hash))
+    adapter = _require_telegram_private_adapter(language_id=language_id)
+    return _retry_telegram_session_lock(lambda: adapter.start_telegram_login(config, language_id=language_id))
 
 
 def complete_telegram_login(
@@ -185,14 +178,10 @@ def complete_telegram_login(
     code = str(code or "").strip()
     if not code:
         raise TelegramChannelError(ui_text("telegram_login_missing_code", language_id))
-    try:
-        _run_async(_complete_telegram_login(request, code, password))
-    except TelegramPasswordRequired:
-        raise
-    except TelegramChannelError:
-        raise
-    except Exception as exc:
-        raise TelegramChannelError(ui_text("telegram_login_failed", language_id, detail=_clean_error(exc))) from exc
+    adapter = _require_telegram_private_adapter(language_id=language_id)
+    _retry_telegram_session_lock(
+        lambda: adapter.complete_telegram_login(request, code, password=password, language_id=language_id)
+    )
 
 
 def list_telegram_channel_videos_authenticated(
@@ -200,19 +189,43 @@ def list_telegram_channel_videos_authenticated(
     config: TelegramLoginConfig,
     *,
     limit: int = 50,
+    before_post_id: str = "",
+    search: str = "",
     language_id: str | None = None,
 ) -> list[TelegramChannelVideo]:
-    try:
-        videos = _run_async(_list_authenticated_videos(value, config, limit))
-    except TelegramChannelError:
-        raise
-    except Exception as exc:
-        raise TelegramChannelError(
-            ui_text("telegram_channel_auth_load_failed", language_id, detail=_clean_error(exc))
-        ) from exc
-    if not videos:
-        raise TelegramChannelError(ui_text("telegram_channel_auth_no_videos", language_id))
-    return videos
+    adapter = _require_telegram_private_adapter(language_id=language_id)
+    return _retry_telegram_session_lock(
+        lambda: adapter.list_telegram_channel_videos_authenticated(
+            value,
+            config,
+            limit=limit,
+            before_post_id=before_post_id,
+            search=search,
+            language_id=language_id,
+        )
+    )
+
+
+def list_telegram_channel_items_authenticated(
+    value: str,
+    config: TelegramLoginConfig,
+    *,
+    limit: int = 50,
+    before_post_id: str = "",
+    search: str = "",
+    language_id: str | None = None,
+) -> list[TelegramChannelVideo]:
+    adapter = _require_telegram_private_adapter(language_id=language_id)
+    return _retry_telegram_session_lock(
+        lambda: adapter.list_telegram_channel_items_authenticated(
+            value,
+            config,
+            limit=limit,
+            before_post_id=before_post_id,
+            search=search,
+            language_id=language_id,
+        )
+    )
 
 
 def download_telegram_channel_video(
@@ -222,195 +235,113 @@ def download_telegram_channel_video(
     *,
     language_id: str | None = None,
 ) -> str:
-    try:
-        return _run_async(_download_authenticated_video(value, post_id, config))
-    except TelegramChannelError:
-        raise
-    except Exception as exc:
-        raise TelegramChannelError(
-            ui_text("telegram_channel_download_failed", language_id, detail=_clean_error(exc))
-        ) from exc
+    adapter = _require_telegram_private_adapter(language_id=language_id)
+    return _retry_telegram_session_lock(
+        lambda: adapter.download_telegram_channel_video(
+            value,
+            post_id,
+            config,
+            language_id=language_id,
+        )
+    )
 
 
-def parse_telegram_channel_videos(html_text: str, channel: str, *, limit: int = 50) -> list[TelegramChannelVideo]:
+def parse_telegram_channel_videos(
+    html_text: str,
+    channel: str,
+    *,
+    limit: int = 50,
+    search: str = "",
+) -> list[TelegramChannelVideo]:
+    return [
+        item
+        for item in parse_telegram_channel_items(html_text, channel, limit=limit, search=search)
+        if item.has_video
+    ]
+
+
+def parse_telegram_channel_items(
+    html_text: str,
+    channel: str,
+    *,
+    limit: int = 50,
+    search: str = "",
+) -> list[TelegramChannelVideo]:
     videos: list[TelegramChannelVideo] = []
     seen: set[str] = set()
     for post, block in _iter_message_blocks(html_text):
         post_channel, post_id = _split_post(post)
         if not post_id:
             continue
-        if not _block_has_video(block):
-            continue
         url = f"https://t.me/{post_channel or channel}/{post_id}"
         if url in seen:
             continue
         seen.add(url)
-        title = _message_title(block, post_id)
+        text = _message_text(block)
         duration = _message_duration(block)
+        media_kind = _message_media_kind(block)
+        has_video = media_kind == "video"
+        thumbnail_url = _message_thumbnail_url(url, block)
+        media_url = _message_media_url(url, block)
+        date = _message_date(block)
+        file_name = _message_file_name(block)
+        file_size = _message_file_size(block)
+        media_count = _message_media_count(block)
+        title = _truncate(text, 90) if text else _message_title(block, post_id)
         if duration:
             title = f"{title} [{duration}]"
-        videos.append(TelegramChannelVideo(title=title, url=url, post_id=post_id, duration=duration))
+        if search and not _matches_query(search, title, text, file_name, post_id):
+            continue
+        videos.append(
+            TelegramChannelVideo(
+                title=title,
+                url=url,
+                post_id=post_id,
+                duration=duration,
+                text=text,
+                has_video=has_video,
+                thumbnail_url=thumbnail_url,
+                date=date,
+                media_kind=media_kind,
+                file_name=file_name,
+                file_size=file_size,
+                media_count=media_count,
+                media_url=media_url,
+            )
+        )
         if len(videos) >= limit:
             break
     return videos
 
 
-async def _start_telegram_login(config: TelegramLoginConfig) -> str:
-    client = _telegram_client(config)
-    await client.connect()
+def _telegram_private_adapter():
     try:
-        if await client.is_user_authorized():
-            return ""
-        sent = await client.send_code_request(config.phone)
-        return str(sent.phone_code_hash or "")
-    finally:
-        await client.disconnect()
+        return importlib.import_module("ai_player_telegram_client.adapter")
+    except ImportError:
+        return None
 
 
-async def _complete_telegram_login(request: TelegramLoginRequest, code: str, password: str) -> None:
-    errors = _telethon_errors()
-    client = _telegram_client(request.config)
-    await client.connect()
-    try:
+def _require_telegram_private_adapter(*, language_id: str | None = None, required: bool = True):
+    adapter = _telegram_private_adapter()
+    if adapter is not None or not required:
+        return adapter
+    raise TelegramChannelError(ui_text("telegram_login_missing_private_plugin", language_id))
+
+
+def _retry_telegram_session_lock(callback):
+    for attempt in range(TELEGRAM_SESSION_LOCK_RETRIES + 1):
         try:
-            await client.sign_in(
-                phone=request.config.phone,
-                code=code,
-                phone_code_hash=request.phone_code_hash,
-            )
-        except errors.SessionPasswordNeededError as exc:
-            password = str(password or "").strip()
-            if not password:
-                raise TelegramPasswordRequired("telegram password required") from exc
-            await client.sign_in(password=password)
-    finally:
-        await client.disconnect()
+            return callback()
+        except Exception as exc:
+            if not _is_telegram_session_locked(exc) or attempt >= TELEGRAM_SESSION_LOCK_RETRIES:
+                raise
+            time.sleep(TELEGRAM_SESSION_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
+    return callback()
 
 
-async def _list_authenticated_videos(
-    value: str,
-    config: TelegramLoginConfig,
-    limit: int,
-) -> list[TelegramChannelVideo]:
-    channel = _channel_name(value)
-    client = _telegram_client(config)
-    await client.connect()
-    try:
-        await _ensure_authorized(client)
-        entity = await client.get_entity(channel)
-        username = str(getattr(entity, "username", "") or channel).strip() or channel
-        videos: list[TelegramChannelVideo] = []
-        async for message in client.iter_messages(entity, limit=max(limit * 8, 100)):
-            if not _message_has_video(message):
-                continue
-            duration = _message_media_duration(message)
-            title = _authenticated_message_title(message, duration)
-            videos.append(
-                TelegramChannelVideo(
-                    title=title,
-                    url=f"https://t.me/{username}/{message.id}",
-                    post_id=str(message.id),
-                    duration=duration,
-                    authenticated=True,
-                )
-            )
-            if len(videos) >= limit:
-                break
-        return videos
-    finally:
-        await client.disconnect()
-
-
-async def _download_authenticated_video(value: str, post_id: str, config: TelegramLoginConfig) -> str:
-    channel = _channel_name(value)
-    message_id = int(str(post_id).strip())
-    client = _telegram_client(config)
-    await client.connect()
-    try:
-        await _ensure_authorized(client)
-        entity = await client.get_entity(channel)
-        message = await client.get_messages(entity, ids=message_id)
-        if message is None or not _message_has_video(message):
-            raise TelegramChannelError("Telegram message does not contain a video.")
-        TELEGRAM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        output_path = TELEGRAM_CACHE_DIR / f"{_safe_filename(channel)}-{message_id}{_message_video_suffix(message)}"
-        if output_path.exists() and output_path.stat().st_size > 0:
-            return str(output_path)
-        partial_path = output_path.with_suffix(f"{output_path.suffix}.part")
-        if partial_path.exists():
-            partial_path.unlink()
-        downloaded = await client.download_media(message, file=str(partial_path))
-        downloaded_path = Path(str(downloaded or partial_path))
-        if not downloaded_path.exists() or downloaded_path.stat().st_size <= 0:
-            raise TelegramChannelError("Telegram download did not create a video file.")
-        downloaded_path.replace(output_path)
-        return str(output_path)
-    finally:
-        await client.disconnect()
-
-
-def _telegram_client(config: TelegramLoginConfig):
-    try:
-        from telethon import TelegramClient
-    except ImportError as exc:
-        raise TelegramChannelError(ui_text("telegram_login_missing_telethon")) from exc
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    return TelegramClient(str(TELEGRAM_SESSION_PATH), int(config.api_id), config.api_hash)
-
-
-def _telethon_errors():
-    try:
-        from telethon import errors
-    except ImportError as exc:
-        raise TelegramChannelError(ui_text("telegram_login_missing_telethon")) from exc
-    return errors
-
-
-async def _ensure_authorized(client) -> None:
-    if not await client.is_user_authorized():
-        raise TelegramChannelError(ui_text("telegram_login_required"))
-
-
-def _run_async(coro):
-    return asyncio.run(coro)
-
-
-def _message_has_video(message) -> bool:
-    if bool(getattr(message, "video", None)):
-        return True
-    document = getattr(message, "document", None)
-    mime_type = str(getattr(document, "mime_type", "") or "")
-    return mime_type.lower().startswith("video/")
-
-
-def _message_media_duration(message) -> str:
-    document = getattr(message, "document", None)
-    for attr in getattr(document, "attributes", []) or []:
-        duration = getattr(attr, "duration", None)
-        if duration:
-            return _format_duration(duration)
-    return ""
-
-
-def _authenticated_message_title(message, duration: str) -> str:
-    text = _truncate(str(getattr(message, "message", "") or "").strip(), 90)
-    if not text:
-        date = getattr(message, "date", None)
-        date_text = date.strftime("%Y-%m-%d %H:%M") if date is not None and hasattr(date, "strftime") else ""
-        text = f"#{getattr(message, 'id', '')} {date_text}".strip()
-    return f"{text} [{duration}]" if duration else text
-
-
-def _message_video_suffix(message) -> str:
-    document = getattr(message, "document", None)
-    mime_type = str(getattr(document, "mime_type", "") or "").lower()
-    suffix_by_mime = {
-        "video/mp4": ".mp4",
-        "video/webm": ".webm",
-        "video/x-matroska": ".mkv",
-        "video/quicktime": ".mov",
-    }
-    return suffix_by_mime.get(mime_type, ".mp4")
+def _is_telegram_session_locked(value: object) -> bool:
+    text = str(value or "").lower()
+    return "database is locked" in text or "database table is locked" in text
 
 
 def _format_duration(value: object) -> str:
@@ -436,6 +367,8 @@ def _channel_name(value: str, language_id: str | None = None) -> str:
         return parts[0]
     if len(parts) == 2 and parts[0] == "s" and _valid_public_channel_name(parts[1]):
         return parts[1]
+    if len(parts) == 2 and _valid_public_channel_name(parts[0]) and parts[1].isdigit():
+        return parts[0]
     raise TelegramChannelError(ui_text("telegram_channel_bad_url", language_id))
 
 
@@ -484,13 +417,21 @@ def _block_has_video(block: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
+def _message_media_kind(block: str) -> str:
+    lowered = block.lower()
+    if _block_has_video(block):
+        return "video"
+    if "tgme_widget_message_photo" in lowered or "<img" in lowered:
+        return "photo"
+    if "tgme_widget_message_document" in lowered or "tgme_widget_message_document_title" in lowered:
+        return "document"
+    if "tgme_widget_message_voice" in lowered or "tgme_widget_message_audio" in lowered:
+        return "audio"
+    return "text"
+
+
 def _message_title(block: str, post_id: str) -> str:
-    text_match = re.search(
-        r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>',
-        block,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    text = _html_to_text(text_match.group(1)) if text_match else ""
+    text = _message_text(block)
     if text:
         return _truncate(text, 90)
 
@@ -503,6 +444,24 @@ def _message_title(block: str, post_id: str) -> str:
     return f"#{post_id} {date_text}".strip()
 
 
+def _message_text(block: str) -> str:
+    text_match = re.search(
+        r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>',
+        block,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return _html_to_text(text_match.group(1)) if text_match else ""
+
+
+def _message_date(block: str) -> str:
+    date_match = re.search(
+        r'<time[^>]*datetime="([^"]+)"',
+        block,
+        flags=re.IGNORECASE,
+    )
+    return date_match.group(1).replace("T", " ")[:16] if date_match else ""
+
+
 def _message_duration(block: str) -> str:
     match = re.search(
         r'<[^>]*class="[^"]*message_video_duration[^"]*"[^>]*>(.*?)</[^>]+>',
@@ -512,11 +471,106 @@ def _message_duration(block: str) -> str:
     return _html_to_text(match.group(1)) if match else ""
 
 
+def _message_file_name(block: str) -> str:
+    for pattern in (
+        r'<div class="[^"]*tgme_widget_message_document_title[^"]*"[^>]*>(.*?)</div>',
+        r'<div class="[^"]*tgme_widget_message_document_extra[^"]*"[^>]*>(.*?)</div>',
+    ):
+        match = re.search(pattern, block, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            text = _html_to_text(match.group(1))
+            if text:
+                return _truncate(text, 120)
+    return ""
+
+
+def _message_file_size(block: str) -> int:
+    match = re.search(
+        r'([0-9]+(?:[.,][0-9]+)?)\s*(KB|MB|GB)',
+        _html_to_text(block),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return 0
+    try:
+        value = float(match.group(1).replace(",", "."))
+    except ValueError:
+        return 0
+    unit = match.group(2).upper()
+    multiplier = {"KB": 1024, "MB": 1024**2, "GB": 1024**3}.get(unit, 1)
+    return int(value * multiplier)
+
+
+def _message_media_count(block: str) -> int:
+    lowered = block.lower()
+    marker_count = 0
+    for marker in (
+        "tgme_widget_message_video_player",
+        "tgme_widget_message_photo",
+        "tgme_widget_message_document",
+        "tgme_widget_message_voice",
+        "tgme_widget_message_audio",
+        "<video",
+    ):
+        marker_count += lowered.count(marker)
+    urls: set[str] = set()
+    for pattern in (
+        r"""background-image\s*:\s*url\((?P<quote>['"]?)(?P<url>.*?)(?P=quote)\)""",
+        r"""<img[^>]+src=["'](?P<url>[^"']+)["']""",
+        r"""(?:poster|data-thumb|data-src|src)=["'](?P<url>[^"']+)["']""",
+    ):
+        for match in re.finditer(pattern, block, flags=re.IGNORECASE | re.DOTALL):
+            url = html.unescape(str(match.group("url") or "")).strip()
+            if url:
+                urls.add(url)
+    return max(1, marker_count, len(urls))
+
+
+def _message_thumbnail_url(page_url: str, block: str) -> str:
+    for pattern in (
+        r"""background-image\s*:\s*url\((?P<quote>['"]?)(?P<url>.*?)(?P=quote)\)""",
+        r"""<img[^>]+src=["'](?P<url>[^"']+)["']""",
+        r"""(?:poster|data-thumb|data-src)=["'](?P<url>[^"']+)["']""",
+    ):
+        match = re.search(pattern, block, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            url = html.unescape(str(match.group("url") or "")).strip()
+            if url:
+                return urljoin(page_url, url)
+    return ""
+
+
+def _message_media_url(page_url: str, block: str) -> str:
+    for pattern in (
+        r"""<video[^>]+src=["'](?P<url>[^"']+)["']""",
+        r"""<source[^>]+src=["'](?P<url>[^"']+)["']""",
+    ):
+        match = re.search(pattern, block, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            url = html.unescape(str(match.group("url") or "")).strip()
+            if url:
+                return urljoin(page_url, url)
+    return ""
+
+
 def _html_to_text(value: str) -> str:
     text = re.sub(r"<br\s*/?>", "\n", value, flags=re.IGNORECASE)
     text = re.sub(r"<[^>]+>", " ", text)
     text = html.unescape(text)
     return " ".join(text.split())
+
+
+def _matches_query(query: str, *values: object) -> bool:
+    needle = " ".join(str(query or "").lower().split())
+    if not needle:
+        return True
+    haystack = " ".join(str(value or "") for value in values).lower()
+    return needle in haystack
+
+
+def _post_id_text(value: object) -> str:
+    text = str(value or "").strip()
+    return text if text.isdigit() else ""
 
 
 def _truncate(value: str, max_length: int) -> str:

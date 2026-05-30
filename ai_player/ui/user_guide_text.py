@@ -81,8 +81,8 @@ GUIDE_TEXT = {
         "supported_website_items": [
             "<b>Nền tảng video phổ biến</b>: YouTube (<code>youtube.com</code>, <code>m.youtube.com</code>, <code>music.youtube.com</code>, <code>youtu.be</code>), Vimeo (<code>vimeo.com</code>), Dailymotion (<code>dailymotion.com</code>, <code>dai.ly</code>).",
             "<b>Mạng xã hội và video ngắn</b>: TikTok (<code>tiktok.com</code>, <code>vm.tiktok.com</code>, <code>vt.tiktok.com</code>), Facebook (<code>facebook.com</code>, <code>m.facebook.com</code>, <code>web.facebook.com</code>, <code>fb.watch</code>), Instagram/Threads (<code>instagram.com</code>, <code>threads.net</code>), X/Twitter (<code>x.com</code>, <code>twitter.com</code>).",
-            "<b>Cộng đồng và kênh chat</b>: Telegram (<code>t.me</code>, <code>telegram.me</code>).",
-            "<b>Tiá»‡n Ã­ch ná»™i bá»™</b>: báº£n build riÃªng cÃ³ thá»ƒ cÃ i thÃªm plugin yt-dlp private vÃ  khai bÃ¡o host báº±ng <code>AI_PLAYER_EXTRA_YTDLP_HOSTS</code>.",
+            "<b>Cộng đồng và kênh chat</b>: Telegram public preview (<code>t.me</code>, <code>telegram.me</code>).",
+            "<b>Tiá»‡n Ã­ch ná»™i bá»™</b>: báº£n build riÃªng cÃ³ thá»ƒ cÃ i thÃªm plugin yt-dlp private, khai bÃ¡o host báº±ng <code>AI_PLAYER_EXTRA_YTDLP_HOSTS</code>, vÃ  cÃ i private Telegram client plugin cho Ä‘Äƒng nháº­p/táº£i Telegram.",
         ],
         "supported_document_items": [
             "PowerPoint: <code>.pptx</code>.",
@@ -572,8 +572,8 @@ GUIDE_TEXT = {
         "supported_website_items": [
             "<b>Mainstream video platforms</b>: YouTube (<code>youtube.com</code>, <code>m.youtube.com</code>, <code>music.youtube.com</code>, <code>youtu.be</code>), Vimeo (<code>vimeo.com</code>), Dailymotion (<code>dailymotion.com</code>, <code>dai.ly</code>).",
             "<b>Social and short video</b>: TikTok (<code>tiktok.com</code>, <code>vm.tiktok.com</code>, <code>vt.tiktok.com</code>), Facebook (<code>facebook.com</code>, <code>m.facebook.com</code>, <code>web.facebook.com</code>, <code>fb.watch</code>), Instagram/Threads (<code>instagram.com</code>, <code>threads.net</code>), X/Twitter (<code>x.com</code>, <code>twitter.com</code>).",
-            "<b>Community and chat channels</b>: Telegram (<code>t.me</code>, <code>telegram.me</code>).",
-            "<b>Internal add-ons</b>: internal builds can install private yt-dlp plugins and declare hosts with <code>AI_PLAYER_EXTRA_YTDLP_HOSTS</code>.",
+            "<b>Community and chat channels</b>: Telegram public previews (<code>t.me</code>, <code>telegram.me</code>).",
+            "<b>Internal add-ons</b>: internal builds can install private yt-dlp plugins, declare hosts with <code>AI_PLAYER_EXTRA_YTDLP_HOSTS</code>, and install a private Telegram client plugin for login/download.",
         ],
         "supported_document_items": [
             "PowerPoint: <code>.pptx</code>.",

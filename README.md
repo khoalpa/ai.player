@@ -155,9 +155,11 @@ URL media trực tiếp:
 
 Trang video qua `yt-dlp`:
 
-- YouTube, TikTok, Facebook, Instagram, Threads, X/Twitter, Vimeo, Dailymotion, Telegram.
+- YouTube, TikTok, Facebook, Instagram, Threads, X/Twitter, Vimeo, Dailymotion, public Telegram previews.
 - Internal builds can install private `yt-dlp` plugin packages and declare their
   extra hosts with `AI_PLAYER_EXTRA_YTDLP_HOSTS`.
+- Internal builds can also install a private Telegram client package for
+  Telethon-backed login and authenticated Telegram downloads.
 
 Tài liệu:
 

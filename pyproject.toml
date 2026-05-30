@@ -37,7 +37,6 @@ dependencies = [
   "soundcard>=0.4.6",
   "yt-dlp>=2025.1.15",
   "requests>=2.31",
-  "telethon>=1.36",
   "tqdm>=4.66",
 ]
 

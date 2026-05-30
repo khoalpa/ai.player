@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import shutil
 from pathlib import Path
 
@@ -87,33 +89,41 @@ class PlayerOfflineModelsMixin:
         )
         for column, key in headers:
             label = self._field_label(key)
+            if column == 3:
+                label.setAlignment(Qt.AlignCenter)
             grid.addWidget(label, 0, column)
 
         for row, spec in enumerate(self._offline_model_specs(), 1):
             name = QLabel(self._tr(spec["title_key"]))
             name.setProperty("i18n_key", spec["title_key"])
             name.setWordWrap(True)
+            name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             status = QLabel("...")
             status.setWordWrap(True)
+            status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             target = QLabel(self._offline_model_target_text(spec))
             target.setTextInteractionFlags(target.textInteractionFlags() | Qt.TextSelectableByMouse)
             target.setWordWrap(True)
+            target.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             button = self._make_button(
-                "offline_models_run",
+                str(spec.get("action_key", "offline_models_download")),
                 self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward),
             )
+            button.setMinimumWidth(72)
+            button.setMaximumWidth(110)
             button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             button.clicked.connect(lambda _checked=False, key=spec["key"]: self._run_offline_model_script(key))
             grid.addWidget(name, row, 0)
             grid.addWidget(status, row, 1)
             grid.addWidget(target, row, 2)
-            grid.addWidget(button, row, 3)
+            grid.addWidget(button, row, 3, alignment=Qt.AlignTop | Qt.AlignRight)
             self._offline_model_rows[spec["key"]] = {"status": status, "target": target, "button": button}
             self._offline_model_action_buttons.append(button)
 
         grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(1, 0)
         grid.setColumnStretch(2, 2)
+        grid.setColumnStretch(3, 0)
         layout.addLayout(grid)
 
         self._offline_models_log = QPlainTextEdit()
@@ -153,6 +163,7 @@ class PlayerOfflineModelsMixin:
             {
                 "key": "all",
                 "title_key": "offline_models_all",
+                "action_key": "offline_models_run_all",
                 "script": "download_offline_models.ps1",
                 "target": MODEL_ROOT,
                 "required": common_required,
@@ -200,8 +211,25 @@ class PlayerOfflineModelsMixin:
                 ),
             },
             {
+                "key": "adult_extractors",
+                "title_key": "offline_models_adult_extractors",
+                "action_key": "offline_models_install",
+                "script": "install_adult_extractors.ps1",
+                "target_text": "ai-player-adult-extractors",
+                "required_modules": ("yt_dlp_plugins.extractor.adult_sites",),
+            },
+            {
+                "key": "telegram_client",
+                "title_key": "offline_models_telegram_client",
+                "action_key": "offline_models_install",
+                "script": "install_telegram_client.ps1",
+                "target_text": "ai-player-telegram-client",
+                "required_modules": ("ai_player_telegram_client.adapter",),
+            },
+            {
                 "key": "portable",
                 "title_key": "offline_models_portable",
+                "action_key": "offline_models_build",
                 "script": "build_portable.ps1",
                 "target": portable,
                 "required": (portable / "Run AI Player.bat",),
@@ -209,6 +237,7 @@ class PlayerOfflineModelsMixin:
             {
                 "key": "backup",
                 "title_key": "offline_models_backup",
+                "action_key": "offline_models_backup_action",
                 "script": "backup_local.ps1",
                 "target": PROJECT_ROOT.parent,
                 "required": (),
@@ -269,6 +298,7 @@ class PlayerOfflineModelsMixin:
         self._offline_model_process = None
         self._offline_model_running_key = ""
         self._sync_offline_model_buttons()
+        self._refresh_runtime_plugin_caches()
         self._refresh_offline_model_statuses()
         self._refresh_downloaded_model_combos()
         if exit_code == 0:
@@ -330,13 +360,16 @@ class PlayerOfflineModelsMixin:
 
     def _offline_model_status_text(self, spec: dict[str, object]) -> str:
         required = tuple(Path(path) for path in spec.get("required", ()))
-        if not required:
+        required_modules = tuple(str(module) for module in spec.get("required_modules", ()))
+        if not required and not required_modules:
             return self._tr("offline_models_utility")
         ready = sum(1 for path in required if self._offline_model_path_ready(path))
-        if ready == len(required):
+        ready += sum(1 for module in required_modules if self._offline_model_module_ready(module))
+        total = len(required) + len(required_modules)
+        if ready == total:
             return self._tr("offline_models_ready")
         if ready:
-            return self._tr("offline_models_partial").format(ready=ready, total=len(required))
+            return self._tr("offline_models_partial").format(ready=ready, total=total)
         return self._tr("offline_models_missing")
 
     @staticmethod
@@ -351,6 +384,9 @@ class PlayerOfflineModelsMixin:
         return False
 
     def _offline_model_target_text(self, spec: dict[str, object]) -> str:
+        target_text = str(spec.get("target_text") or "").strip()
+        if target_text:
+            return target_text
         target = Path(spec["target"])
         try:
             return str(target.relative_to(PROJECT_ROOT))
@@ -365,6 +401,23 @@ class PlayerOfflineModelsMixin:
 
     def _offline_model_name(self, spec_key: str) -> str:
         return self._tr(str(self._offline_model_spec(spec_key)["title_key"]))
+
+    @staticmethod
+    def _offline_model_module_ready(module_name: str) -> bool:
+        try:
+            return importlib.util.find_spec(module_name) is not None
+        except (ImportError, ModuleNotFoundError, ValueError):
+            return False
+
+    @staticmethod
+    def _refresh_runtime_plugin_caches() -> None:
+        importlib.invalidate_caches()
+        try:
+            from ai_player.services import video_source
+
+            video_source._plugin_ytdlp_extractors.cache_clear()
+        except Exception:
+            pass
 
     def _refresh_downloaded_model_combos(self) -> None:
         if hasattr(self, "_asr_model_combo"):

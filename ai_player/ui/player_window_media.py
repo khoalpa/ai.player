@@ -11,7 +11,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QFont, QPalette, QPixmap
-from PySide6.QtWidgets import QFrame
+from PySide6.QtWidgets import QApplication, QFrame, QStyle
 
 from ai_player.services.ffmpeg import ffprobe_executable
 from ai_player.services.media_cache import playback_compat_cached_output_valid
@@ -27,6 +27,13 @@ from ai_player.workers.dubbing_worker import _load_transcript_entries
 from ai_player.workers.player_window_workers import PlaybackCompatibilityWorker, SourceAudioFilterWorker
 
 _QT_COMPAT_VIDEO_CACHE: dict[tuple[str, int, int], bool] = {}
+DEFAULT_SIDEBAR_PANEL_WIDTH = 360
+DEFAULT_SIDEBAR_PANEL_SIZES = (1500, DEFAULT_SIDEBAR_PANEL_WIDTH)
+
+
+def _is_offscreen_platform() -> bool:
+    app = QApplication.instance()
+    return bool(app is not None and app.platformName().lower() == "offscreen")
 
 
 class PlayerMediaMixin:
@@ -137,6 +144,8 @@ class PlayerMediaMixin:
                 return
             self._switch_player_source(filtered_path, preserve_state=True)
             self.statusBar().showMessage(self._tr("status_source_filter_ready"))
+            if hasattr(self, "_play_pending_telegram_navigation"):
+                self._play_pending_telegram_navigation(source_path=source_path)
 
     def _source_audio_filter_failed(self, source_path: str, message: str) -> None:
         if self._video_path == source_path:
@@ -176,6 +185,8 @@ class PlayerMediaMixin:
         if self._video_path == source_path and not self._document_mode:
             self._switch_player_source(compat_path, preserve_state=True)
             self.statusBar().showMessage(self._tr("status_playback_compat_ready"))
+            if hasattr(self, "_play_pending_telegram_navigation"):
+                self._play_pending_telegram_navigation(source_path=source_path)
 
     def _playback_compat_failed(self, source_path: str, message: str) -> None:
         if self._video_path == source_path:
@@ -383,6 +394,111 @@ class PlayerMediaMixin:
             if hasattr(self, "_document_view"):
                 self._document_view.clear()
 
+    def _auto_select_video_aspect_ratio(self, source: object | None = None) -> None:
+        if self._document_mode or not hasattr(self, "_aspect_combo"):
+            return
+        width, height = self._video_dimensions_from_source_metadata(source)
+        if not width and not height and self._video_path:
+            width, height = self._probe_video_dimensions(self._video_path)
+        aspect = self._video_aspect_for_dimensions(width, height)
+        if not aspect:
+            return
+        current = self._aspect_combo.currentData()
+        if current != aspect and hasattr(self, "_set_combo_data"):
+            self._set_combo_data(self._aspect_combo, aspect)
+            return
+        self._apply_media_aspect_ratio()
+
+    @staticmethod
+    def _video_dimensions_from_source_metadata(source: object | None) -> tuple[int, int]:
+        if source is None:
+            return 0, 0
+        return (
+            PlayerMediaMixin._positive_video_dimension(getattr(source, "width", 0)),
+            PlayerMediaMixin._positive_video_dimension(getattr(source, "height", 0)),
+        )
+
+    @staticmethod
+    def _video_aspect_for_dimensions(width: int, height: int) -> str:
+        width = PlayerMediaMixin._positive_video_dimension(width)
+        height = PlayerMediaMixin._positive_video_dimension(height)
+        if not width or not height:
+            return ""
+        return "9:16" if height > width else "16:9"
+
+    @staticmethod
+    def _probe_video_dimensions(source_path: str) -> tuple[int, int]:
+        source = QUrl(source_path)
+        if source.scheme() in {"http", "https", "rtsp", "rtmp", "mms"}:
+            return 0, 0
+        path = Path(source_path)
+        if not path.exists():
+            return 0, 0
+        ffprobe = ffprobe_executable()
+        if not ffprobe:
+            return 0, 0
+        try:
+            result = subprocess.run(
+                [
+                    ffprobe,
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=width,height:stream_tags=rotate:stream_side_data=rotation",
+                    "-of",
+                    "json",
+                    source_path,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=3.0,
+            )
+            if result.returncode != 0:
+                return 0, 0
+            data = json.loads(result.stdout or "{}")
+        except Exception:
+            return 0, 0
+        streams = data.get("streams") if isinstance(data, dict) else None
+        if not isinstance(streams, list) or not streams:
+            return 0, 0
+        stream = streams[0] if isinstance(streams[0], dict) else {}
+        width = PlayerMediaMixin._positive_video_dimension(stream.get("width"))
+        height = PlayerMediaMixin._positive_video_dimension(stream.get("height"))
+        if width and height and PlayerMediaMixin._stream_rotation_is_vertical(stream):
+            return height, width
+        return width, height
+
+    @staticmethod
+    def _stream_rotation_is_vertical(stream: dict) -> bool:
+        candidates = []
+        tags = stream.get("tags")
+        if isinstance(tags, dict):
+            candidates.append(tags.get("rotate"))
+        side_data = stream.get("side_data_list")
+        if isinstance(side_data, list):
+            candidates.extend(item.get("rotation") for item in side_data if isinstance(item, dict))
+        for value in candidates:
+            try:
+                rotation = int(float(str(value or "").strip())) % 180
+            except (OverflowError, TypeError, ValueError):
+                continue
+            if rotation == 90:
+                return True
+        return False
+
+    @staticmethod
+    def _positive_video_dimension(value: object) -> int:
+        try:
+            parsed = int(float(str(value or "").strip()))
+        except (OverflowError, TypeError, ValueError):
+            return 0
+        return parsed if parsed > 0 else 0
+
     def _apply_media_aspect_ratio(self) -> None:
         if not self._media_frame:
             return
@@ -409,6 +525,13 @@ class PlayerMediaMixin:
             available = self._media_stack.size()
             max_width = max(160, available.width() - 4)
             max_height = max(120, available.height() - 4)
+        if self._media_stack.currentWidget() is getattr(self, "_telegram_channel_view", None):
+            self._media_frame.setFixedSize(max_width, max_height)
+            self._position_subtitle_overlay()
+            self._refresh_document_page_for_media_size()
+            if hasattr(self, "_refresh_telegram_channel_thumbnail"):
+                self._refresh_telegram_channel_thumbnail()
+            return
         if self._selected_video_aspect_ratio() == "9:16":
             ratio_width, ratio_height = 9, 16
         else:
@@ -682,6 +805,20 @@ class PlayerMediaMixin:
             return
         self._jump_to_document_page(min(len(self._document_pages) - 1, self._document_current_page_index + 1))
 
+    def _previous_media_item(self) -> None:
+        if self._document_mode:
+            self._previous_document_page()
+            return
+        if hasattr(self, "_open_adjacent_telegram_channel_video"):
+            self._open_adjacent_telegram_channel_video(-1)
+
+    def _next_media_item(self) -> None:
+        if self._document_mode:
+            self._next_document_page()
+            return
+        if hasattr(self, "_open_adjacent_telegram_channel_video"):
+            self._open_adjacent_telegram_channel_video(1)
+
     def _jump_to_document_page(self, page_index: int) -> None:
         page_index = max(0, min(page_index, len(self._document_pages) - 1))
         page = self._document_pages[page_index]
@@ -751,6 +888,10 @@ class PlayerMediaMixin:
     def _enter_media_fullscreen(self) -> None:
         if not self._media_frame:
             return
+        self._media_frame_detached_for_fullscreen = False
+        if _is_offscreen_platform():
+            self._media_frame.setFocus(Qt.ActiveWindowFocusReason)
+            return
         parent = self._media_frame.parentWidget()
         layout = parent.layout() if parent else None
         self._media_frame_parent = parent
@@ -769,10 +910,15 @@ class PlayerMediaMixin:
         self._media_frame.activateWindow()
         self._media_frame.raise_()
         self._media_frame.setFocus(Qt.ActiveWindowFocusReason)
+        self._media_frame_detached_for_fullscreen = True
         self._apply_fullscreen_media_size()
 
     def _leave_media_fullscreen(self) -> None:
         if not self._media_frame:
+            return
+        if not getattr(self, "_media_frame_detached_for_fullscreen", False):
+            self._media_frame_detached_for_fullscreen = False
+            self._apply_media_aspect_ratio()
             return
         self._media_frame.hide()
         self._media_frame.showNormal()
@@ -793,6 +939,7 @@ class PlayerMediaMixin:
         self._media_frame_layout = None
         self._media_frame_index = -1
         self._media_frame_alignment = Qt.AlignmentFlag(0)
+        self._media_frame_detached_for_fullscreen = False
         self._apply_media_aspect_ratio()
 
     def _apply_fullscreen_media_size(self) -> None:
@@ -819,12 +966,28 @@ class PlayerMediaMixin:
         )
 
     def eventFilter(self, watched, event) -> bool:
+        telegram_thumbnail = getattr(self, "_telegram_channel_thumbnail", None)
+        if watched is telegram_thumbnail and event.type() == QEvent.Type.Resize:
+            if hasattr(self, "_refresh_telegram_channel_thumbnail"):
+                self._refresh_telegram_channel_thumbnail()
+            return False
+        telegram_widgets = {
+            getattr(self, "_telegram_channel_view", None),
+            getattr(self, "_telegram_channel_list", None),
+            getattr(self, "_telegram_channel_preview", None),
+            telegram_thumbnail,
+        }
+        if watched in telegram_widgets and event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Up and hasattr(self, "_select_adjacent_telegram_channel_video"):
+                return self._select_adjacent_telegram_channel_video(-1)
+            if event.key() == Qt.Key.Key_Down and hasattr(self, "_select_adjacent_telegram_channel_video"):
+                return self._select_adjacent_telegram_channel_video(1)
         media_widgets = {
-            self._video_widget,
-            self._video_placeholder,
-            self._document_view,
-            self._media_stack,
-            self._media_frame,
+            getattr(self, "_video_widget", None),
+            getattr(self, "_video_placeholder", None),
+            getattr(self, "_document_view", None),
+            getattr(self, "_media_stack", None),
+            getattr(self, "_media_frame", None),
         }
         if watched in media_widgets:
             if event.type() == QEvent.Type.MouseButtonDblClick:
@@ -840,6 +1003,75 @@ class PlayerMediaMixin:
 
     def _toggle_sidebar_panel(self) -> None:
         self._set_sidebar_panel_visible(self._sidebar_panel_hidden)
+
+    def _set_panel_toggle_icon(self, *, panel_visible: bool) -> None:
+        if not hasattr(self, "_panel_toggle_button"):
+            return
+        icon = (
+            QStyle.StandardPixmap.SP_TitleBarShadeButton
+            if panel_visible
+            else QStyle.StandardPixmap.SP_TitleBarUnshadeButton
+        )
+        self._panel_toggle_button.setIcon(self.style().standardIcon(icon))
+
+    def _expand_sidebar_panel(self) -> None:
+        if not hasattr(self, "_splitter"):
+            return
+        if self._sidebar_panel_hidden:
+            self._set_sidebar_panel_visible(True)
+        sizes = self._splitter.sizes()
+        if len(sizes) < 2:
+            return
+        total = sum(sizes)
+        if total <= 0:
+            return
+        step = 120
+        min_video_width = 320
+        current_sidebar = max(0, sizes[1])
+        max_sidebar = max(DEFAULT_SIDEBAR_PANEL_WIDTH, total - min_video_width)
+        target_sidebar = min(max_sidebar, max(DEFAULT_SIDEBAR_PANEL_WIDTH, current_sidebar) + step)
+        target_video = max(0, total - target_sidebar)
+        if hasattr(self, "_settings_scroll"):
+            self._settings_scroll.setMinimumWidth(target_sidebar)
+        self._sidebar_panel_sizes = [target_video, target_sidebar]
+        self._splitter.setSizes(self._sidebar_panel_sizes)
+        applied_sizes = self._splitter.sizes()
+        if len(applied_sizes) >= 2 and applied_sizes[1] <= current_sidebar and target_sidebar > current_sidebar:
+            self.resize(self.width() + target_sidebar - current_sidebar, self.height())
+            QTimer.singleShot(0, lambda sizes=list(self._sidebar_panel_sizes): self._splitter.setSizes(sizes))
+        self._apply_media_aspect_ratio()
+        sidebar_percent = int(round(target_sidebar / total * 100))
+        video_percent = max(0, 100 - sidebar_percent)
+        self.statusBar().showMessage(
+            self._tr("status_panel_ratio").format(video=video_percent, sidebar=sidebar_percent)
+        )
+
+    def _collapse_sidebar_panel(self) -> None:
+        if not hasattr(self, "_splitter"):
+            return
+        if self._sidebar_panel_hidden:
+            self._set_sidebar_panel_visible(True)
+            return
+        sizes = self._splitter.sizes()
+        if len(sizes) < 2:
+            return
+        total = sum(sizes)
+        if total <= 0:
+            return
+        step = 120
+        current_sidebar = max(0, sizes[1])
+        target_sidebar = max(DEFAULT_SIDEBAR_PANEL_WIDTH, current_sidebar - step)
+        target_video = max(0, total - target_sidebar)
+        if hasattr(self, "_settings_scroll"):
+            self._settings_scroll.setMinimumWidth(DEFAULT_SIDEBAR_PANEL_WIDTH)
+        self._sidebar_panel_sizes = [target_video, target_sidebar]
+        self._splitter.setSizes(self._sidebar_panel_sizes)
+        self._apply_media_aspect_ratio()
+        sidebar_percent = int(round(target_sidebar / total * 100))
+        video_percent = max(0, 100 - sidebar_percent)
+        self.statusBar().showMessage(
+            self._tr("status_panel_ratio").format(video=video_percent, sidebar=sidebar_percent)
+        )
 
     def _media_controls_height(self) -> int:
         if not hasattr(self, "_controls") or self._controls.isHidden():
@@ -936,9 +1168,10 @@ class PlayerMediaMixin:
                 self._controls.show()
             self._set_header_controls_visible(True)
             self._sidebar_panel_hidden = False
-            self._splitter.setSizes(self._sidebar_panel_sizes or [900, 460])
+            self._splitter.setSizes(self._sidebar_panel_sizes or list(DEFAULT_SIDEBAR_PANEL_SIZES))
             self._panel_toggle_button.setText("")
             self._panel_toggle_button.setProperty("i18n_key", None)
+            self._set_panel_toggle_icon(panel_visible=True)
             self.statusBar().showMessage(self._tr("status_panel_shown"))
         else:
             sizes = self._splitter.sizes()
@@ -954,6 +1187,7 @@ class PlayerMediaMixin:
             self._sidebar_panel_hidden = True
             self._panel_toggle_button.setText("")
             self._panel_toggle_button.setProperty("i18n_key", None)
+            self._set_panel_toggle_icon(panel_visible=False)
             self.statusBar().showMessage(self._tr("status_panel_hidden"))
         self._apply_media_aspect_ratio()
         QTimer.singleShot(0, self._apply_media_aspect_ratio)
@@ -964,15 +1198,17 @@ class PlayerMediaMixin:
             self._source_bar.show()
         if hasattr(self, "_settings_scroll"):
             self._settings_scroll.show()
+            self._settings_scroll.setMinimumWidth(DEFAULT_SIDEBAR_PANEL_WIDTH)
         if hasattr(self, "_controls"):
             self._controls.show()
         self._set_header_controls_visible(True)
         self._sidebar_panel_hidden = False
-        self._sidebar_panel_sizes = [900, 460]
-        self._splitter.setSizes([900, 460])
+        self._sidebar_panel_sizes = list(DEFAULT_SIDEBAR_PANEL_SIZES)
+        self._splitter.setSizes(list(DEFAULT_SIDEBAR_PANEL_SIZES))
         if hasattr(self, "_panel_toggle_button"):
             self._panel_toggle_button.setText("")
             self._panel_toggle_button.setProperty("i18n_key", None)
+            self._set_panel_toggle_icon(panel_visible=True)
         self._apply_media_aspect_ratio()
         QTimer.singleShot(0, self._apply_media_aspect_ratio)
         if show_status:

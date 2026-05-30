@@ -51,12 +51,54 @@ def test_should_resolve_with_ytdlp(url: str, expected: bool) -> None:
         "https://video.example.test/watch/demo",
         "https://sub.video.example.test/watch/demo",
         "https://another.example.test/show/demo",
+        "https://media.internal/watch/demo",
+        "https://cdn.media.internal/watch/demo",
     ],
 )
 def test_should_resolve_extra_ytdlp_hosts_when_configured(monkeypatch, url: str) -> None:
-    monkeypatch.setenv("AI_PLAYER_EXTRA_YTDLP_HOSTS", "video.example.test,another.example.test")
+    monkeypatch.setenv(
+        "AI_PLAYER_EXTRA_YTDLP_HOSTS",
+        "video.example.test,another.example.test,*.internal,*.media.internal",
+    )
 
     assert video_source._should_resolve_with_ytdlp(url) is True
+
+
+def test_should_resolve_private_plugin_extractor_without_extra_hosts(monkeypatch) -> None:
+    monkeypatch.delenv("AI_PLAYER_EXTRA_YTDLP_HOSTS", raising=False)
+    monkeypatch.setattr(video_source, "_has_plugin_ytdlp_extractor", lambda value: "private.example" in value)
+
+    assert video_source._should_resolve_with_ytdlp("https://private.example/watch/demo") is True
+
+
+def test_plugin_ytdlp_extractors_only_keeps_plugin_classes(monkeypatch) -> None:
+    class PluginIE:
+        IE_NAME = "private"
+        __module__ = "yt_dlp_plugins.extractor.private_site"
+
+    class BuiltinIE:
+        IE_NAME = "builtin"
+        __module__ = "yt_dlp.extractor.builtin_site"
+
+    class GenericIE:
+        IE_NAME = "generic"
+        __module__ = "yt_dlp_plugins.extractor.generic"
+
+    class FakeYoutubeDL:
+        def __init__(self, _options) -> None:
+            self._ies = {
+                "Private": PluginIE,
+                "Builtin": BuiltinIE,
+                "Generic": GenericIE,
+            }
+
+    fake_ytdlp = SimpleNamespace(YoutubeDL=FakeYoutubeDL)
+    monkeypatch.setitem(sys.modules, "yt_dlp", fake_ytdlp)
+    video_source._plugin_ytdlp_extractors.cache_clear()
+    try:
+        assert video_source._plugin_ytdlp_extractors() == (PluginIE,)
+    finally:
+        video_source._plugin_ytdlp_extractors.cache_clear()
 
 
 @pytest.mark.parametrize(
@@ -64,12 +106,28 @@ def test_should_resolve_extra_ytdlp_hosts_when_configured(monkeypatch, url: str)
     [
         ("video.example.test", "video.example.test"),
         ("https://www.video.example.test/watch/demo", "video.example.test"),
-        ("*.video.example.test", "video.example.test"),
+        ("*.video.example.test", "*.video.example.test"),
+        ("video.*", "video.*"),
         ("", ""),
     ],
 )
 def test_normalize_extra_ytdlp_host(value: str, expected: str) -> None:
     assert video_source._normalize_extra_ytdlp_host(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("host", "domain", "expected"),
+    [
+        ("video.example.test", "video.example.test", True),
+        ("sub.video.example.test", "video.example.test", True),
+        ("video.example.test", "*.example.test", True),
+        ("sub.video.example.test", "*.example.test", False),
+        ("video.example.test", "video.*", False),
+        ("video.internal", "*.internal", True),
+    ],
+)
+def test_host_matches_supports_extra_host_wildcards(host: str, domain: str, expected: bool) -> None:
+    assert video_source._host_matches(host, domain) is expected
 
 
 @pytest.mark.parametrize(
@@ -118,6 +176,8 @@ def test_resolve_page_url_without_full_cache_returns_stream_url(monkeypatch) -> 
                 "id": "demo",
                 "title": "Demo",
                 "url": "https://cdn.example.test/demo.mp4",
+                "width": 1080,
+                "height": 1920,
             }
 
     monkeypatch.setitem(sys.modules, "yt_dlp", SimpleNamespace(YoutubeDL=FakeYoutubeDL))
@@ -127,9 +187,76 @@ def test_resolve_page_url_without_full_cache_returns_stream_url(monkeypatch) -> 
     assert source.playback_url == "https://cdn.example.test/demo.mp4"
     assert source.title == "Demo"
     assert source.provider == "youtube"
+    assert (source.width, source.height) == (1080, 1920)
     assert captured_options["skip_download"] is True
     assert "outtmpl" not in captured_options
     assert "progress_hooks" not in captured_options
+
+
+def test_resolve_telegram_limits_ytdlp_extractors(monkeypatch) -> None:
+    captured_options = {}
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            captured_options.update(options)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, url, download):
+            assert url == "https://t.me/demo/123"
+            assert download is False
+            return {
+                "id": "123",
+                "title": "Telegram demo",
+                "url": "https://cdn.example.test/telegram.mp4",
+            }
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", SimpleNamespace(YoutubeDL=FakeYoutubeDL))
+
+    source = video_source.resolve_video_source("https://t.me/demo/123", full_cache=False)
+
+    assert source.playback_url == "https://cdn.example.test/telegram.mp4"
+    assert source.provider == "telegram"
+    assert captured_options["allowed_extractors"] == ["telegram:embed"]
+
+
+@pytest.mark.parametrize("full_cache", [False, True])
+def test_resolve_page_url_rejects_empty_ytdlp_info(monkeypatch, full_cache: bool) -> None:
+    class FakeYoutubeDL:
+        def __init__(self, _options):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _url, download):
+            assert download is full_cache
+            return None
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", SimpleNamespace(YoutubeDL=FakeYoutubeDL))
+
+    with pytest.raises(video_source.VideoSourceError) as exc_info:
+        video_source.resolve_video_source("https://t.me/demo/123", full_cache=full_cache, language_id="en")
+
+    assert "Could not read video information from telegram" in str(exc_info.value)
+
+
+def test_video_dimensions_from_info_uses_requested_formats() -> None:
+    assert video_source._video_dimensions_from_info(
+        {
+            "requested_formats": [
+                {"vcodec": "h264", "width": 720, "height": 1280},
+                {"acodec": "aac"},
+            ]
+        }
+    ) == (720, 1280)
 
 
 def test_resolve_page_url_cleans_ytdlp_color_codes(monkeypatch) -> None:

@@ -195,18 +195,18 @@ class PlayerUiMixin:
         self.setStyleSheet(
             """
             QMainWindow, QWidget#root {
-                background: #f4f6f8;
+                background: #ffffff;
                 color: #172033;
                 font-family: "Segoe UI Variable", "Segoe UI", "Arial";
                 font-size: 9pt;
             }
             QFrame#sourceBar {
-                background: #fbfcfd;
+                background: #ffffff;
                 border: 1px solid #d8dee7;
                 border-radius: 8px;
             }
             QFrame#videoPanel {
-                background: #fbfcfd;
+                background: #ffffff;
                 border: 1px solid #d8dee7;
                 border-radius: 8px;
             }
@@ -216,29 +216,30 @@ class PlayerUiMixin:
                 border-radius: 0;
             }
             QFrame#sidePanel {
-                background: #fbfcfd;
+                background: #ffffff;
                 border: 1px solid #d8dee7;
                 border-radius: 8px;
             }
             QFrame#mediaFrame {
-                background: #0b1020;
-                border: 1px solid #111827;
-                border-radius: 8px;
+                background: #ffffff;
+                border: 0;
+                border-radius: 0;
             }
             QFrame#mediaFrame[focusMedia="true"] {
                 border: 0;
                 border-radius: 0;
             }
             QFrame#videoPlaceholder {
-                background: #0b1020;
-                border-radius: 8px;
+                background: #ffffff;
+                border-radius: 0;
             }
             QFrame#videoPlaceholder[focusMedia="true"] {
                 border-radius: 0;
             }
             QStackedWidget#mediaStack {
-                background: #0b1020;
-                border-radius: 8px;
+                background: #ffffff;
+                border: 0;
+                border-radius: 0;
             }
             QStackedWidget#mediaStack[focusMedia="true"] {
                 border-radius: 0;
@@ -294,6 +295,34 @@ class PlayerUiMixin:
             QVideoWidget#videoSurface {
                 background: #0b1020;
                 border-radius: 8px;
+            }
+            QFrame#telegramChannelView, QWidget#telegramChannelSidePanel {
+                background: #ffffff;
+            }
+            QListWidget#telegramChannelList {
+                background: #ffffff;
+                border: 1px solid #d8dee7;
+                border-radius: 7px;
+                outline: 0;
+                alternate-background-color: #f8fafc;
+            }
+            QListWidget#telegramChannelList::item {
+                color: #172033;
+                background: transparent;
+                border: 2px solid transparent;
+                border-radius: 7px;
+                padding: 6px 8px;
+                margin: 2px;
+            }
+            QListWidget#telegramChannelList::item:selected,
+            QListWidget#telegramChannelList::item:selected:active,
+            QListWidget#telegramChannelList::item:selected:!active {
+                color: #172033;
+                background: transparent;
+                border: 2px solid #0b76d1;
+            }
+            QListWidget#telegramChannelList::item:hover {
+                border-color: #8fbce8;
             }
             QFrame#controls {
                 background: #ffffff;
@@ -410,7 +439,7 @@ class PlayerUiMixin:
             }
             QComboBox:disabled, QLineEdit:disabled {
                 color: #8a96a6;
-                background: #f4f6f8;
+                background: #ffffff;
             }
             QCheckBox {
                 color: #172033;
@@ -464,7 +493,7 @@ class PlayerUiMixin:
                 font-weight: 600;
             }
             QStatusBar {
-                background: #f4f6f8;
+                background: #ffffff;
                 color: #56657a;
                 border-top: 1px solid #d8dee7;
             }

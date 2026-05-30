@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt, QUrl
 from PySide6.QtGui import QColor, QKeySequence, QPainter, QPalette, QShortcut
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QSlider,
@@ -23,6 +25,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+try:
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+except ImportError:
+    QWebEngineView = None
 
 from ai_player.core.runtime_catalog import (
     available_asr_models,
@@ -43,12 +50,16 @@ from ai_player.services.source_voice_filter import (
 from ai_player.services.speaker_voice_selector import normalize_voice_gender_mode
 from ai_player.services.translation import normalize_translator_provider
 from ai_player.services.tts import available_tts_providers, available_vieneu_modes, normalize_tts_provider
+from ai_player.ui.player_window_media import DEFAULT_SIDEBAR_PANEL_SIZES, DEFAULT_SIDEBAR_PANEL_WIDTH
 from ai_player.ui.player_window_utils import (
     dropdown_options as _dropdown_options,
 )
 from ai_player.ui.player_window_utils import (
     ui_label as _ui_label,
 )
+
+DEFAULT_MEDIA_HOME_URL = "https://www.google.com"
+DEFAULT_MEDIA_ASPECT_RATIO = "16:9"
 
 
 class SubtitleOverlayLabel(QLabel):
@@ -133,10 +144,18 @@ class PlayerLayoutMixin:
         self._video_fullscreen_button.setToolTip(self._tr("fullscreen_tooltip"))
         self._video_fullscreen_button.setProperty("i18n_tooltip_key", "fullscreen_tooltip")
         self._video_fullscreen_button.clicked.connect(self._toggle_video_fullscreen)
-        self._panel_toggle_button = self._icon_button(QStyle.StandardPixmap.SP_ArrowRight, "panel_hide")
+        self._panel_toggle_button = self._icon_button(QStyle.StandardPixmap.SP_TitleBarShadeButton, "panel_hide")
         self._panel_toggle_button.setToolTip(self._tr("panel_toggle_tooltip"))
         self._panel_toggle_button.setProperty("i18n_tooltip_key", "panel_toggle_tooltip")
         self._panel_toggle_button.clicked.connect(self._toggle_sidebar_panel)
+        self._panel_expand_button = self._icon_button(QStyle.StandardPixmap.SP_ArrowLeft, "sidebar_wider")
+        self._panel_expand_button.setToolTip(self._tr("sidebar_wider_tooltip"))
+        self._panel_expand_button.setProperty("i18n_tooltip_key", "sidebar_wider_tooltip")
+        self._panel_expand_button.clicked.connect(self._expand_sidebar_panel)
+        self._panel_collapse_button = self._icon_button(QStyle.StandardPixmap.SP_ArrowRight, "sidebar_narrower")
+        self._panel_collapse_button.setToolTip(self._tr("sidebar_narrower_tooltip"))
+        self._panel_collapse_button.setProperty("i18n_tooltip_key", "sidebar_narrower_tooltip")
+        self._panel_collapse_button.clicked.connect(self._collapse_sidebar_panel)
         self._layout_reset_button = self._icon_button(QStyle.StandardPixmap.SP_DialogResetButton, "reset")
         self._layout_reset_button.setToolTip(self._tr("reset_tooltip"))
         self._layout_reset_button.setProperty("i18n_tooltip_key", "reset_tooltip")
@@ -158,6 +177,8 @@ class PlayerLayoutMixin:
         source_layout.addWidget(self._source_label, 1)
         source_layout.addWidget(self._video_fullscreen_button)
         source_layout.addWidget(self._panel_toggle_button)
+        source_layout.addWidget(self._panel_expand_button)
+        source_layout.addWidget(self._panel_collapse_button)
         source_layout.addWidget(self._layout_reset_button)
         source_layout.addWidget(self._help_button)
         source_layout.addWidget(self._open_file_button)
@@ -168,6 +189,8 @@ class PlayerLayoutMixin:
         source_layout.addWidget(self._ui_language_combo)
         self._header_controls = (
             self._video_fullscreen_button,
+            self._panel_expand_button,
+            self._panel_collapse_button,
             self._layout_reset_button,
             self._help_button,
             self._open_file_button,
@@ -190,10 +213,15 @@ class PlayerLayoutMixin:
         self._video_widget.setStyleSheet("background-color: #0f172a;")
         self._video_widget.setAutoFillBackground(True)
         self._video_widget.installEventFilter(self)
-        self._video_placeholder = QFrame()
+        if QWebEngineView is not None:
+            self._video_placeholder = QWebEngineView()
+            self._video_placeholder.setUrl(QUrl(DEFAULT_MEDIA_HOME_URL))
+        else:
+            self._video_placeholder = QFrame()
         self._video_placeholder.setObjectName("videoPlaceholder")
         self._video_placeholder.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._video_placeholder.setAutoFillBackground(True)
+        if hasattr(self._video_placeholder, "setAutoFillBackground"):
+            self._video_placeholder.setAutoFillBackground(True)
         self._video_placeholder.installEventFilter(self)
         self._document_view = QTextEdit()
         self._document_view.setObjectName("documentView")
@@ -204,8 +232,107 @@ class PlayerLayoutMixin:
         self._document_view.installEventFilter(self)
         self._document_view.document().setDocumentMargin(0)
         self._document_view.setPlaceholderText(self._tr("document_placeholder"))
+        self._telegram_channel_view = QFrame()
+        self._telegram_channel_view.setObjectName("telegramChannelView")
+        self._telegram_channel_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._telegram_channel_view.installEventFilter(self)
+        telegram_layout = QVBoxLayout(self._telegram_channel_view)
+        telegram_layout.setContentsMargins(0, 0, 0, 0)
+        telegram_layout.setSpacing(0)
+        self._telegram_channel_title = QLabel(self._tr("telegram_channel_browser_title"))
+        self._telegram_channel_title.setObjectName("telegramChannelTitle")
+        self._telegram_channel_title.setWordWrap(True)
+        self._telegram_channel_title.hide()
+        self._telegram_channel_status = QLabel("")
+        self._telegram_channel_status.setObjectName("telegramChannelStatus")
+        self._telegram_channel_status.setWordWrap(True)
+        self._telegram_channel_status.hide()
+        telegram_tools = QHBoxLayout()
+        telegram_tools.setContentsMargins(0, 0, 0, 0)
+        telegram_tools.setSpacing(8)
+        self._telegram_channel_search = QLineEdit()
+        self._telegram_channel_search.setObjectName("telegramChannelSearch")
+        self._telegram_channel_search.setFixedHeight(36)
+        self._telegram_channel_search.setMinimumWidth(0)
+        self._telegram_channel_search.setPlaceholderText(self._tr("telegram_channel_search"))
+        self._telegram_channel_search.setProperty("i18n_key", "telegram_channel_search")
+        self._telegram_channel_search.textChanged.connect(self._filter_telegram_channel_items)
+        self._telegram_channel_search.returnPressed.connect(self._refresh_current_telegram_channel)
+        self._telegram_channel_filter_combo = QComboBox()
+        self._telegram_channel_filter_combo.setObjectName("telegramChannelFilter")
+        self._telegram_channel_filter_combo.setFixedSize(96, 36)
+        for value, key in (
+            ("all", "telegram_filter_all"),
+            ("video", "telegram_filter_video"),
+            ("photo", "telegram_filter_photo"),
+            ("document", "telegram_filter_document"),
+            ("audio", "telegram_filter_audio"),
+            ("text", "telegram_filter_text"),
+        ):
+            self._telegram_channel_filter_combo.addItem(self._tr(key), value)
+        self._telegram_channel_filter_combo.currentIndexChanged.connect(self._filter_telegram_channel_items)
+        self._telegram_channel_load_more_button = QPushButton(self._tr("telegram_channel_load_more"))
+        self._telegram_channel_load_more_button.setFixedSize(96, 36)
+        self._telegram_channel_load_more_button.setProperty("i18n_key", "telegram_channel_load_more")
+        self._telegram_channel_load_more_button.clicked.connect(self._load_more_current_telegram_channel)
+        telegram_tools.addWidget(self._telegram_channel_search, 1)
+        telegram_tools.addWidget(self._telegram_channel_filter_combo)
+        telegram_tools.addWidget(self._telegram_channel_load_more_button)
+        self._telegram_channel_list = QListWidget()
+        self._telegram_channel_list.setObjectName("telegramChannelList")
+        self._telegram_channel_list.setAlternatingRowColors(True)
+        self._telegram_channel_list.setIconSize(QSize(96, 96))
+        self._telegram_channel_list.setMinimumHeight(112)
+        self._telegram_channel_list.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self._telegram_channel_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._telegram_channel_list.setWordWrap(True)
+        self._telegram_channel_list.installEventFilter(self)
+        self._telegram_channel_list.currentItemChanged.connect(self._telegram_channel_selection_changed)
+        self._telegram_channel_list.itemDoubleClicked.connect(self._telegram_channel_item_activated)
+        self._telegram_channel_preview = QTextEdit()
+        self._telegram_channel_preview.setObjectName("telegramChannelPreview")
+        self._telegram_channel_preview.setReadOnly(True)
+        self._telegram_channel_preview.installEventFilter(self)
+        self._telegram_channel_preview.hide()
+        self._telegram_channel_thumbnail = QLabel()
+        self._telegram_channel_thumbnail.setObjectName("telegramChannelThumbnail")
+        self._telegram_channel_thumbnail.setAlignment(Qt.AlignCenter)
+        self._telegram_channel_thumbnail.setMinimumSize(360, 360)
+        self._telegram_channel_thumbnail.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._telegram_channel_thumbnail.setScaledContents(False)
+        self._telegram_channel_thumbnail.installEventFilter(self)
+        self._telegram_channel_thumbnail.hide()
+        telegram_buttons = QHBoxLayout()
+        telegram_buttons.setContentsMargins(0, 0, 0, 0)
+        telegram_buttons.setSpacing(8)
+        self._telegram_channel_open_button = QPushButton(self._tr("telegram_channel_open_item"))
+        self._telegram_channel_open_button.setFixedHeight(36)
+        self._telegram_channel_open_button.setProperty("i18n_key", "telegram_channel_open_item")
+        self._telegram_channel_open_button.clicked.connect(self._open_selected_telegram_channel_item)
+        self._telegram_channel_login_button = QPushButton(self._tr("telegram_channel_login"))
+        self._telegram_channel_login_button.setFixedHeight(36)
+        self._telegram_channel_login_button.setProperty("i18n_key", "telegram_channel_login")
+        self._telegram_channel_login_button.clicked.connect(self._telegram_login_for_current_channel)
+        self._telegram_channel_refresh_button = QPushButton(self._tr("telegram_channel_refresh"))
+        self._telegram_channel_refresh_button.setFixedHeight(36)
+        self._telegram_channel_refresh_button.setProperty("i18n_key", "telegram_channel_refresh")
+        self._telegram_channel_refresh_button.clicked.connect(self._refresh_current_telegram_channel)
+        telegram_buttons.addWidget(self._telegram_channel_open_button, 1)
+        telegram_buttons.addWidget(self._telegram_channel_login_button, 1)
+        telegram_buttons.addWidget(self._telegram_channel_refresh_button, 1)
+        self._telegram_channel_side_panel = QWidget()
+        self._telegram_channel_side_panel.setObjectName("telegramChannelSidePanel")
+        self._telegram_channel_side_panel.setMinimumWidth(320)
+        self._telegram_channel_side_panel.setMaximumWidth(16777215)
+        telegram_side_layout = QVBoxLayout(self._telegram_channel_side_panel)
+        telegram_side_layout.setContentsMargins(12, 12, 12, 12)
+        telegram_side_layout.setSpacing(8)
+        telegram_side_layout.addLayout(telegram_tools)
+        telegram_side_layout.addWidget(self._telegram_channel_list, 1)
+        telegram_side_layout.addLayout(telegram_buttons)
+        telegram_layout.addWidget(self._telegram_channel_side_panel, 1)
         self._aspect_combo = self._option_combo(
-            _dropdown_options("video_aspects", self._config.gui_language), self._config.video_aspect_ratio
+            _dropdown_options("video_aspects", self._config.gui_language), DEFAULT_MEDIA_ASPECT_RATIO
         )
         self._aspect_combo.setFixedWidth(80)
         self._aspect_combo.currentIndexChanged.connect(self._video_aspect_changed)
@@ -226,6 +353,7 @@ class PlayerLayoutMixin:
         self._media_stack.addWidget(self._video_placeholder)
         self._media_stack.addWidget(self._video_widget)
         self._media_stack.addWidget(self._document_view)
+        self._media_stack.addWidget(self._telegram_channel_view)
         self._media_stack.setCurrentWidget(self._video_placeholder)
         self._media_stack.installEventFilter(self)
         self._media_frame = QFrame()
@@ -272,9 +400,22 @@ class PlayerLayoutMixin:
         self._stop_button = self._icon_button(QStyle.StandardPixmap.SP_MediaStop, "stop")
         self._stop_button.clicked.connect(self._stop)
         self._previous_page_button = self._icon_button(QStyle.StandardPixmap.SP_MediaSkipBackward, "previous")
-        self._previous_page_button.clicked.connect(self._previous_document_page)
+        self._previous_page_button.clicked.connect(self._previous_media_item)
         self._next_page_button = self._icon_button(QStyle.StandardPixmap.SP_MediaSkipForward, "next")
-        self._next_page_button.clicked.connect(self._next_document_page)
+        self._next_page_button.clicked.connect(self._next_media_item)
+        self._media_home_button = QPushButton(self.style().standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon), "")
+        self._media_home_button.setObjectName("mediaHomeButton")
+        self._media_home_button.setProperty("i18n_tooltip_key", "google_home_tooltip")
+        self._media_home_button.setToolTip(self._tr("google_home_tooltip"))
+        self._media_home_button.setFixedSize(32, 32)
+        self._media_home_button.clicked.connect(self._open_media_home)
+        self._telegram_browser_button = QPushButton(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack), "")
+        self._telegram_browser_button.setObjectName("telegramBrowserButton")
+        self._telegram_browser_button.setProperty("i18n_key", "telegram_channel_back")
+        self._telegram_browser_button.setProperty("i18n_tooltip_key", "telegram_channel_back")
+        self._telegram_browser_button.setToolTip(self._tr("telegram_channel_back"))
+        self._telegram_browser_button.clicked.connect(self._return_to_telegram_channel_browser)
+        self._telegram_browser_button.hide()
         self._subtitle_mode_combo = QComboBox()
         self._subtitle_mode_combo.addItem("...", "off")
         self._subtitle_mode_combo.addItem(self._tr("source"), "source")
@@ -374,12 +515,14 @@ class PlayerLayoutMixin:
         timeline_layout.addWidget(self._audio_slider_control("original_audio", self._volume_slider))
 
         playback_layout = QHBoxLayout()
-        playback_layout.setSpacing(5)
+        playback_layout.setSpacing(3)
         playback_layout.addWidget(self._play_button)
         playback_layout.addWidget(self._pause_button)
         playback_layout.addWidget(self._stop_button)
         playback_layout.addWidget(self._previous_page_button)
         playback_layout.addWidget(self._next_page_button)
+        playback_layout.addWidget(self._media_home_button)
+        playback_layout.addWidget(self._telegram_browser_button)
         playback_layout.addSpacing(2)
         playback_layout.addWidget(self._aspect_combo)
         playback_layout.addWidget(self._playback_quality_combo)
@@ -1110,7 +1253,7 @@ class PlayerLayoutMixin:
 
         settings_panel = QFrame()
         settings_panel.setObjectName("sidePanel")
-        settings_panel.setMinimumWidth(300)
+        settings_panel.setMinimumWidth(DEFAULT_SIDEBAR_PANEL_WIDTH)
         settings_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         settings_layout = QVBoxLayout(settings_panel)
         settings_layout.setContentsMargins(12, 12, 12, 12)
@@ -1210,9 +1353,9 @@ class PlayerLayoutMixin:
         self._splitter = QSplitter(Qt.Horizontal)
         self._splitter.addWidget(video_panel)
         self._splitter.addWidget(self._settings_scroll)
-        self._splitter.setStretchFactor(0, 5)
-        self._splitter.setStretchFactor(1, 2)
-        self._splitter.setSizes([900, 460])
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 0)
+        self._splitter.setSizes(list(DEFAULT_SIDEBAR_PANEL_SIZES))
 
         root = QVBoxLayout()
         self._root_layout = root
@@ -1226,6 +1369,50 @@ class PlayerLayoutMixin:
         container.setLayout(root)
         self.setCentralWidget(container)
         self.setStatusBar(QStatusBar(self))
+        self._media_stack.currentChanged.connect(lambda *_args: self._sync_media_browser_state())
+        url_changed = getattr(self._video_placeholder, "urlChanged", None)
+        if url_changed is not None:
+            url_changed.connect(lambda *_args: self._sync_media_browser_state())
+        self._sync_media_browser_state()
+
+    def _sync_media_browser_state(self) -> None:
+        self._sync_media_home_button()
+        self._sync_media_browser_address()
+
+    def _open_media_home(self) -> None:
+        if not hasattr(self, "_video_placeholder"):
+            return
+        set_url = getattr(self._video_placeholder, "setUrl", None)
+        if callable(set_url):
+            set_url(QUrl(DEFAULT_MEDIA_HOME_URL))
+        if hasattr(self, "_media_stack"):
+            self._media_stack.setCurrentWidget(self._video_placeholder)
+        self._sync_media_browser_state()
+
+    def _sync_media_home_button(self) -> None:
+        button = getattr(self, "_media_home_button", None)
+        media_stack = getattr(self, "_media_stack", None)
+        placeholder = getattr(self, "_video_placeholder", None)
+        if button is None or media_stack is None or placeholder is None:
+            return
+        button.setVisible(
+            media_stack.currentWidget() is placeholder and callable(getattr(placeholder, "setUrl", None))
+        )
+
+    def _sync_media_browser_address(self) -> None:
+        media_stack = getattr(self, "_media_stack", None)
+        placeholder = getattr(self, "_video_placeholder", None)
+        source_label = getattr(self, "_source_label", None)
+        if media_stack is None or placeholder is None or source_label is None:
+            return
+        if media_stack.currentWidget() is not placeholder:
+            return
+        url_getter = getattr(placeholder, "url", None)
+        if not callable(url_getter):
+            source_label.setText(self._tr("source_empty"))
+            return
+        url = url_getter().toString()
+        source_label.setText(url or self._tr("source_empty"))
 
     def _apply_control_tooltips(self) -> None:
         tooltips = (

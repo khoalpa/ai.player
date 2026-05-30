@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QMainWindow,
@@ -22,7 +23,7 @@ from ai_player.ui.player_window_dubbing import PlayerDubbingMixin
 from ai_player.ui.player_window_export import PlayerExportMixin
 from ai_player.ui.player_window_layout import PlayerLayoutMixin
 from ai_player.ui.player_window_lifecycle import PlayerLifecycleMixin
-from ai_player.ui.player_window_media import PlayerMediaMixin
+from ai_player.ui.player_window_media import DEFAULT_SIDEBAR_PANEL_SIZES, PlayerMediaMixin
 from ai_player.ui.player_window_meeting import PlayerMeetingMixin
 from ai_player.ui.player_window_offline_models import PlayerOfflineModelsMixin
 from ai_player.ui.player_window_runtime import PlayerRuntimeMixin
@@ -82,6 +83,7 @@ class PlayerWindow(
         self._media_frame_layout = None
         self._media_frame_index = -1
         self._media_frame_alignment = Qt.AlignmentFlag(0)
+        self._media_frame_detached_for_fullscreen = False
         self._document_mode = False
         self._document_elapsed_ms = 0
         self._document_started_at: float | None = None
@@ -101,7 +103,7 @@ class PlayerWindow(
         self._video_url = VideoUrlController(self)
         self._runtime_warmup = RuntimeWarmupController(self)
         self._sidebar_panel_hidden = False
-        self._sidebar_panel_sizes: list[int] = [900, 460]
+        self._sidebar_panel_sizes: list[int] = list(DEFAULT_SIDEBAR_PANEL_SIZES)
         self._is_seeking = False
         self._video_delay_timer = QTimer(self)
         self._video_delay_timer.setSingleShot(True)
@@ -112,6 +114,17 @@ class PlayerWindow(
         self._export_terminal = False
         self._cache_dialog: CacheProgressDialog | None = None
         self._dubbing_auto_enabled = self._config.dubbing_enabled_by_default
+        self._telegram_channel_items = []
+        self._telegram_channel_all_items = []
+        self._telegram_channel_authenticated = False
+        self._pending_telegram_post_id = ""
+        self._current_telegram_channel_item = None
+        self._current_telegram_post_id = ""
+        self._current_telegram_url = ""
+        self._pending_telegram_navigation_direction = 0
+        self._pending_telegram_autoplay = False
+        self._telegram_browser_return_available = False
+        self._telegram_channel_thumbnail_source = QPixmap()
         self._settings_save_timer = QTimer(self)
         self._settings_save_timer.setSingleShot(True)
         self._settings_save_timer.setInterval(600)
@@ -123,7 +136,7 @@ class PlayerWindow(
         self._apply_theme()
         self._build_ui()
         self._retranslate_ui()
-        self._player = VideoPlayer(self._video_widget)
+        self._player = VideoPlayer(self._video_widget, self)
         self._player.set_volume(self._volume_slider.value())
 
         self._timer = QTimer(self)

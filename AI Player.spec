@@ -21,6 +21,12 @@ include_extra_ytdlp_plugins = os.getenv("AI_PLAYER_INCLUDE_EXTRA_YTDLP_PLUGINS",
     "yes",
     "on",
 }
+include_private_telegram_plugin = os.getenv("AI_PLAYER_INCLUDE_PRIVATE_TELEGRAM_PLUGIN", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 tmp_ret = collect_all("edge_tts")
 datas += tmp_ret[0]
@@ -29,8 +35,10 @@ hiddenimports += tmp_ret[2]
 if include_extra_ytdlp_plugins and find_spec("yt_dlp_plugins") is not None:
     hiddenimports += collect_submodules("yt_dlp_plugins")
 
-if find_spec("telethon") is not None:
-    hiddenimports += collect_submodules("telethon")
+if include_private_telegram_plugin and find_spec("ai_player_telegram_client") is not None:
+    hiddenimports += collect_submodules("ai_player_telegram_client")
+    if find_spec("telethon") is not None:
+        hiddenimports += collect_submodules("telethon")
 
 
 def _runtime_module(module_name):
