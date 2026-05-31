@@ -403,9 +403,19 @@ class PlayerSettingsMixin:
         config = replace(
             self._config,
             gui_language=self._selected_gui_language(),
+            telegram_blacklisted_item_keys=tuple(sorted(self._telegram_channel_state.blacklisted_item_keys)),
+            telegram_blacklisted_content_keys=tuple(sorted(self._telegram_channel_state.blacklisted_content_keys)),
+            telegram_auto_open_videos=self._telegram_auto_open_enabled(),
+            telegram_last_url=self._telegram_last_url_for_settings(),
+            telegram_last_post_id=self._telegram_last_post_id_for_settings(),
+            telegram_last_search=self._telegram_last_search_for_settings(),
+            telegram_last_filter=self._telegram_last_filter_for_settings(),
+            telegram_side_panel_visible=bool(getattr(self, "_telegram_side_panel_visible", True)),
+            telegram_side_panel_sizes=self._telegram_side_panel_sizes_for_settings(),
             video_aspect_ratio=self._selected_video_aspect_ratio(),
             playback_video_quality=self._selected_playback_video_quality(),
             video_url_full_cache=self._selected_video_url_full_cache(),
+            video_url_recent_urls=self._video_url_recent_urls_for_settings(),
             audio_source=self._selected_audio_source(),
             capture_backend=self._selected_capture_backend(),
             capture_system_device=self._selected_capture_system_device(),
@@ -660,6 +670,7 @@ class PlayerSettingsMixin:
             self._source_filter_check,
             self._ocr_threshold_check,
             self._video_url_full_cache_check,
+            self._telegram_channel_auto_open_check,
         )
         for checkbox in checks:
             checkbox.toggled.connect(self._queue_save_settings)
@@ -764,6 +775,8 @@ class PlayerSettingsMixin:
             )
         if hasattr(self, "_sync_telegram_side_panel_toggle_button"):
             self._sync_telegram_side_panel_toggle_button()
+        if hasattr(self, "_sync_panel_visibility_buttons"):
+            self._sync_panel_visibility_buttons()
         self._retranslate_inline_option_combos()
 
     def _refresh_language_pack_combos(self) -> None:
@@ -853,6 +866,7 @@ class PlayerSettingsMixin:
                 ("document", "telegram_filter_document"),
                 ("audio", "telegram_filter_audio"),
                 ("text", "telegram_filter_text"),
+                ("blacklist", "telegram_filter_blacklist"),
             ):
                 self._set_combo_item_text(self._telegram_channel_filter_combo, value, self._tr(key))
         if hasattr(self, "_source_filter_model_combo"):

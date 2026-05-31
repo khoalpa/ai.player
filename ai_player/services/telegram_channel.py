@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import importlib
+import inspect
 import re
 import time
 from dataclasses import dataclass
@@ -68,11 +69,19 @@ def is_telegram_channel_url(value: str) -> bool:
     if host not in {"t.me", "telegram.me"}:
         return False
     parts = _path_parts(parsed.path)
+    if _is_private_telegram_path(parts):
+        return True
     if len(parts) == 1:
         return _valid_public_channel_name(parts[0])
     if len(parts) == 2 and parts[0] == "s":
         return _valid_public_channel_name(parts[1])
     return len(parts) == 2 and _valid_public_channel_name(parts[0]) and parts[1].isdigit()
+
+
+def is_private_telegram_url(value: str) -> bool:
+    parsed = urlparse(value.strip())
+    host = _url_host(parsed)
+    return host in {"t.me", "telegram.me"} and _is_private_telegram_path(_path_parts(parsed.path))
 
 
 def list_telegram_channel_videos(
@@ -241,16 +250,22 @@ def download_telegram_channel_video(
     post_id: str,
     config: TelegramLoginConfig,
     *,
+    progress_callback=None,
+    cancel_callback=None,
     language_id: str | None = None,
 ) -> str:
     adapter = _require_telegram_private_adapter(language_id=language_id)
+    callback = adapter.download_telegram_channel_video
+    kwargs = _supported_adapter_kwargs(
+        callback,
+        {
+            "language_id": language_id,
+            "progress_callback": progress_callback,
+            "cancel_callback": cancel_callback,
+        },
+    )
     return _retry_telegram_session_lock(
-        lambda: adapter.download_telegram_channel_video(
-            value,
-            post_id,
-            config,
-            language_id=language_id,
-        )
+        lambda: callback(value, post_id, config, **kwargs)
     )
 
 
@@ -336,6 +351,20 @@ def _require_telegram_private_adapter(*, language_id: str | None = None, require
     raise TelegramChannelError(ui_text("telegram_login_missing_private_plugin", language_id))
 
 
+def _supported_adapter_kwargs(callback, values: dict[str, object]) -> dict[str, object]:
+    try:
+        signature = inspect.signature(callback)
+    except (TypeError, ValueError):
+        return {name: value for name, value in values.items() if value is not None}
+    parameters = signature.parameters
+    accepts_kwargs = any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
+    return {
+        name: value
+        for name, value in values.items()
+        if value is not None and (accepts_kwargs or name in parameters)
+    }
+
+
 def _retry_telegram_session_lock(callback):
     for attempt in range(TELEGRAM_SESSION_LOCK_RETRIES + 1):
         try:
@@ -382,6 +411,14 @@ def _channel_name(value: str, language_id: str | None = None) -> str:
 
 def _path_parts(path: str) -> list[str]:
     return [part for part in path.strip("/").split("/") if part]
+
+
+def _is_private_telegram_path(parts: list[str]) -> bool:
+    if len(parts) == 1 and parts[0].startswith("+") and len(parts[0]) > 1:
+        return True
+    if len(parts) == 2 and parts[0] == "joinchat" and bool(parts[1]):
+        return True
+    return len(parts) == 3 and parts[0] == "c" and parts[1].isdigit() and parts[2].isdigit()
 
 
 def _valid_public_channel_name(value: str) -> bool:

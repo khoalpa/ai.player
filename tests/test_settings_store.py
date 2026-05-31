@@ -98,6 +98,38 @@ def test_load_app_config_ignores_unknown_secret_and_session_values(tmp_path, mon
     assert config.transcript_path == "base.srt"
 
 
+def test_save_and_load_app_config_round_trips_telegram_blacklist(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+
+    settings_store.save_app_config(
+        AppConfig(
+            telegram_blacklisted_item_keys=("102", "https://t.me/demo/pending"),
+            telegram_blacklisted_content_keys=("same content",),
+            telegram_auto_open_videos=False,
+            telegram_last_url="https://t.me/demo",
+            telegram_last_post_id="101",
+            telegram_last_search="needle",
+            telegram_last_filter="video",
+            telegram_side_panel_visible=False,
+            telegram_side_panel_sizes=(640, 360),
+            video_url_recent_urls=("https://example.test/a.mp4", "https://youtu.be/demo"),
+        )
+    )
+    config = settings_store.load_app_config(AppConfig())
+
+    assert config.telegram_blacklisted_item_keys == ("102", "https://t.me/demo/pending")
+    assert config.telegram_blacklisted_content_keys == ("same content",)
+    assert config.telegram_auto_open_videos is False
+    assert config.telegram_last_url == "https://t.me/demo"
+    assert config.telegram_last_post_id == "101"
+    assert config.telegram_last_search == "needle"
+    assert config.telegram_last_filter == "video"
+    assert config.telegram_side_panel_visible is False
+    assert config.telegram_side_panel_sizes == (640, 360)
+    assert config.video_url_recent_urls == ("https://example.test/a.mp4", "https://youtu.be/demo")
+
+
 def test_load_app_config_preserves_saved_tts_warmup(tmp_path, monkeypatch) -> None:
     settings_file = tmp_path / "settings.json"
     settings_file.write_text(json.dumps({"runtime_warmup_tts": True}), encoding="utf-8")

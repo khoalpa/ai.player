@@ -54,6 +54,9 @@ class VideoUrlController:
             self._worker.deleteLater()
             self._worker = None
         self.set_opening_controls(True)
+        callback = getattr(self._owner, "_video_url_finished", None)
+        if callable(callback):
+            callback()
 
     def set_opening_controls(self, enabled: bool) -> None:
         button = getattr(self._owner, "_open_url_button", None)

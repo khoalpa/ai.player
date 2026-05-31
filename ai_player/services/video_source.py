@@ -31,6 +31,16 @@ class VideoSource:
     height: int = 0
 
 
+@dataclass(frozen=True)
+class VideoUrlPreflight:
+    url: str
+    supported: bool
+    provider: str = ""
+    source_kind: str = "unsupported"
+    requires_ytdlp: bool = False
+    direct_media: bool = False
+
+
 YTDLP_PAGE_HOSTS = {
     "youtube.com",
     "m.youtube.com",
@@ -85,6 +95,8 @@ def resolve_video_source(
 
     if is_telegram_web_progressive_url(url):
         raise VideoSourceError(ui_text("video_error_telegram_web_progressive", language_id))
+    if _is_private_telegram_url(url):
+        raise VideoSourceError(ui_text("video_error_telegram_private_url", language_id))
 
     if _should_resolve_with_ytdlp(url):
         return _resolve_page_url(url, playback_quality, full_cache, progress_callback, cancel_callback, language_id)
@@ -110,6 +122,38 @@ def is_supported_browser_video_url(value: str) -> bool:
     return host in YTDLP_PAGE_HOSTS or _is_extra_ytdlp_host(host) or _has_plugin_ytdlp_extractor(value)
 
 
+def inspect_video_url(value: str) -> VideoUrlPreflight:
+    url = str(value or "").strip()
+    parsed = urlparse(url)
+    if not is_supported_video_url(url):
+        return VideoUrlPreflight(url=url, supported=False)
+    scheme = parsed.scheme.lower()
+    if is_telegram_web_progressive_url(url):
+        return VideoUrlPreflight(url=url, supported=True, provider="telegram", source_kind="telegram_web")
+    if _is_private_telegram_url(url):
+        return VideoUrlPreflight(url=url, supported=True, provider="telegram", source_kind="private_telegram")
+    if scheme not in {"http", "https"}:
+        return VideoUrlPreflight(url=url, supported=True, provider=scheme, source_kind="network_stream")
+    provider = _provider_name(url)
+    if _looks_like_direct_media_url(parsed.path):
+        return VideoUrlPreflight(
+            url=url,
+            supported=True,
+            provider=provider,
+            source_kind="direct_media",
+            direct_media=True,
+        )
+    if _should_resolve_with_ytdlp(url):
+        return VideoUrlPreflight(
+            url=url,
+            supported=True,
+            provider=provider,
+            source_kind="page",
+            requires_ytdlp=True,
+        )
+    return VideoUrlPreflight(url=url, supported=True, provider=provider, source_kind="network_stream")
+
+
 def is_telegram_web_progressive_url(value: str) -> bool:
     parsed = urlparse(value.strip())
     host = _url_host(parsed)
@@ -123,6 +167,8 @@ def _should_resolve_with_ytdlp(value: str) -> bool:
     if parsed.scheme.lower() not in {"http", "https"}:
         return False
     if _looks_like_direct_media_url(parsed.path):
+        return False
+    if _is_private_telegram_url(value):
         return False
     return host in YTDLP_PAGE_HOSTS or _is_extra_ytdlp_host(host) or _has_plugin_ytdlp_extractor(value)
 
@@ -306,6 +352,8 @@ def _format_selector(playback_quality: str) -> str:
 def _allowed_extractors(provider: str) -> list[str]:
     if provider == "telegram":
         return ["telegram:embed"]
+    if provider == "tiktok":
+        return [r"tiktok(:.*)?", r"vm\.tiktok"]
     return []
 
 
@@ -353,6 +401,19 @@ def _provider_name(value: str) -> str:
 
 def _url_host(parsed) -> str:
     return str(parsed.hostname or "").lower().removeprefix("www.")
+
+
+def _is_private_telegram_url(value: str) -> bool:
+    parsed = urlparse(str(value or "").strip())
+    host = _url_host(parsed)
+    if host not in {"t.me", "telegram.me"}:
+        return False
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if len(parts) == 1 and parts[0].startswith("+") and len(parts[0]) > 1:
+        return True
+    if len(parts) == 2 and parts[0] == "joinchat" and bool(parts[1]):
+        return True
+    return len(parts) == 3 and parts[0] == "c" and parts[1].isdigit() and parts[2].isdigit()
 
 
 def _host_matches(host: str, domain: str) -> bool:

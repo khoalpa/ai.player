@@ -211,7 +211,7 @@ class PlayerUiMixin:
                 border-radius: 8px;
             }
             QFrame#videoPanel[focusMedia="true"] {
-                background: #0b1020;
+                background: transparent;
                 border: 0;
                 border-radius: 0;
             }
@@ -292,10 +292,6 @@ class PlayerUiMixin:
                 color: #172033;
                 font-size: 8.5pt;
             }
-            QVideoWidget#videoSurface {
-                background: #0b1020;
-                border-radius: 8px;
-            }
             QFrame#telegramChannelView, QWidget#telegramChannelSidePanel {
                 background: #ffffff;
             }
@@ -328,6 +324,10 @@ class PlayerUiMixin:
                 background: #ffffff;
                 border: 1px solid #d8dee7;
                 border-radius: 8px;
+            }
+            QFrame#panelVisibilityBar {
+                background: transparent;
+                border: 0;
             }
             QTextEdit#transcript {
                 background: #ffffff;

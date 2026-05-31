@@ -190,4 +190,21 @@ def _coerce_value(value: Any, current: Any) -> Any:
         except Exception:
             return current
         return number if math.isfinite(number) else current
+    if isinstance(current, tuple):
+        if isinstance(value, str):
+            values = value.replace("\n", ",").split(",")
+        elif isinstance(value, (list, tuple, set)):
+            values = value
+        else:
+            return current
+        items = tuple(dict.fromkeys(item for raw in values if (item := str(raw or "").strip())))
+        if current and all(isinstance(item, int) and not isinstance(item, bool) for item in current):
+            coerced = []
+            for item in items:
+                try:
+                    coerced.append(int(item))
+                except (TypeError, ValueError):
+                    return current
+            return tuple(coerced)
+        return items
     return str(value) if isinstance(current, str) else value

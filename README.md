@@ -282,6 +282,7 @@ Benchmark/tiện ích:
 
 ```powershell
 .\.venv\Scripts\python.exe .\scripts\workflow_benchmark.py
+.\.venv\Scripts\python.exe .\scripts\workflow_benchmark.py --baseline data\tmp\previous-workflow-benchmark.json --max-regression-percent 35
 .\.venv\Scripts\python.exe .\scripts\compare_performance_presets.py
 .\scripts\backup_local.ps1
 ```

@@ -32,12 +32,28 @@ SAMPLE_CHANNEL_HTML = """
         ("https://t.me/s/shunv8388", True),
         ("https://telegram.me/shunv8388", True),
         ("https://t.me/shunv8388/123", True),
+        ("https://t.me/+s91pFSI1prtmZjMx", True),
+        ("https://t.me/joinchat/s91pFSI1prtmZjMx", True),
+        ("https://t.me/c/123456789/42", True),
         ("https://web.telegram.org/a/progressive/document123", False),
         ("https://example.com/shunv8388", False),
     ],
 )
 def test_is_telegram_channel_url(url: str, expected: bool) -> None:
     assert telegram_channel.is_telegram_channel_url(url) is expected
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://t.me/+s91pFSI1prtmZjMx", True),
+        ("https://t.me/joinchat/s91pFSI1prtmZjMx", True),
+        ("https://t.me/c/123456789/42", True),
+        ("https://t.me/shunv8388/123", False),
+    ],
+)
+def test_is_private_telegram_url(url: str, expected: bool) -> None:
+    assert telegram_channel.is_private_telegram_url(url) is expected
 
 
 def test_parse_telegram_channel_videos_extracts_public_video_posts() -> None:
@@ -237,6 +253,41 @@ def test_authenticated_download_retries_locked_session(monkeypatch) -> None:
     )
     assert calls == ["en", "en", "en"]
     assert sleeps == [0.35, 0.7]
+
+
+def test_authenticated_download_forwards_supported_progress_and_cancel_callbacks(monkeypatch) -> None:
+    calls = []
+    config = telegram_channel.TelegramLoginConfig(api_id=12345, api_hash="hash-secret", phone="+84901234567")
+
+    def progress(data):
+        calls.append(("progress-callback", data))
+
+    def cancelled():
+        calls.append(("cancel-callback",))
+        return False
+
+    def download(_value, _post_id, _config, *, progress_callback=None, cancel_callback=None, language_id=None):
+        calls.append(("download", progress_callback is progress, cancel_callback is cancelled, language_id))
+        progress_callback({"status": "downloading"})
+        assert cancel_callback() is False
+        return "video.mp4"
+
+    adapter = SimpleNamespace(download_telegram_channel_video=download)
+    monkeypatch.setattr(telegram_channel, "_telegram_private_adapter", lambda: adapter)
+
+    assert telegram_channel.download_telegram_channel_video(
+        "https://t.me/demo",
+        "1",
+        config,
+        progress_callback=progress,
+        cancel_callback=cancelled,
+        language_id="en",
+    ) == "video.mp4"
+    assert calls == [
+        ("download", True, True, "en"),
+        ("progress-callback", {"status": "downloading"}),
+        ("cancel-callback",),
+    ]
 
 
 def test_validate_telegram_login_config() -> None:

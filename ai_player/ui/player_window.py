@@ -82,7 +82,11 @@ class PlayerWindow(
         )
         self._media_frame_state = MediaFrameState(alignment=Qt.AlignmentFlag(0))
         self._worker_lifecycle_state = WorkerLifecycleState()
-        self._telegram_channel_state = TelegramChannelState(channel_thumbnail_source=QPixmap())
+        self._telegram_channel_state = TelegramChannelState(
+            channel_thumbnail_source=QPixmap(),
+            blacklisted_item_keys=set(self._config.telegram_blacklisted_item_keys),
+            blacklisted_content_keys=set(self._config.telegram_blacklisted_content_keys),
+        )
         self._video_path: str | None = None
         self._document_mode = False
         self._document_elapsed_ms = 0
@@ -105,21 +109,6 @@ class PlayerWindow(
         self._video_delay_timer = QTimer(self)
         self._video_delay_timer.setSingleShot(True)
         self._video_delay_timer.timeout.connect(self._finish_delayed_video_playback)
-        self._telegram_channel_items = []
-        self._telegram_channel_all_items = []
-        self._telegram_channel_authenticated = False
-        self._telegram_channel_translations: dict[str, str] = {}
-        self._pending_telegram_post_id = ""
-        self._current_telegram_channel_item = None
-        self._current_telegram_post_id = ""
-        self._current_telegram_url = ""
-        self._pending_telegram_navigation_direction = 0
-        self._pending_telegram_autoplay = False
-        self._telegram_browser_return_available = False
-        self._telegram_channel_thumbnail_source = QPixmap()
-        self._telegram_auto_load_pending_before_post_id = ""
-        self._telegram_side_panel_visible = True
-        self._telegram_side_panel_sizes: list[int] = [1, 1]
         self._settings_save_timer = QTimer(self)
         self._settings_save_timer.setSingleShot(True)
         self._settings_save_timer.setInterval(600)
@@ -378,6 +367,22 @@ class PlayerWindow(
     @_is_seeking.setter
     def _is_seeking(self, value: bool) -> None:
         self._playback_ui_state.seeking = bool(value)
+
+    @property
+    def _top_panel_hidden(self) -> bool:
+        return self._playback_ui_state.top_panel_hidden
+
+    @_top_panel_hidden.setter
+    def _top_panel_hidden(self, value: bool) -> None:
+        self._playback_ui_state.top_panel_hidden = bool(value)
+
+    @property
+    def _bottom_panel_hidden(self) -> bool:
+        return self._playback_ui_state.bottom_panel_hidden
+
+    @_bottom_panel_hidden.setter
+    def _bottom_panel_hidden(self, value: bool) -> None:
+        self._playback_ui_state.bottom_panel_hidden = bool(value)
 
     @property
     def _sidebar_panel_hidden(self) -> bool:

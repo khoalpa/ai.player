@@ -878,8 +878,15 @@ class PlayerMediaMixin:
     def _handle_escape_shortcut(self) -> None:
         if self._video_fullscreen:
             self._set_video_fullscreen(False)
+        restoring_panels = self._top_panel_hidden or self._bottom_panel_hidden or self._sidebar_panel_hidden
+        if self._top_panel_hidden:
+            self._set_top_panel_visible(True)
+        if self._bottom_panel_hidden:
+            self._set_bottom_panel_visible(True)
         if self._sidebar_panel_hidden:
             self._set_sidebar_panel_visible(True)
+        if restoring_panels:
+            self._set_focus_media_chrome(False)
 
     def _set_video_fullscreen(self, enabled: bool) -> None:
         if enabled == self._video_fullscreen:
@@ -982,6 +989,21 @@ class PlayerMediaMixin:
             getattr(self, "_telegram_channel_preview", None),
             telegram_thumbnail,
         }
+        telegram_list = getattr(self, "_telegram_channel_list", None)
+        telegram_list_viewport = telegram_list.viewport() if telegram_list is not None else None
+        if watched in {telegram_list, telegram_list_viewport}:
+            if (
+                event.type() == QEvent.Type.MouseButtonPress
+                and event.button() == Qt.MouseButton.LeftButton
+                and hasattr(self, "_handle_telegram_blacklist_button_event")
+            ):
+                return self._handle_telegram_blacklist_button_event(event, activate=False)
+            if (
+                event.type() == QEvent.Type.MouseButtonRelease
+                and event.button() == Qt.MouseButton.LeftButton
+                and hasattr(self, "_handle_telegram_blacklist_button_event")
+            ):
+                return self._handle_telegram_blacklist_button_event(event, activate=True)
         if watched in telegram_widgets and event.type() == QEvent.Type.KeyPress:
             if event.key() == Qt.Key.Key_Up and hasattr(self, "_select_adjacent_telegram_channel_video"):
                 return self._select_adjacent_telegram_channel_video(-1)
@@ -1021,6 +1043,36 @@ class PlayerMediaMixin:
     def _toggle_sidebar_panel(self) -> None:
         self._set_sidebar_panel_visible(self._sidebar_panel_hidden)
 
+    def _toggle_top_panel(self) -> None:
+        self._set_top_panel_visible(self._top_panel_hidden)
+
+    def _toggle_bottom_panel(self) -> None:
+        self._set_bottom_panel_visible(self._bottom_panel_hidden)
+
+    def _set_top_panel_visible(self, visible: bool) -> None:
+        source_bar = getattr(self, "_source_bar", None)
+        if source_bar is None:
+            return
+        source_bar.setVisible(visible)
+        self._top_panel_hidden = not visible
+        self._sync_panel_visibility_buttons()
+        self._apply_media_aspect_ratio()
+        QTimer.singleShot(0, self._apply_media_aspect_ratio)
+        key = "status_top_panel_shown" if visible else "status_top_panel_hidden"
+        self.statusBar().showMessage(self._tr(key))
+
+    def _set_bottom_panel_visible(self, visible: bool) -> None:
+        controls = getattr(self, "_controls", None)
+        if controls is None:
+            return
+        controls.setVisible(visible)
+        self._bottom_panel_hidden = not visible
+        self._sync_panel_visibility_buttons()
+        self._apply_media_aspect_ratio()
+        QTimer.singleShot(0, self._apply_media_aspect_ratio)
+        key = "status_bottom_panel_shown" if visible else "status_bottom_panel_hidden"
+        self.statusBar().showMessage(self._tr(key))
+
     def _set_panel_toggle_icon(self, *, panel_visible: bool) -> None:
         if not hasattr(self, "_panel_toggle_button"):
             return
@@ -1030,6 +1082,61 @@ class PlayerMediaMixin:
             else QStyle.StandardPixmap.SP_TitleBarUnshadeButton
         )
         self._panel_toggle_button.setIcon(self.style().standardIcon(icon))
+
+    def _sync_panel_visibility_buttons(self) -> None:
+        if hasattr(self, "_top_panel_toggle_button"):
+            self._sync_visibility_button(
+                self._top_panel_toggle_button,
+                panel_visible=not self._top_panel_hidden,
+                hide_icon=QStyle.StandardPixmap.SP_ArrowUp,
+                show_icon=QStyle.StandardPixmap.SP_ArrowDown,
+                hide_tooltip_key="top_panel_hide_tooltip",
+                show_tooltip_key="top_panel_show_tooltip",
+            )
+        if hasattr(self, "_bottom_panel_toggle_button"):
+            self._sync_visibility_button(
+                self._bottom_panel_toggle_button,
+                panel_visible=not self._bottom_panel_hidden,
+                hide_icon=QStyle.StandardPixmap.SP_ArrowDown,
+                show_icon=QStyle.StandardPixmap.SP_ArrowUp,
+                hide_tooltip_key="bottom_panel_hide_tooltip",
+                show_tooltip_key="bottom_panel_show_tooltip",
+            )
+        if hasattr(self, "_right_panel_toggle_button"):
+            self._sync_visibility_button(
+                self._right_panel_toggle_button,
+                panel_visible=not self._sidebar_panel_hidden,
+                hide_icon=QStyle.StandardPixmap.SP_ArrowRight,
+                show_icon=QStyle.StandardPixmap.SP_ArrowLeft,
+                hide_tooltip_key="right_panel_hide_tooltip",
+                show_tooltip_key="right_panel_show_tooltip",
+            )
+        if hasattr(self, "_panel_toggle_button"):
+            self._sync_visibility_button(
+                self._panel_toggle_button,
+                panel_visible=not self._sidebar_panel_hidden,
+                hide_icon=QStyle.StandardPixmap.SP_TitleBarShadeButton,
+                show_icon=QStyle.StandardPixmap.SP_TitleBarUnshadeButton,
+                hide_tooltip_key="right_panel_hide_tooltip",
+                show_tooltip_key="right_panel_show_tooltip",
+            )
+
+    def _sync_visibility_button(
+        self,
+        button,
+        *,
+        panel_visible: bool,
+        hide_icon: QStyle.StandardPixmap,
+        show_icon: QStyle.StandardPixmap,
+        hide_tooltip_key: str,
+        show_tooltip_key: str,
+    ) -> None:
+        tooltip_key = hide_tooltip_key if panel_visible else show_tooltip_key
+        icon = hide_icon if panel_visible else show_icon
+        button.setText("")
+        button.setIcon(self.style().standardIcon(icon))
+        button.setToolTip(self._tr(tooltip_key))
+        button.setProperty("i18n_tooltip_key", tooltip_key)
 
     def _expand_sidebar_panel(self) -> None:
         if not hasattr(self, "_splitter"):
@@ -1171,41 +1278,27 @@ class PlayerMediaMixin:
                     self._media_frame,
                     Qt.AlignmentFlag(0) if enabled else state.get("media_alignment", Qt.AlignCenter),
                 )
-        self.statusBar().setVisible(not enabled)
+        self.statusBar().setVisible(True)
 
     def _set_sidebar_panel_visible(self, visible: bool) -> None:
         if not hasattr(self, "_settings_scroll"):
             return
         if visible:
-            self._set_focus_media_chrome(False)
-            if hasattr(self, "_source_bar"):
-                self._source_bar.show()
             self._settings_scroll.show()
-            if hasattr(self, "_controls"):
-                self._controls.show()
-            self._set_header_controls_visible(True)
             self._sidebar_panel_hidden = False
             self._splitter.setSizes(self._sidebar_panel_sizes or list(DEFAULT_SIDEBAR_PANEL_SIZES))
-            self._panel_toggle_button.setText("")
-            self._panel_toggle_button.setProperty("i18n_key", None)
-            self._set_panel_toggle_icon(panel_visible=True)
             self.statusBar().showMessage(self._tr("status_panel_shown"))
         else:
             sizes = self._splitter.sizes()
             if len(sizes) >= 2 and sizes[1] > 0:
                 self._sidebar_panel_sizes = sizes
-            self._set_focus_media_chrome(True)
-            if hasattr(self, "_source_bar"):
-                self._source_bar.hide()
             self._settings_scroll.hide()
-            if hasattr(self, "_controls"):
-                self._controls.hide()
-            self._set_header_controls_visible(False)
             self._sidebar_panel_hidden = True
-            self._panel_toggle_button.setText("")
-            self._panel_toggle_button.setProperty("i18n_key", None)
-            self._set_panel_toggle_icon(panel_visible=False)
-            self.statusBar().showMessage(self._tr("status_panel_hidden"))
+            sizes = self._splitter.sizes()
+            total = sum(sizes) if sizes else sum(self._sidebar_panel_sizes or DEFAULT_SIDEBAR_PANEL_SIZES)
+            if total > 0:
+                self._splitter.setSizes([total, 0])
+        self._sync_panel_visibility_buttons()
         self._apply_media_aspect_ratio()
         QTimer.singleShot(0, self._apply_media_aspect_ratio)
 
@@ -1219,13 +1312,12 @@ class PlayerMediaMixin:
         if hasattr(self, "_controls"):
             self._controls.show()
         self._set_header_controls_visible(True)
+        self._top_panel_hidden = False
+        self._bottom_panel_hidden = False
         self._sidebar_panel_hidden = False
         self._sidebar_panel_sizes = list(DEFAULT_SIDEBAR_PANEL_SIZES)
         self._splitter.setSizes(list(DEFAULT_SIDEBAR_PANEL_SIZES))
-        if hasattr(self, "_panel_toggle_button"):
-            self._panel_toggle_button.setText("")
-            self._panel_toggle_button.setProperty("i18n_key", None)
-            self._set_panel_toggle_icon(panel_visible=True)
+        self._sync_panel_visibility_buttons()
         self._apply_media_aspect_ratio()
         QTimer.singleShot(0, self._apply_media_aspect_ratio)
         if show_status:

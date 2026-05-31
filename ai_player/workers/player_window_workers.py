@@ -164,6 +164,7 @@ class TelegramChannelWorker(QThread):
     login_request_ready = Signal(object)
     login_ready = Signal(object)
     password_required = Signal(object, str)
+    progress_changed = Signal(object)
     video_ready = Signal(str)
     failed = Signal(str)
 
@@ -268,14 +269,31 @@ class TelegramChannelWorker(QThread):
             elif self.operation == "download":
                 if self._config is None:
                     raise RuntimeError("Telegram login config is missing.")
-                self.video_ready.emit(
-                    download_telegram_channel_video(
-                        self._url,
-                        self._post_id,
-                        self._config,
-                        language_id=self._language_id,
-                    )
+                self.progress_changed.emit(
+                    {
+                        "status": "starting",
+                        "provider": "telegram",
+                        "filename": f"telegram-{self._post_id}".strip("-"),
+                    }
                 )
+                path = download_telegram_channel_video(
+                    self._url,
+                    self._post_id,
+                    self._config,
+                    progress_callback=self.progress_changed.emit,
+                    cancel_callback=lambda: self._stop_requested or self.isInterruptionRequested(),
+                    language_id=self._language_id,
+                )
+                if self._stop_requested or self.isInterruptionRequested():
+                    return
+                self.progress_changed.emit(
+                    {
+                        "status": "finished",
+                        "provider": "telegram",
+                        "filename": path,
+                    }
+                )
+                self.video_ready.emit(path)
             else:
                 raise RuntimeError(f"Unknown Telegram operation: {self.operation}")
         except Exception as exc:

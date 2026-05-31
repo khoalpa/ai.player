@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QUrl
+from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, QUrl
 from PySide6.QtGui import QColor, QKeySequence, QPainter, QPalette, QShortcut, QTextDocument
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QStatusBar,
     QStyle,
     QStyledItemDelegate,
+    QStyleOptionButton,
     QStyleOptionViewItem,
     QTabWidget,
     QTextEdit,
@@ -71,6 +72,10 @@ from ai_player.ui.player_window_utils import (
 DEFAULT_MEDIA_HOME_URL = "https://www.google.com"
 DEFAULT_MEDIA_ASPECT_RATIO = "16:9"
 TELEGRAM_ITEM_HTML_ROLE = Qt.ItemDataRole.UserRole.value + 10
+TELEGRAM_BLACKLIST_BUTTON_ROLE = Qt.ItemDataRole.UserRole.value + 11
+TELEGRAM_BLACKLIST_BUTTON_WIDTH = 88
+TELEGRAM_BLACKLIST_BUTTON_HEIGHT = 30
+TELEGRAM_BLACKLIST_BUTTON_MARGIN = 10
 TELEGRAM_TRANSLATION_COLOR = "#0f766e"
 TELEGRAM_BROWSER_HOSTS = {"t.me", "telegram.me", "web.telegram.org", "telegram.org"}
 TELEGRAM_PUBLIC_CHANNEL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
@@ -598,7 +603,8 @@ class SubtitleOverlayLabel(QLabel):
 class TelegramChannelItemDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index) -> None:
         html = str(index.data(TELEGRAM_ITEM_HTML_ROLE) or "")
-        if not html:
+        button_label = str(index.data(TELEGRAM_BLACKLIST_BUTTON_ROLE) or "")
+        if not html and not button_label:
             super().paint(painter, option, index)
             return
 
@@ -616,15 +622,30 @@ class TelegramChannelItemDelegate(QStyledItemDelegate):
             item_option,
             item_option.widget,
         )
-        document = QTextDocument()
-        document.setDefaultFont(item_option.font)
-        document.setHtml(html)
-        document.setTextWidth(text_rect.width())
+        if button_label:
+            text_rect.setRight(text_rect.right() - TELEGRAM_BLACKLIST_BUTTON_WIDTH - TELEGRAM_BLACKLIST_BUTTON_MARGIN)
+        if html:
+            document = QTextDocument()
+            document.setDefaultFont(item_option.font)
+            document.setHtml(html)
+            document.setTextWidth(text_rect.width())
 
-        painter.save()
-        painter.translate(text_rect.topLeft())
-        document.drawContents(painter, QRectF(0, 0, text_rect.width(), text_rect.height()))
-        painter.restore()
+            painter.save()
+            painter.translate(text_rect.topLeft())
+            document.drawContents(painter, QRectF(0, 0, text_rect.width(), text_rect.height()))
+            painter.restore()
+        if button_label:
+            button_option = QStyleOptionButton()
+            button_option.rect = _telegram_blacklist_button_rect(option.rect)
+            button_option.text = button_label
+            button_option.state = QStyle.StateFlag.State_Enabled
+            style.drawControl(QStyle.ControlElement.CE_PushButton, button_option, painter, item_option.widget)
+
+
+def _telegram_blacklist_button_rect(row_rect: QRect) -> QRect:
+    x = row_rect.right() - TELEGRAM_BLACKLIST_BUTTON_WIDTH - TELEGRAM_BLACKLIST_BUTTON_MARGIN
+    y = row_rect.top() + TELEGRAM_BLACKLIST_BUTTON_MARGIN
+    return QRect(x, y, TELEGRAM_BLACKLIST_BUTTON_WIDTH, TELEGRAM_BLACKLIST_BUTTON_HEIGHT)
 
 
 def _subtitle_qcolor(value: str) -> QColor:
@@ -709,6 +730,21 @@ class PlayerLayoutMixin:
         self._help_button.setToolTip(self._tr("help_tooltip"))
         self._help_button.setProperty("i18n_tooltip_key", "help_tooltip")
         self._help_button.clicked.connect(self._show_user_guide)
+        self._top_panel_toggle_button = self._icon_button(
+            QStyle.StandardPixmap.SP_ArrowUp,
+            "top_panel_hide_tooltip",
+        )
+        self._top_panel_toggle_button.clicked.connect(self._toggle_top_panel)
+        self._bottom_panel_toggle_button = self._icon_button(
+            QStyle.StandardPixmap.SP_ArrowDown,
+            "bottom_panel_hide_tooltip",
+        )
+        self._bottom_panel_toggle_button.clicked.connect(self._toggle_bottom_panel)
+        self._right_panel_toggle_button = self._icon_button(
+            QStyle.StandardPixmap.SP_ArrowRight,
+            "right_panel_hide_tooltip",
+        )
+        self._right_panel_toggle_button.clicked.connect(self._toggle_sidebar_panel)
 
         source_bar = QFrame()
         source_bar.setObjectName("sourceBar")
@@ -751,11 +787,11 @@ class PlayerLayoutMixin:
         self._video_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._video_widget.setAspectRatioMode(Qt.IgnoreAspectRatio)
         video_palette = self._video_widget.palette()
-        video_palette.setColor(QPalette.Window, QColor("#0f172a"))
-        video_palette.setColor(QPalette.Base, QColor("#0f172a"))
+        video_palette.setColor(QPalette.Window, QColor("#ffffff"))
+        video_palette.setColor(QPalette.Base, QColor("#ffffff"))
         self._video_widget.setPalette(video_palette)
+        self._video_widget.setAttribute(Qt.WA_TranslucentBackground, False)
         self._video_widget.setAttribute(Qt.WA_NoSystemBackground, False)
-        self._video_widget.setStyleSheet("background-color: #0f172a;")
         self._video_widget.setAutoFillBackground(True)
         self._video_widget.installEventFilter(self)
         self._telegram_video_widget = QVideoWidget()
@@ -763,8 +799,8 @@ class PlayerLayoutMixin:
         self._telegram_video_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._telegram_video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
         self._telegram_video_widget.setPalette(video_palette)
+        self._telegram_video_widget.setAttribute(Qt.WA_TranslucentBackground, False)
         self._telegram_video_widget.setAttribute(Qt.WA_NoSystemBackground, False)
-        self._telegram_video_widget.setStyleSheet("background-color: #0f172a;")
         self._telegram_video_widget.setAutoFillBackground(True)
         self._telegram_video_widget.installEventFilter(self)
         if QWebEngineView is not None:
@@ -815,8 +851,12 @@ class PlayerLayoutMixin:
         self._telegram_channel_search.setMinimumWidth(0)
         self._telegram_channel_search.setPlaceholderText(self._tr("telegram_channel_search"))
         self._telegram_channel_search.setProperty("i18n_key", "telegram_channel_search")
-        self._telegram_channel_search.textChanged.connect(self._filter_telegram_channel_items)
-        self._telegram_channel_search.returnPressed.connect(self._refresh_current_telegram_channel)
+        self._telegram_channel_search.textChanged.connect(self._telegram_search_changed)
+        self._telegram_channel_search.returnPressed.connect(self._search_current_telegram_channel_remote)
+        self._telegram_channel_remote_search_button = QPushButton(self._tr("telegram_channel_remote_search"))
+        self._telegram_channel_remote_search_button.setFixedSize(88, 36)
+        self._telegram_channel_remote_search_button.setProperty("i18n_key", "telegram_channel_remote_search")
+        self._telegram_channel_remote_search_button.clicked.connect(self._search_current_telegram_channel_remote)
         self._telegram_channel_filter_combo = QComboBox()
         self._telegram_channel_filter_combo.setObjectName("telegramChannelFilter")
         self._telegram_channel_filter_combo.setFixedSize(96, 36)
@@ -827,9 +867,10 @@ class PlayerLayoutMixin:
             ("document", "telegram_filter_document"),
             ("audio", "telegram_filter_audio"),
             ("text", "telegram_filter_text"),
+            ("blacklist", "telegram_filter_blacklist"),
         ):
             self._telegram_channel_filter_combo.addItem(self._tr(key), value)
-        self._telegram_channel_filter_combo.currentIndexChanged.connect(self._filter_telegram_channel_items)
+        self._telegram_channel_filter_combo.currentIndexChanged.connect(self._telegram_filter_changed)
         self._telegram_channel_load_more_button = QPushButton(self._tr("telegram_channel_load_more"))
         self._telegram_channel_load_more_button.setFixedSize(96, 36)
         self._telegram_channel_load_more_button.setCheckable(True)
@@ -840,10 +881,17 @@ class PlayerLayoutMixin:
         self._telegram_channel_translate_button.setCheckable(True)
         self._telegram_channel_translate_button.setProperty("i18n_key", "telegram_channel_translate")
         self._telegram_channel_translate_button.toggled.connect(self._telegram_translation_toggled)
+        self._telegram_channel_auto_open_check = QCheckBox(self._tr("telegram_channel_auto_open"))
+        self._telegram_channel_auto_open_check.setObjectName("telegramChannelAutoOpen")
+        self._telegram_channel_auto_open_check.setFixedHeight(36)
+        self._telegram_channel_auto_open_check.setChecked(self._config.telegram_auto_open_videos)
+        self._telegram_channel_auto_open_check.setProperty("i18n_key", "telegram_channel_auto_open")
         telegram_tools.addWidget(self._telegram_channel_search, 1)
+        telegram_tools.addWidget(self._telegram_channel_remote_search_button)
         telegram_tools.addWidget(self._telegram_channel_filter_combo)
         telegram_tools.addWidget(self._telegram_channel_load_more_button)
         telegram_tools.addWidget(self._telegram_channel_translate_button)
+        telegram_tools.addWidget(self._telegram_channel_auto_open_check)
         self._telegram_channel_list = QListWidget()
         self._telegram_channel_list.setObjectName("telegramChannelList")
         self._telegram_channel_list.setAlternatingRowColors(True)
@@ -854,6 +902,7 @@ class PlayerLayoutMixin:
         self._telegram_channel_list.setWordWrap(True)
         self._telegram_channel_list.setItemDelegate(TelegramChannelItemDelegate(self._telegram_channel_list))
         self._telegram_channel_list.installEventFilter(self)
+        self._telegram_channel_list.viewport().installEventFilter(self)
         self._telegram_channel_list.currentItemChanged.connect(self._telegram_channel_selection_changed)
         self._telegram_channel_list.itemDoubleClicked.connect(self._telegram_channel_item_activated)
         self._telegram_channel_list.verticalScrollBar().valueChanged.connect(self._telegram_channel_scroll_changed)
@@ -900,35 +949,37 @@ class PlayerLayoutMixin:
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
         )
         self._telegram_channel_side_toggle_button.raise_()
-        telegram_buttons = QHBoxLayout()
-        telegram_buttons.setContentsMargins(0, 0, 0, 0)
-        telegram_buttons.setSpacing(8)
-        self._telegram_channel_open_button = QPushButton(self._tr("telegram_channel_open_item"))
-        self._telegram_channel_open_button.setFixedHeight(36)
-        self._telegram_channel_open_button.setProperty("i18n_key", "telegram_channel_open_item")
-        self._telegram_channel_open_button.clicked.connect(self._open_selected_telegram_channel_item)
-        self._telegram_channel_login_button = QPushButton(self._tr("telegram_channel_login"))
-        self._telegram_channel_login_button.setFixedHeight(36)
-        self._telegram_channel_login_button.setProperty("i18n_key", "telegram_channel_login")
-        self._telegram_channel_login_button.clicked.connect(self._telegram_login_for_current_channel)
-        self._telegram_channel_refresh_button = QPushButton(self._tr("telegram_channel_refresh"))
-        self._telegram_channel_refresh_button.setFixedHeight(36)
-        self._telegram_channel_refresh_button.setProperty("i18n_key", "telegram_channel_refresh")
-        self._telegram_channel_refresh_button.clicked.connect(self._refresh_current_telegram_channel)
-        telegram_buttons.addWidget(self._telegram_channel_open_button, 1)
-        telegram_buttons.addWidget(self._telegram_channel_login_button, 1)
-        telegram_buttons.addWidget(self._telegram_channel_refresh_button, 1)
         self._telegram_channel_side_panel = QWidget()
         self._telegram_channel_side_panel.setObjectName("telegramChannelSidePanel")
         self._telegram_channel_side_panel.setMinimumWidth(320)
         self._telegram_channel_side_panel.setMaximumWidth(16777215)
+        self._telegram_channel_open_button = QPushButton(
+            self._tr("telegram_channel_open_item"),
+            self._telegram_channel_side_panel,
+        )
+        self._telegram_channel_open_button.setProperty("i18n_key", "telegram_channel_open_item")
+        self._telegram_channel_open_button.clicked.connect(self._open_selected_telegram_channel_item)
+        self._telegram_channel_open_button.hide()
+        self._telegram_channel_login_button = QPushButton(
+            self._tr("telegram_channel_login"),
+            self._telegram_channel_side_panel,
+        )
+        self._telegram_channel_login_button.setProperty("i18n_key", "telegram_channel_login")
+        self._telegram_channel_login_button.clicked.connect(self._telegram_login_for_current_channel)
+        self._telegram_channel_login_button.hide()
+        self._telegram_channel_refresh_button = QPushButton(
+            self._tr("telegram_channel_refresh"),
+            self._telegram_channel_side_panel,
+        )
+        self._telegram_channel_refresh_button.setProperty("i18n_key", "telegram_channel_refresh")
+        self._telegram_channel_refresh_button.clicked.connect(self._refresh_current_telegram_channel)
+        self._telegram_channel_refresh_button.hide()
         telegram_side_layout = QVBoxLayout(self._telegram_channel_side_panel)
         telegram_side_layout.setContentsMargins(12, 12, 12, 12)
         telegram_side_layout.setSpacing(8)
         telegram_side_layout.addLayout(telegram_tools)
         telegram_side_layout.addWidget(self._telegram_channel_list, 1)
         telegram_side_layout.addWidget(self._telegram_channel_preview)
-        telegram_side_layout.addLayout(telegram_buttons)
         self._telegram_channel_splitter = QSplitter(Qt.Horizontal)
         self._telegram_channel_splitter.setObjectName("telegramChannelSplitter")
         self._telegram_channel_splitter.addWidget(self._telegram_channel_media_panel)
@@ -1144,6 +1195,22 @@ class PlayerLayoutMixin:
         controls_layout.addLayout(timeline_layout)
         controls_layout.addLayout(playback_layout)
 
+        panel_visibility_bar = QFrame()
+        panel_visibility_bar.setObjectName("panelVisibilityBar")
+        self._panel_visibility_bar = panel_visibility_bar
+        panel_visibility_layout = QHBoxLayout(panel_visibility_bar)
+        panel_visibility_layout.setContentsMargins(0, 0, 0, 0)
+        panel_visibility_layout.setSpacing(6)
+        panel_visibility_layout.addStretch(1)
+        panel_visibility_layout.addWidget(self._top_panel_toggle_button)
+        panel_visibility_layout.addWidget(self._bottom_panel_toggle_button)
+        panel_visibility_layout.addWidget(self._right_panel_toggle_button)
+        self._panel_visibility_buttons = (
+            self._top_panel_toggle_button,
+            self._bottom_panel_toggle_button,
+            self._right_panel_toggle_button,
+        )
+
         video_panel = QFrame()
         video_panel.setObjectName("videoPanel")
         self._video_panel = video_panel
@@ -1152,9 +1219,11 @@ class PlayerLayoutMixin:
         video_layout.setContentsMargins(12, 12, 12, 12)
         video_layout.setSpacing(10)
         video_layout.addWidget(self._media_frame, 1, Qt.AlignCenter)
+        video_layout.addWidget(panel_visibility_bar)
         video_layout.addWidget(controls)
         video_layout.setStretch(0, 1)
         video_layout.setStretch(1, 0)
+        video_layout.setStretch(2, 0)
 
         self._dub_button = self._make_button(
             "dub_button",
@@ -1983,6 +2052,7 @@ class PlayerLayoutMixin:
         if url_changed is not None:
             url_changed.connect(lambda *_args: self._sync_media_browser_state())
         self._sync_media_browser_state()
+        self._sync_panel_visibility_buttons()
 
     def _sync_media_browser_state(self) -> None:
         self._sync_media_home_button()

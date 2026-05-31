@@ -36,6 +36,8 @@ Use this checklist before sharing a build.
 ## AI Pipeline Smoke Test
 
 - Run one short ASR pass when a Whisper model exists.
+- Run `.\.venv\Scripts\python.exe .\scripts\workflow_benchmark.py --output data\tmp\workflow-benchmark-current.json`
+  and compare with the previous profile baseline using `--baseline` when one exists.
 - Run `.\.venv\Scripts\python.exe .\scripts\asr_regression.py --max-wer 0.35` when the local Vietnamese sample set is present.
 - Run one translation with the selected translator.
 - Run one TTS voice test with the selected provider.

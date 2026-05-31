@@ -155,6 +155,15 @@ def _env_bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class AppConfig:
     gui_language: str = "vi"
+    telegram_blacklisted_item_keys: tuple[str, ...] = ()
+    telegram_blacklisted_content_keys: tuple[str, ...] = ()
+    telegram_auto_open_videos: bool = True
+    telegram_last_url: str = ""
+    telegram_last_post_id: str = ""
+    telegram_last_search: str = ""
+    telegram_last_filter: str = "all"
+    telegram_side_panel_visible: bool = True
+    telegram_side_panel_sizes: tuple[int, ...] = (1, 1)
     runtime_warmup_enabled: bool = True
     runtime_warmup_whisper: bool = True
     runtime_warmup_translation: bool = True
@@ -162,6 +171,7 @@ class AppConfig:
     video_aspect_ratio: str = "16:9"
     playback_video_quality: str = "720p"
     video_url_full_cache: bool = True
+    video_url_recent_urls: tuple[str, ...] = ()
     audio_source: str = "original"
     capture_backend: str = "auto"
     capture_system_device: str = ""

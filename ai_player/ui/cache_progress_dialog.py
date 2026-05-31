@@ -4,7 +4,7 @@ import math
 import time
 from pathlib import Path
 
-from PySide6.QtWidgets import QDialog, QLabel, QProgressBar, QTextEdit, QVBoxLayout
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QProgressBar, QTextEdit, QVBoxLayout
 
 from ai_player.core.value_utils import optional_float, optional_int
 from ai_player.ui.player_window_utils import UI_TEXT
@@ -40,6 +40,13 @@ class CacheProgressDialog(QDialog):
         self._log.setReadOnly(True)
         self._log.setMinimumHeight(120)
         layout.addWidget(self._log, 1)
+
+        self._buttons = QDialogButtonBox(QDialogButtonBox.Cancel, self)
+        cancel_button = self._buttons.button(QDialogButtonBox.Cancel)
+        if cancel_button is not None:
+            cancel_button.setText(self._tr("cancel"))
+        self._buttons.rejected.connect(self.reject)
+        layout.addWidget(self._buttons)
 
     def update_cache(self, data: dict) -> None:
         status = str(data.get("status") or "")

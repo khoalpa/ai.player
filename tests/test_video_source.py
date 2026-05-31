@@ -22,6 +22,39 @@ def test_supported_video_url(url: str, expected: bool) -> None:
     assert video_source.is_supported_video_url(url) is expected
 
 
+@pytest.mark.parametrize(
+    ("url", "kind", "provider", "requires_ytdlp", "direct_media"),
+    [
+        ("https://example.com/video.mp4", "direct_media", "example-com", False, True),
+        ("https://youtu.be/demo", "page", "youtube", True, False),
+        ("rtsp://camera.local/live", "network_stream", "rtsp", False, False),
+        ("https://web.telegram.org/a/progressive/document123", "telegram_web", "telegram", False, False),
+        ("https://t.me/+s91pFSI1prtmZjMx", "private_telegram", "telegram", False, False),
+    ],
+)
+def test_inspect_video_url_classifies_source(
+    url: str,
+    kind: str,
+    provider: str,
+    requires_ytdlp: bool,
+    direct_media: bool,
+) -> None:
+    preflight = video_source.inspect_video_url(url)
+
+    assert preflight.supported is True
+    assert preflight.source_kind == kind
+    assert preflight.provider == provider
+    assert preflight.requires_ytdlp is requires_ytdlp
+    assert preflight.direct_media is direct_media
+
+
+def test_inspect_video_url_reports_unsupported_url() -> None:
+    preflight = video_source.inspect_video_url("file:///demo.mp4")
+
+    assert preflight.supported is False
+    assert preflight.source_kind == "unsupported"
+
+
 def test_resolve_rejects_telegram_web_progressive_url() -> None:
     with pytest.raises(video_source.VideoSourceError) as exc_info:
         video_source.resolve_video_source(
@@ -32,11 +65,20 @@ def test_resolve_rejects_telegram_web_progressive_url() -> None:
     assert "Telegram Web progressive" in str(exc_info.value)
 
 
+def test_resolve_rejects_private_telegram_url_before_ytdlp() -> None:
+    with pytest.raises(video_source.VideoSourceError) as exc_info:
+        video_source.resolve_video_source("https://t.me/+s91pFSI1prtmZjMx", language_id="en")
+
+    assert "Telegram invite/private URLs" in str(exc_info.value)
+
+
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
         ("https://youtu.be/demo", True),
         ("https://youtu.be/demo.mp4", False),
+        ("https://t.me/+s91pFSI1prtmZjMx", False),
+        ("https://t.me/c/123456789/42", False),
         ("https://video.example.test/watch/demo", False),
         ("https://media.example.test/videos/demo.mp4", False),
     ],
@@ -222,6 +264,37 @@ def test_resolve_telegram_limits_ytdlp_extractors(monkeypatch) -> None:
     assert source.playback_url == "https://cdn.example.test/telegram.mp4"
     assert source.provider == "telegram"
     assert captured_options["allowed_extractors"] == ["telegram:embed"]
+
+
+def test_resolve_tiktok_limits_ytdlp_extractors(monkeypatch) -> None:
+    captured_options = {}
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            captured_options.update(options)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, url, download):
+            assert url == "https://www.tiktok.com/@demo/video/123"
+            assert download is False
+            return {
+                "id": "123",
+                "title": "TikTok demo",
+                "url": "https://cdn.example.test/tiktok.mp4",
+            }
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", SimpleNamespace(YoutubeDL=FakeYoutubeDL))
+
+    source = video_source.resolve_video_source("https://www.tiktok.com/@demo/video/123", full_cache=False)
+
+    assert source.playback_url == "https://cdn.example.test/tiktok.mp4"
+    assert source.provider == "tiktok"
+    assert captured_options["allowed_extractors"] == [r"tiktok(:.*)?", r"vm\.tiktok"]
 
 
 @pytest.mark.parametrize("full_cache", [False, True])
