@@ -239,6 +239,7 @@
     "open_video_url_resolver_ytdlp": "yt-dlp",
     "open_video_url_resolver_direct": "trực tiếp",
     "open_video_url_retry_prompt": "Chọn cách tiếp tục với URL này.",
+    "open_video_url_unavailable_prompt": "Video này có vẻ không khả dụng, riêng tư, đã bị gỡ hoặc bị giới hạn vùng. Thử lại, giảm chất lượng hoặc đổi cache thường không sửa được URL này.",
     "open_video_url_retry": "Thử lại",
     "open_video_url_retry_lower_quality": "Giảm chất lượng",
     "open_video_url_retry_cache": "Thử cache",

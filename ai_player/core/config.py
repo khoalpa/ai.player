@@ -170,7 +170,7 @@ class AppConfig:
     runtime_warmup_tts: bool = False
     video_aspect_ratio: str = "16:9"
     playback_video_quality: str = "720p"
-    video_url_full_cache: bool = True
+    video_url_full_cache: bool = False
     video_url_recent_urls: tuple[str, ...] = ()
     audio_source: str = "original"
     capture_backend: str = "auto"

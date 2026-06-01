@@ -239,6 +239,7 @@
     "open_video_url_resolver_ytdlp": "yt-dlp",
     "open_video_url_resolver_direct": "direct",
     "open_video_url_retry_prompt": "Choose how to continue with this URL.",
+    "open_video_url_unavailable_prompt": "This video appears to be unavailable, private, removed, or region restricted. Retry, quality, and cache changes usually will not fix this URL.",
     "open_video_url_retry": "Retry",
     "open_video_url_retry_lower_quality": "Lower quality",
     "open_video_url_retry_cache": "Try cache",

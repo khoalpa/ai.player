@@ -30,11 +30,13 @@ def test_save_app_config_omits_secret_and_resets_session_fields(tmp_path, monkey
 
     settings_store.save_app_config(config)
     data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    secrets_data = json.loads(settings_store.secrets_file_path().read_text(encoding="utf-8"))
 
     assert "transcript_cleanup_api_key" not in data
-    assert data.get("transcript_cleanup_api_key_secret", {}).get("value") != "secret"
-    assert data["transcript_path"] == ""
-    assert data["audio_source"] == "original"
+    assert "transcript_cleanup_api_key_secret" not in data
+    assert secrets_data.get("transcript_cleanup_api_key_secret", {}).get("value") != "secret"
+    assert "transcript_path" not in data
+    assert "audio_source" not in data
 
 
 def test_save_and_load_app_config_round_trips_secret_payload(tmp_path, monkeypatch) -> None:
@@ -55,10 +57,12 @@ def test_save_and_load_app_config_round_trips_secret_payload(tmp_path, monkeypat
 
     settings_store.save_app_config(AppConfig(transcript_cleanup_api_key="cleanup-secret"))
     data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    secrets_data = json.loads(settings_store.secrets_file_path().read_text(encoding="utf-8"))
     config = settings_store.load_app_config(AppConfig(transcript_cleanup_api_key=""))
 
     assert "transcript_cleanup_api_key" not in data
-    assert data["transcript_cleanup_api_key_secret"] == {"scheme": "test", "value": "protected:cleanup-secret"}
+    assert "transcript_cleanup_api_key_secret" not in data
+    assert secrets_data["transcript_cleanup_api_key_secret"] == {"scheme": "test", "value": "protected:cleanup-secret"}
     assert config.transcript_cleanup_api_key == "cleanup-secret"
 
 
@@ -117,9 +121,29 @@ def test_save_and_load_app_config_round_trips_telegram_blacklist(tmp_path, monke
         )
     )
     config = settings_store.load_app_config(AppConfig())
+    settings_data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    blacklist_data = json.loads(settings_store.telegram_blacklist_file_path().read_text(encoding="utf-8"))
+    telegram_state_data = json.loads(settings_store.telegram_state_file_path().read_text(encoding="utf-8"))
+    recent_sources_data = json.loads(settings_store.recent_sources_file_path().read_text(encoding="utf-8"))
 
     assert config.telegram_blacklisted_item_keys == ("102", "https://t.me/demo/pending")
     assert config.telegram_blacklisted_content_keys == ("same content",)
+    assert "telegram_blacklisted_item_keys" not in settings_data
+    assert "telegram_blacklisted_content_keys" not in settings_data
+    assert "telegram_last_url" not in settings_data
+    assert "video_url_recent_urls" not in settings_data
+    assert blacklist_data == {
+        "version": 1,
+        "item_keys": ["102", "https://t.me/demo/pending"],
+        "content_keys": ["same content"],
+    }
+    assert telegram_state_data["telegram_last_url"] == "https://t.me/demo"
+    assert telegram_state_data["telegram_last_post_id"] == "101"
+    assert telegram_state_data["telegram_last_search"] == "needle"
+    assert telegram_state_data["telegram_last_filter"] == "video"
+    assert telegram_state_data["telegram_side_panel_visible"] is False
+    assert telegram_state_data["telegram_side_panel_sizes"] == [640, 360]
+    assert recent_sources_data["video_url_recent_urls"] == ["https://example.test/a.mp4", "https://youtu.be/demo"]
     assert config.telegram_auto_open_videos is False
     assert config.telegram_last_url == "https://t.me/demo"
     assert config.telegram_last_post_id == "101"
@@ -128,6 +152,117 @@ def test_save_and_load_app_config_round_trips_telegram_blacklist(tmp_path, monke
     assert config.telegram_side_panel_visible is False
     assert config.telegram_side_panel_sizes == (640, 360)
     assert config.video_url_recent_urls == ("https://example.test/a.mp4", "https://youtu.be/demo")
+
+
+def test_save_app_config_splits_runtime_local_settings(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+
+    settings_store.save_app_config(
+        AppConfig(
+            whisper_model=r"D:\models\whisper",
+            whisper_device="cuda",
+            local_translation_model=r"D:\models\nllb",
+            runtime_warmup_tts=True,
+            vieneu_tts_python=r"D:\venv\Scripts\python.exe",
+        )
+    )
+    settings_data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    runtime_data = json.loads(settings_store.runtime_local_file_path().read_text(encoding="utf-8"))
+    config = settings_store.load_app_config(AppConfig())
+
+    assert "whisper_model" not in settings_data
+    assert "runtime_warmup_tts" not in settings_data
+    assert runtime_data["whisper_model"] == r"D:\models\whisper"
+    assert runtime_data["whisper_device"] == "cuda"
+    assert runtime_data["local_translation_model"] == r"D:\models\nllb"
+    assert runtime_data["runtime_warmup_tts"] is True
+    assert runtime_data["vieneu_tts_python"] == r"D:\venv\Scripts\python.exe"
+    assert config.whisper_model == r"D:\models\whisper"
+    assert config.whisper_device == "cuda"
+    assert config.local_translation_model == r"D:\models\nllb"
+    assert config.runtime_warmup_tts is True
+    assert config.vieneu_tts_python == r"D:\venv\Scripts\python.exe"
+
+
+def test_load_app_config_prefers_split_files_over_legacy_settings(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(
+        json.dumps(
+            {
+                "telegram_last_url": "https://t.me/legacy",
+                "video_url_recent_urls": ["https://example.test/legacy.mp4"],
+                "whisper_device": "cpu",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / settings_store.TELEGRAM_STATE_FILENAME).write_text(
+        json.dumps({"version": 1, "telegram_last_url": "https://t.me/split"}),
+        encoding="utf-8",
+    )
+    (tmp_path / settings_store.RECENT_SOURCES_FILENAME).write_text(
+        json.dumps({"version": 1, "video_url_recent_urls": ["https://example.test/split.mp4"]}),
+        encoding="utf-8",
+    )
+    (tmp_path / settings_store.RUNTIME_LOCAL_FILENAME).write_text(
+        json.dumps({"whisper_device": "cuda"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+
+    config = settings_store.load_app_config(AppConfig())
+
+    assert config.telegram_last_url == "https://t.me/split"
+    assert config.video_url_recent_urls == ("https://example.test/split.mp4",)
+    assert config.whisper_device == "cuda"
+
+
+def test_load_app_config_migrates_legacy_telegram_blacklist_to_separate_file(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(
+        json.dumps(
+            {
+                "telegram_blacklisted_item_keys": ["102", "https://t.me/demo/pending"],
+                "telegram_blacklisted_content_keys": ["same content"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+
+    config = settings_store.load_app_config(AppConfig())
+    blacklist_data = json.loads(settings_store.telegram_blacklist_file_path().read_text(encoding="utf-8"))
+
+    assert config.telegram_blacklisted_item_keys == ("102", "https://t.me/demo/pending")
+    assert config.telegram_blacklisted_content_keys == ("same content",)
+    assert blacklist_data["item_keys"] == ["102", "https://t.me/demo/pending"]
+    assert blacklist_data["content_keys"] == ["same content"]
+
+
+def test_load_app_config_prefers_separate_telegram_blacklist_file(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(
+        json.dumps(
+            {
+                "telegram_blacklisted_item_keys": ["legacy"],
+                "telegram_blacklisted_content_keys": ["legacy content"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / settings_store.TELEGRAM_BLACKLIST_FILENAME).write_text(
+        json.dumps({"version": 1, "item_keys": ["file"], "content_keys": ["file content"]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+
+    config = settings_store.load_app_config(AppConfig())
+
+    assert config.telegram_blacklisted_item_keys == ("file",)
+    assert config.telegram_blacklisted_content_keys == ("file content",)
 
 
 def test_load_app_config_preserves_saved_tts_warmup(tmp_path, monkeypatch) -> None:
@@ -308,8 +443,8 @@ def test_save_app_config_writes_term_flags_but_not_term_content(tmp_path, monkey
 
     assert data["preserve_source_terms"] is True
     assert data["preserve_english_terms"] is True
-    assert data["preserved_source_terms"] == ""
-    assert data["preserved_english_terms"] == ""
+    assert "preserved_source_terms" not in data
+    assert "preserved_english_terms" not in data
 
 
 def test_load_app_config_migrates_removed_translation_provider_and_models(tmp_path, monkeypatch) -> None:

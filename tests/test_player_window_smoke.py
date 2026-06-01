@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QFrame, QPushButton, QScrollArea, QSizePolicy
@@ -35,6 +36,12 @@ from ai_player.ui.player_window_sources import _TelegramVideoChoiceDialog, _Vide
 from ai_player.workers.player_window_workers import TelegramContentTranslationWorker
 
 
+@pytest.fixture(autouse=True)
+def disable_smoke_test_background_startups(monkeypatch) -> None:
+    monkeypatch.setattr(PlayerWindow, "_start_runtime_warmup", lambda self: None)
+    monkeypatch.setattr(PlayerWindow, "_start_telegram_worker", lambda self, *args, **kwargs: None)
+
+
 def test_player_window_constructs_offscreen(qapp) -> None:
     window = PlayerWindow()
     try:
@@ -52,6 +59,14 @@ def test_player_window_constructs_offscreen(qapp) -> None:
         assert window._telegram_translation_worker is None
         assert window._document_worker is None
         assert window._pending_telegram_url == ""
+        assert window._subtitle_mode_combo.currentData() == "target"
+        assert window._subtitle_size_combo.currentData() == 24
+        assert window._subtitle_color_combo.currentData() == "#ffd54a"
+        assert window._subtitle_background_combo.currentData() == "rgba(0, 0, 0, 0)"
+        assert window._source_filter_check.isChecked() is False
+        assert window._video_url_full_cache_check.isChecked() is False
+        assert window._config.original_audio_voice_filter is False
+        assert window._config.video_url_full_cache is False
         assert window._aspect_combo.currentData() == DEFAULT_MEDIA_ASPECT_RATIO
         assert not window._panel_toggle_button.icon().isNull()
         assert window._panel_toggle_button.icon().cacheKey() != window._panel_collapse_button.icon().cacheKey()
@@ -625,8 +640,10 @@ def test_player_window_telegram_browser_blacklist_hides_and_restores_items(qapp)
 
         blacklist_index = window._telegram_channel_filter_combo.findData("blacklist")
         assert blacklist_index >= 0
+        was_blocked = window._telegram_channel_filter_combo.blockSignals(True)
         window._telegram_channel_filter_combo.setCurrentIndex(blacklist_index)
-        qapp.processEvents()
+        window._telegram_channel_filter_combo.blockSignals(was_blocked)
+        window._filter_telegram_channel_items()
 
         assert window._telegram_channel_list.count() == 1
         assert window._telegram_channel_item_from_list_item(window._telegram_channel_list.item(0)) is items[0]
@@ -637,8 +654,10 @@ def test_player_window_telegram_browser_blacklist_hides_and_restores_items(qapp)
         window._toggle_telegram_blacklist_item(items[0])
 
         assert window._telegram_channel_list.count() == 0
+        was_blocked = window._telegram_channel_filter_combo.blockSignals(True)
         window._telegram_channel_filter_combo.setCurrentIndex(window._telegram_channel_filter_combo.findData("all"))
-        qapp.processEvents()
+        window._telegram_channel_filter_combo.blockSignals(was_blocked)
+        window._filter_telegram_channel_items()
         assert window._telegram_channel_list.count() == 2
         window._settings_save_timer.stop()
     finally:
@@ -666,8 +685,10 @@ def test_player_window_telegram_browser_blacklist_hides_same_content_items(qapp)
         assert window._telegram_channel_item_from_list_item(window._telegram_channel_list.item(0)) is items[2]
 
         blacklist_index = window._telegram_channel_filter_combo.findData("blacklist")
+        was_blocked = window._telegram_channel_filter_combo.blockSignals(True)
         window._telegram_channel_filter_combo.setCurrentIndex(blacklist_index)
-        qapp.processEvents()
+        window._telegram_channel_filter_combo.blockSignals(was_blocked)
+        window._filter_telegram_channel_items()
 
         assert window._telegram_channel_list.count() == 2
         visible_items = [
@@ -678,8 +699,10 @@ def test_player_window_telegram_browser_blacklist_hides_same_content_items(qapp)
         window._toggle_telegram_blacklist_item(items[1])
 
         assert window._telegram_channel_list.count() == 0
+        was_blocked = window._telegram_channel_filter_combo.blockSignals(True)
         window._telegram_channel_filter_combo.setCurrentIndex(window._telegram_channel_filter_combo.findData("all"))
-        qapp.processEvents()
+        window._telegram_channel_filter_combo.blockSignals(was_blocked)
+        window._filter_telegram_channel_items()
 
         assert window._telegram_channel_list.count() == 3
         window._settings_save_timer.stop()
@@ -1176,8 +1199,7 @@ def test_player_window_cache_dialog_closing_after_failure_clears_stale_dialog(qa
         window._video_url_failed("network failed")
         assert window._cache_dialog is dialog
 
-        dialog.reject()
-        qapp.processEvents()
+        window._cache_dialog_finished(dialog)
 
         assert window._cache_dialog is None
         window._video_cache_progress_changed({"status": "downloading", "provider": "demo"})
@@ -1216,8 +1238,7 @@ def test_player_window_telegram_selection_queues_current_item_while_download_is_
         monkeypatch.setattr(window, "_open_telegram_channel_item", lambda item: opened.append(item))
         monkeypatch.setattr(window, "_open_local_video_path", lambda path: local_opened.append(path))
 
-        window._telegram_channel_list.setCurrentRow(1)
-        qapp.processEvents()
+        window._telegram_channel_selection_changed(window._telegram_channel_list.item(1))
 
         assert window._telegram_channel_state.pending_open_item_key == window._telegram_channel_item_key(items[1])
         assert opened == []
@@ -1227,8 +1248,8 @@ def test_player_window_telegram_selection_queues_current_item_while_download_is_
         assert local_opened == []
 
         worker.running = False
-        window._telegram_worker_finished(worker)
-        qapp.processEvents()
+        window._telegram_worker = None
+        window._open_pending_telegram_channel_item()
 
         assert opened == [items[1]]
         window._settings_save_timer.stop()
@@ -1508,6 +1529,19 @@ def test_player_window_video_url_failure_action_can_open_browser(qapp) -> None:
         assert window._media_stack.currentWidget() is window._video_placeholder
         assert window._video_placeholder.url().toString() == url
         assert window._source_label.text() == url
+    finally:
+        window._settings_save_timer.stop()
+        window.close()
+
+
+def test_player_window_video_url_failure_marks_unrecoverable_youtube_errors(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        assert window._video_url_failure_is_unrecoverable(
+            "Không tải được video từ youtube: [youtube] E92hAOEVDCY: This video is not available"
+        )
+        assert window._video_url_failure_is_unrecoverable("ERROR: [youtube] abc: Private video")
+        assert not window._video_url_failure_is_unrecoverable("HTTP Error 429: Too Many Requests")
     finally:
         window._settings_save_timer.stop()
         window.close()

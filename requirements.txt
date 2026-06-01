@@ -1,3 +1,5 @@
+# Offline CPU/runtime profile. For a lite app install, use `pip install -e .`.
+# For development checks, use `pip install -e ".[dev]"`.
 PySide6-Essentials>=6.7
 PySide6-Addons>=6.7
 python-docx>=1.2

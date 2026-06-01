@@ -1800,13 +1800,18 @@ class PlayerSourceMixin:
         box.setIcon(QMessageBox.Warning)
         box.setWindowTitle(self._tr("open_url_error_title"))
         box.setText(detail)
-        box.setInformativeText(self._tr("open_video_url_retry_prompt"))
-        retry_button = box.addButton(self._tr("open_video_url_retry"), QMessageBox.AcceptRole)
+        unrecoverable = self._video_url_failure_is_unrecoverable(detail)
+        box.setInformativeText(
+            self._tr("open_video_url_unavailable_prompt") if unrecoverable else self._tr("open_video_url_retry_prompt")
+        )
+        retry_button = None
+        if not unrecoverable:
+            retry_button = box.addButton(self._tr("open_video_url_retry"), QMessageBox.AcceptRole)
         lower_button = None
-        if self._lower_playback_quality_value(str(request.get("quality") or "")):
+        if not unrecoverable and self._lower_playback_quality_value(str(request.get("quality") or "")):
             lower_button = box.addButton(self._tr("open_video_url_retry_lower_quality"), QMessageBox.ActionRole)
         toggle_button = None
-        if not self._source_filter_forces_video_url_full_cache():
+        if not unrecoverable and not self._source_filter_forces_video_url_full_cache():
             toggle_key = (
                 "open_video_url_retry_stream"
                 if bool(request.get("full_cache"))
@@ -1817,10 +1822,10 @@ class PlayerSourceMixin:
         if self._can_open_video_url_in_browser(str(request.get("url") or "")):
             browser_button = box.addButton(self._tr("open_video_url_open_browser"), QMessageBox.ActionRole)
         close_button = box.addButton(self._tr("close"), QMessageBox.RejectRole)
-        box.setDefaultButton(retry_button)
+        box.setDefaultButton(retry_button or browser_button or close_button)
         box.exec()
         clicked = box.clickedButton()
-        if clicked is retry_button:
+        if retry_button is not None and clicked is retry_button:
             return "retry"
         if lower_button is not None and clicked is lower_button:
             return "lower_quality"
@@ -1831,6 +1836,20 @@ class PlayerSourceMixin:
         if clicked is close_button:
             return ""
         return ""
+
+    @staticmethod
+    def _video_url_failure_is_unrecoverable(detail: str) -> bool:
+        normalized = " ".join(str(detail or "").casefold().split())
+        return any(
+            marker in normalized
+            for marker in (
+                "this video is not available",
+                "video unavailable",
+                "private video",
+                "has been removed",
+                "account associated with this video has been terminated",
+            )
+        )
 
     def _retry_last_video_url_request(self, *, lower_quality: bool = False, toggle_cache: bool = False) -> None:
         request = getattr(self, "_last_video_url_request", None)

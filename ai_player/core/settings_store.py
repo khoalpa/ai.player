@@ -19,6 +19,11 @@ from ai_player.core.config import (
 from ai_player.core.secret_store import SecretStoreError, protect_text, reveal_text
 
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
+TELEGRAM_BLACKLIST_FILENAME = "telegram_blacklist.json"
+SECRETS_FILENAME = "secrets.json"
+RUNTIME_LOCAL_FILENAME = "runtime.local.json"
+RECENT_SOURCES_FILENAME = "recent_sources.json"
+TELEGRAM_STATE_FILENAME = "telegram_state.json"
 LOGGER = get_logger(__name__)
 SESSION_ONLY_DEFAULTS = {
     "audio_source": "original",
@@ -35,17 +40,97 @@ SECRET_SETTINGS = {
 SECRET_PAYLOAD_KEYS = {
     "transcript_cleanup_api_key": "transcript_cleanup_api_key_secret",
 }
+TELEGRAM_BLACKLIST_SETTINGS = {
+    "telegram_blacklisted_item_keys",
+    "telegram_blacklisted_content_keys",
+}
+RECENT_SOURCE_SETTINGS = {
+    "video_url_recent_urls",
+}
+TELEGRAM_STATE_SETTINGS = {
+    "telegram_last_url",
+    "telegram_last_post_id",
+    "telegram_last_search",
+    "telegram_last_filter",
+    "telegram_side_panel_visible",
+    "telegram_side_panel_sizes",
+}
+RUNTIME_LOCAL_SETTINGS = {
+    "capture_backend",
+    "capture_microphone_device",
+    "capture_system_device",
+    "local_translation_device",
+    "local_translation_model",
+    "local_translation_offline",
+    "ocr_model",
+    "runtime_warmup_enabled",
+    "runtime_warmup_translation",
+    "runtime_warmup_tts",
+    "runtime_warmup_whisper",
+    "speaker_gender_model",
+    "transcript_cleanup_api_base",
+    "transcript_cleanup_model",
+    "vieneu_tts_api_base",
+    "vieneu_tts_backend",
+    "vieneu_tts_core",
+    "vieneu_tts_decoder_path",
+    "vieneu_tts_device",
+    "vieneu_tts_encoder_path",
+    "vieneu_tts_model_name",
+    "vieneu_tts_offline",
+    "vieneu_tts_path",
+    "vieneu_tts_python",
+    "vieneu_tts_runtime",
+    "vieneu_tts_standard_codec_path",
+    "whisper_compute_type",
+    "whisper_device",
+    "whisper_model",
+    "whisper_offline",
+}
+SPLIT_SETTINGS = (
+    SECRET_SETTINGS
+    | set(SECRET_PAYLOAD_KEYS.values())
+    | TELEGRAM_BLACKLIST_SETTINGS
+    | RECENT_SOURCE_SETTINGS
+    | TELEGRAM_STATE_SETTINGS
+    | RUNTIME_LOCAL_SETTINGS
+)
+
+
+def _config_file_path(filename: str):
+    return SETTINGS_FILE.parent / filename
+
+
+def telegram_blacklist_file_path():
+    return _config_file_path(TELEGRAM_BLACKLIST_FILENAME)
+
+
+def secrets_file_path():
+    return _config_file_path(SECRETS_FILENAME)
+
+
+def runtime_local_file_path():
+    return _config_file_path(RUNTIME_LOCAL_FILENAME)
+
+
+def recent_sources_file_path():
+    return _config_file_path(RECENT_SOURCES_FILENAME)
+
+
+def telegram_state_file_path():
+    return _config_file_path(TELEGRAM_STATE_FILENAME)
 
 
 def load_app_config(base: AppConfig | None = None) -> AppConfig:
     config = _with_preserved_terms_from_file(base or AppConfig.from_env())
     data = _read_settings()
-    if not data:
-        return config
+    legacy_blacklist = _telegram_blacklist_from_settings(data)
     secret_values = _load_secret_settings(data)
-    for name in set(SESSION_ONLY_DEFAULTS) | SECRET_SETTINGS:
-        data.pop(name, None)
-    for name in SECRET_PAYLOAD_KEYS.values():
+    data.update(_read_runtime_local())
+    data.update(_read_recent_sources())
+    data.update(_read_telegram_state())
+    transient_settings = set(SESSION_ONLY_DEFAULTS) | SECRET_SETTINGS | set(SECRET_PAYLOAD_KEYS.values())
+    for name in transient_settings | TELEGRAM_BLACKLIST_SETTINGS:
         data.pop(name, None)
     _migrate_removed_local_models(data)
     _migrate_preserved_source_flags(data)
@@ -63,7 +148,7 @@ def load_app_config(base: AppConfig | None = None) -> AppConfig:
     for name, secret_value in secret_values.items():
         if not getattr(updated, name, "") and secret_value:
             updated = replace(updated, **{name: secret_value})
-    return updated
+    return _with_telegram_blacklist(updated, legacy_blacklist)
 
 
 def _with_preserved_terms_from_file(config: AppConfig) -> AppConfig:
@@ -127,17 +212,111 @@ def _migrate_default_vieneu_voices(data: dict[str, Any]) -> None:
 
 
 def save_app_config(config: AppConfig) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    data = {field.name: getattr(config, field.name) for field in fields(AppConfig) if field.name not in SECRET_SETTINGS}
-    data.update(SESSION_ONLY_DEFAULTS)
-    data.update(_dump_secret_settings(config))
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    save_telegram_blacklist(config.telegram_blacklisted_item_keys, config.telegram_blacklisted_content_keys)
+    save_secret_settings(config)
+    save_runtime_local(config)
+    save_recent_sources(config.video_url_recent_urls)
+    save_telegram_state(config)
+    excluded_settings = set(SESSION_ONLY_DEFAULTS) | SPLIT_SETTINGS
+    data = {
+        field.name: getattr(config, field.name)
+        for field in fields(AppConfig)
+        if field.name not in excluded_settings
+    }
     data["preserve_english_terms"] = bool(config.preserve_source_terms)
-    data["preserved_source_terms_file"] = str(preserved_source_terms_file_path())
-    data["preserved_english_terms_file"] = str(preserved_english_terms_file_path())
-    SETTINGS_FILE.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
+    _write_json_object(SETTINGS_FILE, data)
+
+
+def save_telegram_blacklist(item_keys, content_keys) -> None:
+    payload = {
+        "version": 1,
+        "item_keys": list(_coerce_text_tuple(item_keys)),
+        "content_keys": list(_coerce_text_tuple(content_keys)),
+    }
+    _write_json_object(telegram_blacklist_file_path(), payload)
+
+
+def save_secret_settings(config: AppConfig) -> None:
+    payload = {"version": 1}
+    payload.update(_dump_secret_settings(config))
+    _write_json_object(secrets_file_path(), payload)
+
+
+def save_runtime_local(config: AppConfig) -> None:
+    payload = {"version": 1}
+    payload.update(_config_values(config, RUNTIME_LOCAL_SETTINGS))
+    _write_json_object(runtime_local_file_path(), payload)
+
+
+def save_recent_sources(recent_urls) -> None:
+    payload = {
+        "version": 1,
+        "video_url_recent_urls": list(_coerce_text_tuple(recent_urls)),
+    }
+    _write_json_object(recent_sources_file_path(), payload)
+
+
+def save_telegram_state(config: AppConfig) -> None:
+    payload = {"version": 1}
+    payload.update(_config_values(config, TELEGRAM_STATE_SETTINGS))
+    _write_json_object(telegram_state_file_path(), payload)
+
+
+def _with_telegram_blacklist(config: AppConfig, legacy_blacklist: tuple[tuple[str, ...], tuple[str, ...]]) -> AppConfig:
+    blacklist = _read_telegram_blacklist()
+    if blacklist is None:
+        blacklist = legacy_blacklist
+        if blacklist[0] or blacklist[1]:
+            save_telegram_blacklist(*blacklist)
+    return replace(
+        config,
+        telegram_blacklisted_item_keys=blacklist[0],
+        telegram_blacklisted_content_keys=blacklist[1],
     )
+
+
+def _read_telegram_blacklist() -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    path = telegram_blacklist_file_path()
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception as exc:
+        LOGGER.info("Could not read Telegram blacklist from %s: %s", path, exc)
+        return ((), ())
+    if not isinstance(data, dict):
+        return ((), ())
+    return (
+        _coerce_text_tuple(data.get("item_keys")),
+        _coerce_text_tuple(data.get("content_keys")),
+    )
+
+
+def _telegram_blacklist_from_settings(data: dict[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    return (
+        _coerce_text_tuple(data.get("telegram_blacklisted_item_keys")),
+        _coerce_text_tuple(data.get("telegram_blacklisted_content_keys")),
+    )
+
+
+def _read_runtime_local() -> dict[str, Any]:
+    return _read_split_settings(runtime_local_file_path(), RUNTIME_LOCAL_SETTINGS)
+
+
+def _read_recent_sources() -> dict[str, Any]:
+    return _read_split_settings(recent_sources_file_path(), RECENT_SOURCE_SETTINGS)
+
+
+def _read_telegram_state() -> dict[str, Any]:
+    return _read_split_settings(telegram_state_file_path(), TELEGRAM_STATE_SETTINGS)
+
+
+def _read_split_settings(path, keys: set[str]) -> dict[str, Any]:
+    data = _read_json_object(path)
+    if not data:
+        return {}
+    return {key: data[key] for key in keys if key in data}
 
 
 def _read_settings() -> dict[str, Any]:
@@ -152,10 +331,12 @@ def _read_settings() -> dict[str, Any]:
 
 
 def _load_secret_settings(data: dict[str, Any]) -> dict[str, str]:
+    secret_data = _read_json_object(secrets_file_path())
+    payload_data = data if secret_data is None else secret_data
     values: dict[str, str] = {}
     for name, payload_key in SECRET_PAYLOAD_KEYS.items():
         try:
-            values[name] = reveal_text(data.get(payload_key))
+            values[name] = reveal_text(payload_data.get(payload_key))
         except SecretStoreError as exc:
             LOGGER.warning("Could not reveal saved secret setting %s: %s", name, exc)
     return values
@@ -172,6 +353,29 @@ def _dump_secret_settings(config: AppConfig) -> dict[str, object]:
         except SecretStoreError as exc:
             LOGGER.warning("Could not save secret setting %s: %s", name, exc)
     return values
+
+
+def _read_json_object(path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception as exc:
+        LOGGER.info("Could not read JSON settings from %s: %s", path, exc)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_json_object(path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def _config_values(config: AppConfig, keys: set[str]) -> dict[str, object]:
+    return {key: getattr(config, key) for key in keys}
 
 
 def _coerce_value(value: Any, current: Any) -> Any:
@@ -208,3 +412,13 @@ def _coerce_value(value: Any, current: Any) -> Any:
             return tuple(coerced)
         return items
     return str(value) if isinstance(current, str) else value
+
+
+def _coerce_text_tuple(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        values = value.replace("\n", ",").split(",")
+    elif isinstance(value, (list, tuple, set)):
+        values = value
+    else:
+        return ()
+    return tuple(dict.fromkeys(item for raw in values if (item := str(raw or "").strip())))
