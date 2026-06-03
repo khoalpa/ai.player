@@ -26,6 +26,7 @@ protect them.
   - `tests/test_video_source.py`
   - `tests/test_video_url_controller.py`
   - `tests/test_player_window_media_cache.py`
+  - `tests/test_player_window_smoke.py`
 - Capture, ASR, translation, cleanup, OCR, and voices:
   - `tests/test_capture_sources.py`
   - `tests/test_whisper_runtime.py`

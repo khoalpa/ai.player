@@ -56,6 +56,14 @@ from ai_player.ui.channel_browser import (
     youtube_video_id_from_url,
 )
 from ai_player.ui.player_window_utils import repair_mojibake as _repair_mojibake
+from ai_player.ui.video_url_controller import (
+    lower_playback_quality_value,
+    video_url_failure_is_unrecoverable,
+    video_url_open_kwargs,
+    video_url_request_is_youtube_channel_item_failure,
+    video_url_request_should_fallback_to_browser,
+    video_url_retry_payload,
+)
 from ai_player.workers.player_window_workers import (
     DocumentTranscriptWorker,
     TelegramChannelWorker,
@@ -1896,33 +1904,24 @@ class PlayerSourceMixin:
         QTimer.singleShot(0, self._open_pending_telegram_channel_item)
 
     def _youtube_channel_item_open_failed(self) -> bool:
-        request = getattr(self, "_last_video_url_request", None)
-        return bool(
-            isinstance(request, dict)
-            and request.get("keep_telegram_context")
-            and self._current_channel_provider() == "youtube"
-            and getattr(self, "_current_telegram_channel_item", None) is not None
+        return video_url_request_is_youtube_channel_item_failure(
+            getattr(self, "_last_video_url_request", None),
+            channel_provider=self._current_channel_provider(),
+            current_channel_item=getattr(self, "_current_telegram_channel_item", None),
         )
 
     def _browser_video_url_should_fallback(self, detail: str) -> bool:
-        request = getattr(self, "_last_video_url_request", None)
-        return bool(
-            isinstance(request, dict)
-            and request.get("browser_fallback_on_unavailable")
-            and self._video_url_failure_is_unrecoverable(detail)
-            and self._can_open_video_url_in_browser(str(request.get("url") or ""))
+        return video_url_request_should_fallback_to_browser(
+            getattr(self, "_last_video_url_request", None),
+            detail,
+            can_open_browser=self._can_open_video_url_in_browser,
         )
 
     def _video_url_finished(self) -> None:
         retry = getattr(self, "_pending_video_url_retry", None)
         if isinstance(retry, dict):
             self._pending_video_url_retry = None
-            kwargs = {
-                "keep_telegram_context": bool(retry.get("keep_telegram_context")),
-                "full_cache_override": bool(retry.get("full_cache")),
-            }
-            if retry.get("browser_fallback_on_unavailable"):
-                kwargs["browser_fallback_on_unavailable"] = True
+            kwargs = video_url_open_kwargs(retry, full_cache=bool(retry.get("full_cache")))
             self._open_resolved_video_url(str(retry.get("url") or ""), **kwargs)
             return
         QTimer.singleShot(0, self._open_pending_telegram_channel_item)
@@ -1987,17 +1986,7 @@ class PlayerSourceMixin:
 
     @staticmethod
     def _video_url_failure_is_unrecoverable(detail: str) -> bool:
-        normalized = " ".join(str(detail or "").casefold().split())
-        return any(
-            marker in normalized
-            for marker in (
-                "this video is not available",
-                "video unavailable",
-                "private video",
-                "has been removed",
-                "account associated with this video has been terminated",
-            )
-        )
+        return video_url_failure_is_unrecoverable(detail)
 
     def _retry_last_video_url_request(self, *, lower_quality: bool = False, toggle_cache: bool = False) -> None:
         request = getattr(self, "_last_video_url_request", None)
@@ -2015,31 +2004,15 @@ class PlayerSourceMixin:
         if toggle_cache and not self._source_filter_forces_video_url_full_cache():
             full_cache = not full_cache
         if self._url_is_opening():
-            self._pending_video_url_retry = {
-                "url": url,
-                "keep_telegram_context": bool(request.get("keep_telegram_context")),
-                "full_cache": full_cache,
-            }
-            if request.get("browser_fallback_on_unavailable"):
-                self._pending_video_url_retry["browser_fallback_on_unavailable"] = True
+            self._pending_video_url_retry = video_url_retry_payload(request, full_cache=full_cache)
             self.statusBar().showMessage(self._tr("status_open_url_retry_pending"))
             return
-        kwargs = {
-            "keep_telegram_context": bool(request.get("keep_telegram_context")),
-            "full_cache_override": full_cache,
-        }
-        if request.get("browser_fallback_on_unavailable"):
-            kwargs["browser_fallback_on_unavailable"] = True
+        kwargs = video_url_open_kwargs(request, full_cache=full_cache)
         self._open_resolved_video_url(url, **kwargs)
 
     @staticmethod
     def _lower_playback_quality_value(value: str) -> str:
-        order = ["best", "1080p", "720p", "480p", "360p"]
-        current = str(value or "").strip().lower()
-        if current not in order:
-            current = "720p"
-        index = order.index(current)
-        return order[index + 1] if index + 1 < len(order) else ""
+        return lower_playback_quality_value(value)
 
     def _can_open_video_url_in_browser(self, url: str) -> bool:
         parsed = urlparse(str(url or "").strip())

@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 from ai_player.ui import video_url_controller
-from ai_player.ui.video_url_controller import VideoUrlController
+from ai_player.ui.video_url_controller import (
+    VideoUrlController,
+    lower_playback_quality_value,
+    video_url_failure_is_unrecoverable,
+    video_url_open_kwargs,
+    video_url_request_is_youtube_channel_item_failure,
+    video_url_request_should_fallback_to_browser,
+    video_url_retry_payload,
+)
 
 
 class _FakeSignal:
@@ -117,3 +125,61 @@ def test_video_url_controller_blocks_double_start_and_stops(monkeypatch) -> None
     assert worker.stopped is True
     assert worker.deleted is True
     assert owner._open_url_button.enabled is True
+
+
+def test_video_url_retry_helpers_preserve_request_context() -> None:
+    request = {
+        "url": "https://www.youtube.com/watch?v=abc",
+        "keep_telegram_context": True,
+        "browser_fallback_on_unavailable": True,
+    }
+
+    assert video_url_retry_payload(request, full_cache=False) == {
+        "url": "https://www.youtube.com/watch?v=abc",
+        "keep_telegram_context": True,
+        "full_cache": False,
+        "browser_fallback_on_unavailable": True,
+    }
+    assert video_url_open_kwargs(request, full_cache=True) == {
+        "keep_telegram_context": True,
+        "full_cache_override": True,
+        "browser_fallback_on_unavailable": True,
+    }
+
+
+def test_video_url_failure_helpers_classify_unrecoverable_and_browser_fallback() -> None:
+    request = {
+        "url": "https://www.youtube.com/watch?v=abc",
+        "browser_fallback_on_unavailable": True,
+    }
+
+    assert video_url_failure_is_unrecoverable("ERROR: [youtube] abc: Private video")
+    assert video_url_request_should_fallback_to_browser(
+        request,
+        "This video is not available",
+        can_open_browser=lambda url: url.startswith("https://"),
+    )
+    assert not video_url_request_should_fallback_to_browser(
+        request,
+        "HTTP Error 429: Too Many Requests",
+        can_open_browser=lambda _url: True,
+    )
+
+
+def test_video_url_helper_detects_youtube_channel_item_failure_and_lower_quality() -> None:
+    request = {"keep_telegram_context": True}
+
+    assert video_url_request_is_youtube_channel_item_failure(
+        request,
+        channel_provider="youtube",
+        current_channel_item=object(),
+    )
+    assert not video_url_request_is_youtube_channel_item_failure(
+        request,
+        channel_provider="telegram",
+        current_channel_item=object(),
+    )
+    assert lower_playback_quality_value("best") == "1080p"
+    assert lower_playback_quality_value("720p") == "480p"
+    assert lower_playback_quality_value("360p") == ""
+    assert lower_playback_quality_value("unknown") == "480p"

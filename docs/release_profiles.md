@@ -44,6 +44,8 @@ match the package being produced.
 - Purpose: private extractor/client builds and team-only runtime experiments.
 - Install: start from the GPU profile, then install private packages locally.
 - Build: `.\scripts\build_internal.ps1`
+- Plugin scope: review `docs\plugin_policy.md` before creating or sharing the
+  artifact.
 - Environment: set private build flags only for this profile, such as
   `AI_PLAYER_INCLUDE_EXTRA_YTDLP_PLUGINS` or
   `AI_PLAYER_INCLUDE_PRIVATE_TELEGRAM_PLUGIN`.

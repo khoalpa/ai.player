@@ -4,6 +4,14 @@ from typing import Any
 
 from ai_player.workers.player_window_workers import VideoSourceWorker
 
+UNRECOVERABLE_VIDEO_URL_MARKERS = (
+    "this video is not available",
+    "video unavailable",
+    "private video",
+    "has been removed",
+    "account associated with this video has been terminated",
+)
+
 
 class VideoUrlController:
     def __init__(self, owner: Any) -> None:
@@ -62,3 +70,64 @@ class VideoUrlController:
         button = getattr(self._owner, "_open_url_button", None)
         if button is not None:
             button.setEnabled(enabled)
+
+
+def video_url_failure_is_unrecoverable(detail: object) -> bool:
+    normalized = " ".join(str(detail or "").casefold().split())
+    return any(marker in normalized for marker in UNRECOVERABLE_VIDEO_URL_MARKERS)
+
+
+def lower_playback_quality_value(value: object) -> str:
+    order = ["best", "1080p", "720p", "480p", "360p"]
+    current = str(value or "").strip().lower()
+    if current not in order:
+        current = "720p"
+    index = order.index(current)
+    return order[index + 1] if index + 1 < len(order) else ""
+
+
+def video_url_request_is_youtube_channel_item_failure(
+    request: object,
+    *,
+    channel_provider: object,
+    current_channel_item: object | None,
+) -> bool:
+    return bool(
+        isinstance(request, dict)
+        and request.get("keep_telegram_context")
+        and str(channel_provider or "").strip().lower() == "youtube"
+        and current_channel_item is not None
+    )
+
+
+def video_url_request_should_fallback_to_browser(
+    request: object,
+    detail: object,
+    *,
+    can_open_browser,
+) -> bool:
+    if not isinstance(request, dict) or not request.get("browser_fallback_on_unavailable"):
+        return False
+    url = str(request.get("url") or "")
+    return bool(video_url_failure_is_unrecoverable(detail) and can_open_browser(url))
+
+
+def video_url_retry_payload(request: dict, *, full_cache: bool) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "url": str(request.get("url") or ""),
+        "keep_telegram_context": bool(request.get("keep_telegram_context")),
+        "full_cache": bool(full_cache),
+    }
+    if request.get("browser_fallback_on_unavailable"):
+        payload["browser_fallback_on_unavailable"] = True
+    return payload
+
+
+def video_url_open_kwargs(request: dict, *, full_cache: bool) -> dict[str, object]:
+    kwargs: dict[str, object] = {
+        "keep_telegram_context": bool(request.get("keep_telegram_context")),
+        "full_cache_override": bool(full_cache),
+    }
+    if request.get("browser_fallback_on_unavailable"):
+        kwargs["browser_fallback_on_unavailable"] = True
+    return kwargs

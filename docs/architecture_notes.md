@@ -47,3 +47,6 @@ Current extracted owners:
 - `ai_player.ui.channel_browser` owns pure channel-browser decisions such as
   Telegram/YouTube provider detection, channel keys, post/video id parsing,
   media-kind normalization, search text, and filtered item selection.
+- `ai_player.ui.video_url_controller` owns URL worker lifecycle plus pure
+  retry/fallback decisions such as lower-quality retry selection, unrecoverable
+  video errors, pending retry payloads, and browser fallback kwargs.

@@ -212,6 +212,35 @@ def test_source_buttons_click_through_document_and_transcript_paths(qapp, tmp_pa
         window.close()
 
 
+def test_source_button_click_through_local_video_path(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    try:
+        video_path = Path("samples/demo-video.mp4").resolve()
+        loaded_paths: list[str | None] = []
+        shown = []
+
+        monkeypatch.setattr(
+            "ai_player.ui.player_window_sources.QFileDialog.getOpenFileName",
+            lambda *_args, **_kwargs: (str(video_path), ""),
+        )
+        monkeypatch.setattr(window, "_auto_select_video_aspect_ratio", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(window, "_load_current_video_for_playback", lambda: loaded_paths.append(window._video_path))
+        monkeypatch.setattr(window, "_show_video_output", lambda: shown.append(True))
+        monkeypatch.setattr(window, "_save_settings", lambda: None)
+        monkeypatch.setattr(window, "_stop_dubbing", lambda: None)
+
+        QTest.mouseClick(window._open_file_button, Qt.MouseButton.LeftButton)
+
+        assert loaded_paths == [str(video_path)]
+        assert shown == [True]
+        assert window._video_path == str(video_path)
+        assert window._source_label.text() == str(video_path)
+        assert window._selected_audio_source() == "original"
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
 def test_document_editor_source_creates_transcript_timeline(qapp, tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(document_reader, "CONFIG_DIR", tmp_path)
     window = PlayerWindow()
