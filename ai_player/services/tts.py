@@ -340,9 +340,9 @@ def normalize_vieneu_mode(value: object) -> str:
         "default": "turbo",
         "turbo": "turbo",
         "standard": "standard",
-        "remote": "remote",
-        "api": "remote",
-        "remote_api": "remote",
+        "remote": "turbo",
+        "api": "turbo",
+        "remote_api": "turbo",
         "fast": "fast",
         "gpu": "fast",
         "cuda": "fast",
@@ -390,10 +390,7 @@ def normalize_vieneu_backend(value: object) -> str:
 
 
 def resolve_vieneu_effective_mode(core: object, mode: object, device: object) -> str:
-    selected_core = str(core or "local").strip().lower().replace("-", "_").replace(" ", "_")
     selected_mode = normalize_vieneu_mode(mode)
-    if selected_core in {"remote", "remote_api", "api", "remoteapi"}:
-        return "remote"
     return "standard" if selected_mode == "standard" else "turbo"
 
 

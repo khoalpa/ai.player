@@ -135,6 +135,7 @@ def load_app_config(base: AppConfig | None = None) -> AppConfig:
     _migrate_removed_local_models(data)
     _migrate_preserved_source_flags(data)
     _migrate_runtime_warmup_flags(data)
+    _migrate_removed_vieneu_remote(data)
     _migrate_default_vieneu_voices(data)
 
     values: dict[str, Any] = {}
@@ -198,6 +199,25 @@ def _migrate_runtime_warmup_flags(data: dict[str, Any]) -> None:
         data.pop("runtime_warmup_tts", None)
 
 
+def _migrate_removed_vieneu_remote(data: dict[str, Any]) -> None:
+    core = str(data.get("vieneu_tts_core") or "").strip().lower().replace("-", "_").replace(" ", "_")
+    mode = str(data.get("vieneu_tts_mode") or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if core not in {"remote", "remote_api", "api", "remoteapi"} and mode not in {"remote", "remote_api", "api"}:
+        return
+
+    defaults = AppConfig()
+    data["vieneu_tts_core"] = "local"
+    data["vieneu_tts_mode"] = "turbo"
+    data["vieneu_tts_api_base"] = ""
+    data["vieneu_tts_model_name"] = defaults.vieneu_tts_model_name
+    data["vieneu_tts_path"] = defaults.vieneu_tts_path
+    data["vieneu_tts_python"] = defaults.vieneu_tts_python
+    data["vieneu_tts_decoder_path"] = defaults.vieneu_tts_decoder_path
+    data["vieneu_tts_encoder_path"] = defaults.vieneu_tts_encoder_path
+    data["vieneu_tts_standard_codec_path"] = defaults.vieneu_tts_standard_codec_path
+    data["vieneu_tts_offline"] = True
+
+
 def _migrate_default_vieneu_voices(data: dict[str, Any]) -> None:
     if str(data.get("tts_provider") or "vieneu").strip().lower() not in {"", "vieneu"}:
         return
@@ -212,6 +232,7 @@ def _migrate_default_vieneu_voices(data: dict[str, Any]) -> None:
 
 
 def save_app_config(config: AppConfig) -> None:
+    config = _without_removed_vieneu_remote_config(config)
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     save_telegram_blacklist(config.telegram_blacklisted_item_keys, config.telegram_blacklisted_content_keys)
     save_secret_settings(config)
@@ -245,8 +266,29 @@ def save_secret_settings(config: AppConfig) -> None:
 
 def save_runtime_local(config: AppConfig) -> None:
     payload = {"version": 1}
-    payload.update(_config_values(config, RUNTIME_LOCAL_SETTINGS))
+    payload.update(_config_values(_without_removed_vieneu_remote_config(config), RUNTIME_LOCAL_SETTINGS))
     _write_json_object(runtime_local_file_path(), payload)
+
+
+def _without_removed_vieneu_remote_config(config: AppConfig) -> AppConfig:
+    core = str(config.vieneu_tts_core or "").strip().lower().replace("-", "_").replace(" ", "_")
+    mode = str(config.vieneu_tts_mode or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if core not in {"remote", "remote_api", "api", "remoteapi"} and mode not in {"remote", "remote_api", "api"}:
+        return replace(config, vieneu_tts_core="local", vieneu_tts_api_base="")
+    defaults = AppConfig()
+    return replace(
+        config,
+        vieneu_tts_core="local",
+        vieneu_tts_mode="turbo",
+        vieneu_tts_api_base="",
+        vieneu_tts_model_name=defaults.vieneu_tts_model_name,
+        vieneu_tts_path=defaults.vieneu_tts_path,
+        vieneu_tts_python=defaults.vieneu_tts_python,
+        vieneu_tts_decoder_path=defaults.vieneu_tts_decoder_path,
+        vieneu_tts_encoder_path=defaults.vieneu_tts_encoder_path,
+        vieneu_tts_standard_codec_path=defaults.vieneu_tts_standard_codec_path,
+        vieneu_tts_offline=True,
+    )
 
 
 def save_recent_sources(recent_urls) -> None:

@@ -44,3 +44,6 @@ Current extracted owners:
 - `ai_player.ui.player_window_state.TelegramChannelState` owns Telegram channel
   browser items, translations, navigation flags, thumbnail source, and side panel
   state while preserving the existing mixin attribute API.
+- `ai_player.ui.channel_browser` owns pure channel-browser decisions such as
+  Telegram/YouTube provider detection, channel keys, post/video id parsing,
+  media-kind normalization, search text, and filtered item selection.

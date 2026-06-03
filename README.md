@@ -160,6 +160,9 @@ Trang video qua `yt-dlp`:
   extra hosts with `AI_PLAYER_EXTRA_YTDLP_HOSTS`.
 - Internal builds can also install a private Telegram client package for
   Telethon-backed login and authenticated Telegram downloads.
+- YouTube channel and playlist URLs can be browsed in-app; internal builds can
+  install `ai-player-youtube-client` for a dedicated YouTube adapter, otherwise
+  AI Player uses the public YouTube page metadata fallback.
 
 Tài liệu:
 

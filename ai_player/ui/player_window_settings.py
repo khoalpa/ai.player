@@ -306,7 +306,7 @@ class PlayerSettingsMixin:
         return self._vieneu_mode_combo.currentData() or self._config.vieneu_tts_mode
 
     def _selected_vieneu_model_mode(self) -> str:
-        return "remote" if self._selected_vieneu_core() == "remote" else self._selected_vieneu_mode()
+        return self._selected_vieneu_mode()
 
     def _selected_vieneu_model_data(self) -> dict:
         data = self._vieneu_model_combo.currentData()
@@ -316,16 +316,12 @@ class PlayerSettingsMixin:
         return str(self._selected_vieneu_model_data().get("id") or self._config.vieneu_tts_model_name)
 
     def _selected_vieneu_model_offline(self) -> bool:
-        if self._selected_vieneu_core() == "remote":
-            return False
         data = self._selected_vieneu_model_data()
         if "offline" in data:
             return bool(data["offline"])
         return self._config.vieneu_tts_offline
 
     def _selected_vieneu_offline(self) -> bool:
-        if self._selected_vieneu_core() == "remote":
-            return False
         return self._selected_vieneu_model_offline() or self._vieneu_offline_check.isChecked()
 
     def _selected_vieneu_runtime(self) -> str:
@@ -338,7 +334,7 @@ class PlayerSettingsMixin:
         return self._vieneu_backend_combo.currentData() or self._config.vieneu_tts_backend
 
     def _selected_vieneu_core(self) -> str:
-        return self._vieneu_core_combo.currentData() or self._config.vieneu_tts_core
+        return "local"
 
     def _selected_capture_backend(self) -> str:
         return self._capture_backend_combo.currentData() or self._config.capture_backend
@@ -379,9 +375,9 @@ class PlayerSettingsMixin:
     def _sync_vieneu_advanced_controls(self, *_args) -> None:
         if not hasattr(self, "_vieneu_api_base_edit"):
             return
-        remote = self._selected_vieneu_core() == "remote" or self._selected_vieneu_mode() == "remote"
-        self._vieneu_api_base_edit.setEnabled(remote)
-        self._vieneu_offline_check.setEnabled(not remote)
+        self._vieneu_api_base_edit.clear()
+        self._vieneu_api_base_edit.setEnabled(False)
+        self._vieneu_offline_check.setEnabled(True)
 
     def _vieneu_core_changed(self, *_args) -> None:
         self._refresh_vieneu_models()
@@ -493,7 +489,7 @@ class PlayerSettingsMixin:
             vieneu_tts_python=self._vieneu_python_edit.text().strip(),
             vieneu_tts_core=self._selected_vieneu_core(),
             vieneu_tts_mode=self._selected_vieneu_mode(),
-            vieneu_tts_api_base=self._vieneu_api_base_edit.text().strip(),
+            vieneu_tts_api_base="",
             vieneu_tts_model_name=self._selected_vieneu_model(),
             vieneu_tts_decoder_path=self._vieneu_decoder_path_edit.text().strip(),
             vieneu_tts_encoder_path=self._vieneu_encoder_path_edit.text().strip(),
@@ -536,7 +532,7 @@ class PlayerSettingsMixin:
         self._set_combo_data(self._vieneu_runtime_combo, preset.get("vieneu_tts_runtime"))
         self._set_combo_data(self._vieneu_device_combo, preset.get("vieneu_tts_device"))
         self._set_combo_data(self._vieneu_backend_combo, preset.get("vieneu_tts_backend"))
-        self._set_combo_data(self._vieneu_core_combo, preset.get("vieneu_tts_core"))
+        self._set_combo_data(self._vieneu_core_combo, "local")
         self._set_line_edit_text(self._vieneu_decoder_path_edit, preset.get("vieneu_tts_decoder_path"))
         self._set_line_edit_text(self._vieneu_encoder_path_edit, preset.get("vieneu_tts_encoder_path"))
         self._set_line_edit_text(self._vieneu_standard_codec_path_edit, preset.get("vieneu_tts_standard_codec_path"))
@@ -895,11 +891,7 @@ class PlayerSettingsMixin:
             ):
                 self._set_combo_item_text(self._auto_voice_gender_mode_combo, value, self._tr(key))
         if hasattr(self, "_vieneu_core_combo"):
-            for value, key in (
-                ("local", "vieneu_core_local"),
-                ("remote", "vieneu_core_remote"),
-            ):
-                self._set_combo_item_text(self._vieneu_core_combo, value, self._tr(key))
+            self._set_combo_item_text(self._vieneu_core_combo, "local", self._tr("vieneu_core_local"))
         for combo_name in ("_capture_system_device_combo", "_capture_microphone_device_combo"):
             if hasattr(self, combo_name):
                 self._set_combo_item_text(getattr(self, combo_name), "", self._tr("auto"))

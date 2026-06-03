@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-player-telegram-client"
+version = "0.1.0"
+description = "Private Telegram user-client integration for internal AI Player builds"
+requires-python = ">=3.10"
+dependencies = [
+    "telethon>=1.34",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ai_player_telegram_client*"]

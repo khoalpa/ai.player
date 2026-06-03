@@ -208,6 +208,9 @@ def test_telegram_channel_state_tracks_item_open_status() -> None:
 
     assert state.mark_failed(failed) is True
     assert state.item_status(failed) == "failed"
+    state.current_channel_item = failed
+    assert state.item_status(failed) == "failed"
+    state.current_channel_item = None
     assert state.mark_opened(failed) is True
     assert state.item_status(failed) == "opened"
 

@@ -8,6 +8,8 @@ Use this checklist before sharing a build.
   smoke, model, and distribution expectations for this build.
 - Confirm the working tree contains only intended changes with `git status --short --branch`.
 - Review untracked files with `git ls-files -o --exclude-standard` and either add them intentionally or move generated scratch files under ignored paths.
+- Review optional plugin scope against `docs\plugin_policy.md`, especially any
+  untracked source under `plugins\`.
 - Review binary fixture changes separately with `git diff --stat` so regenerated samples are not bundled by accident.
 - Install the release dependency set with `.\.venv\Scripts\python.exe -m pip install -c constraints\windows-release-py310.txt -e ".[dev,packaging,offline-ai,gpu,audio-separation,audit]"`.
 - Run `.\.venv\Scripts\python.exe -m ruff check .`.
@@ -18,6 +20,8 @@ Use this checklist before sharing a build.
 - Leave `AI_PLAYER_INCLUDE_EXTRA_YTDLP_PLUGINS` unset for public release builds.
   Use `scripts\build_internal.ps1` only for internal builds that install private
   yt-dlp plugin packages.
+- Leave `AI_PLAYER_INCLUDE_PRIVATE_TELEGRAM_PLUGIN` unset for public release
+  builds. Use the Internal profile when authenticated client plugins are bundled.
 - Run `.\scripts\audit_dependencies.ps1` and triage any unresolved advisories. If audit tools are not installed yet, run it once with `-InstallTools`.
 - Run `.\scripts\audit_dependencies.ps1 -ReviewAcceptedVulnerabilities`
   before release approval to verify the only remaining findings are explicitly

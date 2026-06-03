@@ -4,7 +4,7 @@ from html import escape as html_escape
 from pathlib import Path
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QRect, QSize, Qt, QTimer, QUrl
+from PySide6.QtCore import QRect, QSignalBlocker, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PySide6.QtWidgets import (
@@ -41,7 +41,20 @@ from ai_player.services.telegram_channel import (
     validate_telegram_login_config,
 )
 from ai_player.services.video_source import inspect_video_url, is_supported_video_url
+from ai_player.services.youtube_channel import (
+    is_youtube_browse_url,
+)
 from ai_player.ui.cache_progress_dialog import CacheProgressDialog
+from ai_player.ui.channel_browser import (
+    channel_item_media_kind,
+    channel_item_search_text,
+    current_channel_provider,
+    filter_channel_items,
+    normalize_channel_filter,
+    telegram_channel_key,
+    telegram_post_id_from_url,
+    youtube_video_id_from_url,
+)
 from ai_player.ui.player_window_utils import repair_mojibake as _repair_mojibake
 from ai_player.workers.player_window_workers import (
     DocumentTranscriptWorker,
@@ -195,6 +208,10 @@ class PlayerSourceMixin:
             self._remember_video_url(url)
             self._start_telegram_channel_flow(url)
             return
+        if is_youtube_browse_url(url):
+            self._remember_video_url(url)
+            self._start_youtube_channel_flow(url)
+            return
 
         self._open_resolved_video_url(url, full_cache_override=dialog.full_cache)
 
@@ -208,8 +225,11 @@ class PlayerSourceMixin:
         if is_telegram_channel_url(url):
             self._start_telegram_channel_flow(url)
             return
+        if is_youtube_browse_url(url):
+            self._start_youtube_channel_flow(url)
+            return
         if is_supported_video_url(url):
-            self._open_resolved_video_url(url)
+            self._open_resolved_video_url(url, browser_fallback_on_unavailable=True)
 
     def _open_resolved_video_url(
         self,
@@ -217,6 +237,7 @@ class PlayerSourceMixin:
         *,
         keep_telegram_context: bool = False,
         full_cache_override: bool | None = None,
+        browser_fallback_on_unavailable: bool = False,
     ) -> None:
         if not keep_telegram_context and not is_telegram_channel_url(url):
             self._clear_active_telegram_channel_video()
@@ -251,6 +272,7 @@ class PlayerSourceMixin:
             "full_cache": full_cache,
             "quality": self._config.playback_video_quality,
             "keep_telegram_context": keep_telegram_context,
+            "browser_fallback_on_unavailable": browser_fallback_on_unavailable,
         }
         self._video_url.start(
             url,
@@ -273,6 +295,7 @@ class PlayerSourceMixin:
         if self._telegram_is_busy():
             QMessageBox.information(self, self._tr("app_title"), self._tr("msg_url_opening"))
             return
+        self._telegram_channel_provider = "telegram"
         self._pending_telegram_url = url
         self._pending_telegram_post_id = self._telegram_post_id_from_url(url)
         self._queue_save_settings()
@@ -281,6 +304,17 @@ class PlayerSourceMixin:
             self._start_private_telegram_channel_flow(url)
             return
         self._start_telegram_worker("list_public", url=url, status_key="status_telegram_channel_loading")
+
+    def _start_youtube_channel_flow(self, url: str) -> None:
+        if self._telegram_is_busy():
+            QMessageBox.information(self, self._tr("app_title"), self._tr("msg_url_opening"))
+            return
+        self._telegram_channel_provider = "youtube"
+        self._pending_telegram_url = url
+        self._pending_telegram_post_id = self._youtube_video_id_from_url(url)
+        self._queue_save_settings()
+        self._show_telegram_channel_browser(url, self._tr("youtube_channel_browser_loading"))
+        self._start_telegram_worker("list_youtube", url=url, status_key="status_youtube_channel_loading")
 
     def _start_private_telegram_channel_flow(self, url: str) -> None:
         if not telegram_private_available():
@@ -347,7 +381,14 @@ class PlayerSourceMixin:
         worker.start()
 
     def _telegram_items_ready(self, items, operation: str = "") -> None:
+        continuation = ""
+        if hasattr(items, "items"):
+            continuation = str(getattr(items, "continuation", "") or "")
+            items = getattr(items, "items", [])
         items = list(items)
+        if operation in {"list_youtube", "list_youtube_more"}:
+            self._telegram_channel_provider = "youtube"
+            self._telegram_channel_state.channel_continuation = continuation
         if operation.endswith("_more"):
             self._telegram_auto_load_pending_before_post_id = ""
             self._append_telegram_channel_items(items)
@@ -357,6 +398,11 @@ class PlayerSourceMixin:
         if operation in {"list_authenticated", "list_authenticated_more"}:
             self._telegram_channel_authenticated = True
             self.statusBar().showMessage(self._tr("status_telegram_login_ready"))
+        elif operation in {"list_youtube", "list_youtube_more"}:
+            self._telegram_channel_authenticated = False
+            self.statusBar().showMessage(
+                self._tr("youtube_channel_browser_ready").format(count=len(self._telegram_channel_all_items))
+            )
         else:
             self._telegram_channel_authenticated = False
             self.statusBar().showMessage(
@@ -383,10 +429,18 @@ class PlayerSourceMixin:
         self._telegram_channel_preview.clear()
         self._clear_telegram_channel_thumbnail()
         self._apply_telegram_browser_preferences(url)
-        self._telegram_channel_title.setText(self._tr("telegram_channel_browser_title").format(url=url))
+        self._sync_channel_browser_texts()
+        title_key = (
+            "youtube_channel_browser_title"
+            if self._current_channel_provider() == "youtube"
+            else "telegram_channel_browser_title"
+        )
+        self._telegram_channel_title.setText(self._tr(title_key).format(url=url))
         self._telegram_channel_status.setText(status)
         self._telegram_channel_open_button.setEnabled(False)
-        self._telegram_channel_login_button.setEnabled(telegram_private_available())
+        self._telegram_channel_login_button.setEnabled(
+            self._current_channel_provider() == "telegram" and telegram_private_available()
+        )
         self._telegram_channel_refresh_button.setEnabled(True)
         self._telegram_channel_load_more_button.setEnabled(True)
         self._telegram_channel_thumbnail.setText("")
@@ -408,9 +462,20 @@ class PlayerSourceMixin:
         self._reset_document_state_for_video()
         self._video_path = None
         self._runtime_media_path = ""
-        self._telegram_channel_title.setText(self._tr("telegram_channel_browser_title").format(url=url))
+        title_key = (
+            "youtube_channel_browser_title"
+            if self._current_channel_provider() == "youtube"
+            else "telegram_channel_browser_title"
+        )
+        ready_key = (
+            "youtube_channel_browser_ready"
+            if self._current_channel_provider() == "youtube"
+            else "telegram_channel_browser_ready"
+        )
+        self._sync_channel_browser_texts()
+        self._telegram_channel_title.setText(self._tr(title_key).format(url=url))
         self._telegram_channel_status.setText(
-            self._tr("telegram_channel_browser_ready").format(count=len(self._telegram_channel_all_items))
+            self._tr(ready_key).format(count=len(self._telegram_channel_all_items))
         )
         current = self._current_telegram_channel_item_for_navigation()
         if current is not None:
@@ -441,6 +506,21 @@ class PlayerSourceMixin:
         if callable(set_video_output):
             set_video_output(self._video_widget)
         self._show_telegram_thumbnail_output()
+
+    def _sync_channel_browser_texts(self) -> None:
+        provider = self._current_channel_provider()
+        search = getattr(self, "_telegram_channel_search", None)
+        remote_search = getattr(self, "_telegram_channel_remote_search_button", None)
+        if search is not None:
+            search_key = "youtube_channel_search" if provider == "youtube" else "telegram_channel_search"
+            search.setPlaceholderText(self._tr(search_key))
+        if remote_search is not None:
+            remote_key = (
+                "youtube_channel_remote_search"
+                if provider == "youtube"
+                else "telegram_channel_remote_search"
+            )
+            remote_search.setText(self._tr(remote_key))
 
     def _should_embed_telegram_video_output(self) -> bool:
         return bool(
@@ -545,31 +625,44 @@ class PlayerSourceMixin:
 
     def _populate_telegram_channel_browser(self, items) -> None:
         self._telegram_channel_state.set_visible_items(items)
-        self._telegram_channel_list.clear()
+        list_widget = self._telegram_channel_list
         self._telegram_populating_browser = True
-        for index, channel_item in enumerate(self._telegram_channel_items):
-            label = self._telegram_channel_item_label(channel_item)
-            item = QListWidgetItem(label)
-            item.setToolTip(str(getattr(channel_item, "url", "") or "").strip())
-            item.setSizeHint(QSize(0, self._telegram_channel_item_height(label)))
-            item.setData(Qt.ItemDataRole.UserRole, index)
-            item.setData(TELEGRAM_ITEM_HTML_ROLE, self._telegram_channel_item_html(channel_item, summary=True))
-            button_key = (
-                "telegram_unblacklist_button"
-                if self._telegram_channel_state.is_blacklisted(channel_item)
-                else "telegram_blacklist_button"
-            )
-            item.setData(TELEGRAM_BLACKLIST_BUTTON_ROLE, self._tr(button_key))
-            self._set_telegram_item_thumbnail(item, channel_item, index)
-            self._telegram_channel_list.addItem(item)
-        if self._telegram_channel_items:
-            target_row = self._telegram_target_row()
-            self._telegram_channel_list.setCurrentRow(target_row if target_row >= 0 else 0)
-        self._telegram_populating_browser = False
-        self._telegram_channel_status.setText(
-            self._tr("telegram_channel_browser_ready").format(count=len(self._telegram_channel_all_items))
+        blocker = QSignalBlocker(list_widget)
+        try:
+            list_widget.clear()
+            for index, channel_item in enumerate(self._telegram_channel_items):
+                label = self._telegram_channel_item_label(channel_item)
+                item = QListWidgetItem(label)
+                item.setToolTip(str(getattr(channel_item, "url", "") or "").strip())
+                item.setSizeHint(QSize(0, self._telegram_channel_item_height(label)))
+                item.setData(Qt.ItemDataRole.UserRole, index)
+                item.setData(TELEGRAM_ITEM_HTML_ROLE, self._telegram_channel_item_html(channel_item, summary=True))
+                button_key = (
+                    "telegram_unblacklist_button"
+                    if self._telegram_channel_state.is_blacklisted(channel_item)
+                    else "telegram_blacklist_button"
+                )
+                item.setData(TELEGRAM_BLACKLIST_BUTTON_ROLE, self._tr(button_key))
+                self._set_telegram_item_thumbnail(item, channel_item, index)
+                list_widget.addItem(item)
+            if self._telegram_channel_items:
+                target_row = self._telegram_target_row()
+                list_widget.setCurrentRow(target_row if target_row >= 0 else 0)
+            self._telegram_channel_selection_changed(list_widget.currentItem(), None)
+        finally:
+            del blocker
+            self._telegram_populating_browser = False
+        ready_key = (
+            "youtube_channel_browser_ready"
+            if self._current_channel_provider() == "youtube"
+            else "telegram_channel_browser_ready"
         )
-        self._telegram_channel_login_button.setEnabled(telegram_private_available())
+        self._telegram_channel_status.setText(
+            self._tr(ready_key).format(count=len(self._telegram_channel_all_items))
+        )
+        self._telegram_channel_login_button.setEnabled(
+            self._current_channel_provider() == "telegram" and telegram_private_available()
+        )
 
     def _telegram_channel_item_label(self, channel_item) -> str:
         return "\n".join(self._telegram_channel_item_summary_lines(channel_item))
@@ -702,21 +795,14 @@ class PlayerSourceMixin:
             media_filter = str(self._telegram_channel_filter_combo.currentData() or "all")
         query = ""
         if hasattr(self, "_telegram_channel_search"):
-            query = " ".join(self._telegram_channel_search.text().lower().split())
-        filtered = []
-        for item in all_items:
-            is_blacklisted = self._telegram_channel_state.is_blacklisted(item)
-            if media_filter == "blacklist":
-                if not is_blacklisted:
-                    continue
-            elif is_blacklisted:
-                continue
-            media_kind = self._telegram_media_kind(item)
-            if media_filter not in {"all", "blacklist"} and media_kind != media_filter:
-                continue
-            if query and query not in self._telegram_item_search_text(item):
-                continue
-            filtered.append(item)
+            query = self._telegram_channel_search.text()
+        filtered = filter_channel_items(
+            all_items,
+            media_filter=media_filter,
+            query=query,
+            is_blacklisted=self._telegram_channel_state.is_blacklisted,
+            translation_for_item=self._telegram_channel_item_translation,
+        )
         self._populate_telegram_channel_browser(filtered)
 
     def _telegram_search_changed(self, *_args) -> None:
@@ -766,21 +852,10 @@ class PlayerSourceMixin:
         self._filter_telegram_channel_items()
 
     def _telegram_item_search_text(self, channel_item) -> str:
-        return " ".join(
-            str(value or "")
-            for value in (
-                getattr(channel_item, "title", ""),
-                getattr(channel_item, "text", ""),
-                self._telegram_channel_item_translation(channel_item),
-                getattr(channel_item, "file_name", ""),
-                getattr(channel_item, "duration", ""),
-                getattr(channel_item, "url", ""),
-                getattr(channel_item, "media_url", ""),
-                self._telegram_media_kind(channel_item),
-                getattr(channel_item, "post_id", ""),
-                getattr(channel_item, "date", ""),
-            )
-        ).lower()
+        return channel_item_search_text(
+            channel_item,
+            translation_for_item=self._telegram_channel_item_translation,
+        )
 
     def _telegram_target_row(self) -> int:
         target_post_id = str(getattr(self, "_pending_telegram_post_id", "") or "")
@@ -793,10 +868,7 @@ class PlayerSourceMixin:
 
     @staticmethod
     def _telegram_post_id_from_url(url: str) -> str:
-        parts = [part for part in urlparse(str(url or "").strip()).path.strip("/").split("/") if part]
-        if len(parts) == 2 and parts[1].isdigit():
-            return parts[1]
-        return ""
+        return telegram_post_id_from_url(url)
 
     def _telegram_channel_selection_changed(self, current, _previous=None) -> None:
         channel_item = self._telegram_channel_item_from_list_item(current)
@@ -831,6 +903,8 @@ class PlayerSourceMixin:
             return
         if not getattr(channel_item, "has_video", True):
             return
+        if self._telegram_channel_item_auto_open_blocked(channel_item):
+            return
         if self._telegram_is_busy() or self._url_is_opening():
             self._queue_pending_telegram_channel_item(channel_item)
             return
@@ -844,6 +918,10 @@ class PlayerSourceMixin:
             self._open_telegram_channel_item(channel_item)
         finally:
             self._telegram_selection_auto_opening = False
+
+    def _telegram_channel_item_auto_open_blocked(self, channel_item) -> bool:
+        status = self._telegram_channel_state.item_status(channel_item)
+        return status in {"failed", "loading", "queued"} or self._telegram_channel_state.is_blacklisted(channel_item)
 
     def _telegram_load_more_toggled(self, enabled: bool) -> None:
         if enabled:
@@ -864,12 +942,16 @@ class PlayerSourceMixin:
         threshold = max(24, scroll_bar.pageStep())
         if scroll_bar.value() < scroll_bar.maximum() - threshold:
             return
-        before_post_id = self._oldest_telegram_post_id()
-        if not before_post_id:
+        cursor = (
+            str(getattr(self._telegram_channel_state, "channel_continuation", "") or "")
+            if self._current_channel_provider() == "youtube"
+            else self._oldest_telegram_post_id()
+        )
+        if not cursor:
             return
-        if before_post_id == getattr(self, "_telegram_auto_load_pending_before_post_id", ""):
+        if cursor == getattr(self, "_telegram_auto_load_pending_before_post_id", ""):
             return
-        self._telegram_auto_load_pending_before_post_id = before_post_id
+        self._telegram_auto_load_pending_before_post_id = cursor
         self._load_more_current_telegram_channel()
 
     def _telegram_translation_toggled(self, enabled: bool) -> None:
@@ -1064,10 +1146,7 @@ class PlayerSourceMixin:
             self.statusBar().showMessage(self._tr("telegram_channel_text_only"))
 
     def _telegram_media_kind(self, channel_item) -> str:
-        media_kind = str(getattr(channel_item, "media_kind", "") or "").strip().lower()
-        if media_kind:
-            return media_kind
-        return "video" if getattr(channel_item, "has_video", True) else "text"
+        return channel_item_media_kind(channel_item)
 
     def _telegram_media_kind_label(self, channel_item) -> str:
         key = {
@@ -1108,7 +1187,12 @@ class PlayerSourceMixin:
         self._set_active_telegram_channel_video(channel_item)
         self._telegram_browser_return_available = True
         self._refresh_telegram_channel_item_statuses()
-        self.statusBar().showMessage(self._tr("status_telegram_channel_selected").format(label=channel_item.title))
+        selected_key = (
+            "status_youtube_channel_selected"
+            if self._current_channel_provider() == "youtube"
+            else "status_telegram_channel_selected"
+        )
+        self.statusBar().showMessage(self._tr(selected_key).format(label=channel_item.title))
         if getattr(channel_item, "authenticated", False):
             self._download_telegram_channel_item(channel_item, prompt_for_config=True)
             return
@@ -1118,9 +1202,11 @@ class PlayerSourceMixin:
         if media_url:
             self._open_resolved_video_url(media_url, keep_telegram_context=True)
             return
-        self._open_resolved_video_url(channel_item.url)
+        self._open_resolved_video_url(channel_item.url, keep_telegram_context=True)
 
     def _download_telegram_channel_item(self, channel_item, *, prompt_for_config: bool = False) -> bool:
+        if str(getattr(channel_item, "provider", "telegram") or "telegram") != "telegram":
+            return False
         config = load_telegram_login_config() if telegram_private_available() else None
         if config is None and prompt_for_config and telegram_private_available():
             config = self._telegram_login_config_dialog()
@@ -1173,7 +1259,7 @@ class PlayerSourceMixin:
             self._load_more_current_telegram_channel()
             return True
         self._pending_telegram_autoplay = False
-        key = "telegram_channel_no_previous_video" if direction < 0 else "telegram_channel_no_next_video"
+        key = self._no_adjacent_channel_video_key(direction)
         self.statusBar().showMessage(self._tr(key))
         return True
 
@@ -1254,9 +1340,14 @@ class PlayerSourceMixin:
                 self._telegram_channel_list.setCurrentRow(row)
                 return True
             row += direction
-        key = "telegram_channel_no_previous_video" if direction < 0 else "telegram_channel_no_next_video"
+        key = self._no_adjacent_channel_video_key(direction)
         self.statusBar().showMessage(self._tr(key))
         return True
+
+    def _no_adjacent_channel_video_key(self, direction: int) -> str:
+        if self._current_channel_provider() == "youtube":
+            return "youtube_channel_no_previous_video" if direction < 0 else "youtube_channel_no_next_video"
+        return "telegram_channel_no_previous_video" if direction < 0 else "telegram_channel_no_next_video"
 
     def _telegram_channel_item_from_list_item(self, item):
         if item is None:
@@ -1298,6 +1389,15 @@ class PlayerSourceMixin:
     def _reload_current_telegram_channel(self, *, search: str = "", status_key: str = "") -> None:
         if not self._pending_telegram_url:
             return
+        if self._current_channel_provider() == "youtube":
+            self._show_telegram_channel_browser(self._pending_telegram_url, self._tr("youtube_channel_browser_loading"))
+            self._start_telegram_worker(
+                "list_youtube",
+                url=self._pending_telegram_url,
+                search=search,
+                status_key=status_key or "status_youtube_channel_searching",
+            )
+            return
         was_authenticated = bool(getattr(self, "_telegram_channel_authenticated", False))
         self._show_telegram_channel_browser(self._pending_telegram_url, self._tr("telegram_channel_browser_loading"))
         config = load_telegram_login_config() if telegram_private_available() else None
@@ -1319,6 +1419,17 @@ class PlayerSourceMixin:
 
     def _load_more_current_telegram_channel(self) -> None:
         if not self._pending_telegram_url or self._telegram_is_busy():
+            return
+        if self._current_channel_provider() == "youtube":
+            continuation = str(getattr(self._telegram_channel_state, "channel_continuation", "") or "")
+            if not continuation:
+                return
+            self._start_telegram_worker(
+                "list_youtube_more",
+                url=self._pending_telegram_url,
+                before_post_id=continuation,
+                status_key="status_youtube_channel_loading",
+            )
             return
         before_post_id = self._oldest_telegram_post_id()
         if not before_post_id:
@@ -1351,6 +1462,16 @@ class PlayerSourceMixin:
                 post_ids.append(int(post_id))
         return str(min(post_ids)) if post_ids else ""
 
+    def _current_channel_provider(self) -> str:
+        return current_channel_provider(
+            getattr(self, "_telegram_channel_provider", ""),
+            getattr(self, "_pending_telegram_url", ""),
+        )
+
+    @staticmethod
+    def _youtube_video_id_from_url(url: str) -> str:
+        return youtube_video_id_from_url(url)
+
     def _telegram_current_search(self) -> str:
         if not hasattr(self, "_telegram_channel_search"):
             return ""
@@ -1359,8 +1480,7 @@ class PlayerSourceMixin:
     def _telegram_current_filter(self) -> str:
         if not hasattr(self, "_telegram_channel_filter_combo"):
             return "all"
-        value = str(self._telegram_channel_filter_combo.currentData() or "all")
-        return value if value in {"all", "video", "photo", "document", "audio", "text", "blacklist"} else "all"
+        return normalize_channel_filter(self._telegram_channel_filter_combo.currentData())
 
     def _telegram_last_url_for_settings(self) -> str:
         return str(getattr(self, "_pending_telegram_url", "") or self._config.telegram_last_url or "")
@@ -1424,18 +1544,7 @@ class PlayerSourceMixin:
 
     @staticmethod
     def _telegram_channel_key(url: str) -> str:
-        parsed = urlparse(str(url or "").strip())
-        host = parsed.netloc.lower()
-        parts = [part for part in parsed.path.strip("/").split("/") if part]
-        if host not in {"t.me", "telegram.me"}:
-            return ""
-        if len(parts) >= 2 and parts[0] == "s":
-            return f"{host}/{parts[1].lower()}"
-        if len(parts) >= 3 and parts[0] == "c":
-            return f"{host}/c/{parts[1]}"
-        if parts:
-            return f"{host}/{parts[0].lower()}"
-        return ""
+        return telegram_channel_key(url)
 
     def _telegram_video_ready(self, path: str) -> None:
         if self._telegram_open_result_is_stale():
@@ -1479,6 +1588,8 @@ class PlayerSourceMixin:
         self._play_active_source()
 
     def _queue_pending_telegram_channel_item(self, channel_item) -> None:
+        if self._telegram_channel_item_auto_open_blocked(channel_item):
+            return
         self._telegram_channel_state.pending_open_item_key = self._telegram_channel_item_key(channel_item)
         self.statusBar().showMessage(self._tr("msg_url_opening"))
 
@@ -1491,6 +1602,8 @@ class PlayerSourceMixin:
         self._telegram_channel_state.pending_open_item_key = ""
         channel_item = self._telegram_channel_item_by_key(key)
         if channel_item is None or not getattr(channel_item, "has_video", True):
+            return
+        if self._telegram_channel_item_auto_open_blocked(channel_item):
             return
         self._open_telegram_channel_item(channel_item)
 
@@ -1614,7 +1727,9 @@ class PlayerSourceMixin:
                 widget.setEnabled(enabled)
         login_button = getattr(self, "_telegram_channel_login_button", None)
         if login_button is not None:
-            login_button.setEnabled(enabled and telegram_private_available())
+            login_button.setEnabled(
+                enabled and self._current_channel_provider() == "telegram" and telegram_private_available()
+            )
 
     def _confirm_telegram_login(self, public_error: str) -> bool:
         message = f"{_repair_mojibake(public_error)}\n\n{self._tr('telegram_login_prompt')}"
@@ -1763,19 +1878,52 @@ class PlayerSourceMixin:
         detail = _repair_mojibake(message)
         if self._cache_dialog is not None:
             self._cache_dialog.mark_failed(detail)
+        if self._youtube_channel_item_open_failed():
+            if self._media_stack.currentWidget() is not self._telegram_channel_view:
+                self._return_to_telegram_channel_browser()
+            self._telegram_channel_status.setText(detail)
+            self.statusBar().showMessage(
+                self._tr("youtube_channel_browser_ready").format(count=len(self._telegram_channel_all_items))
+            )
+            QTimer.singleShot(0, self._open_pending_telegram_channel_item)
+            return
+        if self._browser_video_url_should_fallback(detail):
+            self._open_video_url_in_browser(str(self._last_video_url_request.get("url") or ""))
+            QTimer.singleShot(0, self._open_pending_telegram_channel_item)
+            return
         self.statusBar().showMessage(self._tr("status_open_url_failed"))
         self._handle_video_url_failure_action(detail)
         QTimer.singleShot(0, self._open_pending_telegram_channel_item)
+
+    def _youtube_channel_item_open_failed(self) -> bool:
+        request = getattr(self, "_last_video_url_request", None)
+        return bool(
+            isinstance(request, dict)
+            and request.get("keep_telegram_context")
+            and self._current_channel_provider() == "youtube"
+            and getattr(self, "_current_telegram_channel_item", None) is not None
+        )
+
+    def _browser_video_url_should_fallback(self, detail: str) -> bool:
+        request = getattr(self, "_last_video_url_request", None)
+        return bool(
+            isinstance(request, dict)
+            and request.get("browser_fallback_on_unavailable")
+            and self._video_url_failure_is_unrecoverable(detail)
+            and self._can_open_video_url_in_browser(str(request.get("url") or ""))
+        )
 
     def _video_url_finished(self) -> None:
         retry = getattr(self, "_pending_video_url_retry", None)
         if isinstance(retry, dict):
             self._pending_video_url_retry = None
-            self._open_resolved_video_url(
-                str(retry.get("url") or ""),
-                keep_telegram_context=bool(retry.get("keep_telegram_context")),
-                full_cache_override=bool(retry.get("full_cache")),
-            )
+            kwargs = {
+                "keep_telegram_context": bool(retry.get("keep_telegram_context")),
+                "full_cache_override": bool(retry.get("full_cache")),
+            }
+            if retry.get("browser_fallback_on_unavailable"):
+                kwargs["browser_fallback_on_unavailable"] = True
+            self._open_resolved_video_url(str(retry.get("url") or ""), **kwargs)
             return
         QTimer.singleShot(0, self._open_pending_telegram_channel_item)
 
@@ -1872,13 +2020,17 @@ class PlayerSourceMixin:
                 "keep_telegram_context": bool(request.get("keep_telegram_context")),
                 "full_cache": full_cache,
             }
+            if request.get("browser_fallback_on_unavailable"):
+                self._pending_video_url_retry["browser_fallback_on_unavailable"] = True
             self.statusBar().showMessage(self._tr("status_open_url_retry_pending"))
             return
-        self._open_resolved_video_url(
-            url,
-            keep_telegram_context=bool(request.get("keep_telegram_context")),
-            full_cache_override=full_cache,
-        )
+        kwargs = {
+            "keep_telegram_context": bool(request.get("keep_telegram_context")),
+            "full_cache_override": full_cache,
+        }
+        if request.get("browser_fallback_on_unavailable"):
+            kwargs["browser_fallback_on_unavailable"] = True
+        self._open_resolved_video_url(url, **kwargs)
 
     @staticmethod
     def _lower_playback_quality_value(value: str) -> str:
@@ -1920,7 +2072,11 @@ class PlayerSourceMixin:
         )
         self._filter_telegram_channel_items()
         if current_key:
-            self._select_telegram_channel_item_key(current_key)
+            self._telegram_suppress_auto_open_selection = True
+            try:
+                self._select_telegram_channel_item_key(current_key)
+            finally:
+                self._telegram_suppress_auto_open_selection = False
 
     def _save_transcript(self) -> None:
         text = self._transcript_text(self._selected_transcript_view(), self._selected_transcript_type())

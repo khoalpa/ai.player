@@ -39,6 +39,7 @@ from ai_player.services.telegram_channel import (
 )
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
 from ai_player.services.video_source import resolve_video_source
+from ai_player.services.youtube_channel import list_youtube_channel_items
 from ai_player.workers.worker_values import selected_source_language
 
 LOGGER = get_logger(__name__)
@@ -240,6 +241,15 @@ class TelegramChannelWorker(QThread):
                         self._url,
                         self._config,
                         before_post_id=self._before_post_id,
+                        search=self._search,
+                        language_id=self._language_id,
+                    )
+                )
+            elif self.operation in {"list_youtube", "list_youtube_more"}:
+                self.videos_ready.emit(
+                    list_youtube_channel_items(
+                        self._url,
+                        continuation=self._before_post_id,
                         search=self._search,
                         language_id=self._language_id,
                     )

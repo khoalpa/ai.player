@@ -436,11 +436,13 @@ if QWebEnginePage is not None:
                 self.settings().setUnknownUrlSchemePolicy(
                     QWebEngineSettings.UnknownUrlSchemePolicy.AllowAllUnknownUrlSchemes
                 )
+                self.settings().setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
             self._install_telegram_link_script()
             self.urlChanged.connect(self._redirect_telegram_channel_landing)
             self.loadFinished.connect(self._page_load_finished)
             self.newWindowRequested.connect(self._open_new_window_in_player)
             self.linkHovered.connect(self._supported_link_hovered)
+            self.fullScreenRequested.connect(self._full_screen_requested)
             self._hovered_supported_url = QUrl()
 
         def acceptNavigationRequest(self, url, navigation_type, is_main_frame):  # noqa: N802
@@ -501,6 +503,14 @@ if QWebEnginePage is not None:
 
         def _open_hovered_telegram_url(self) -> bool:
             return self._open_hovered_supported_url()
+
+        def _full_screen_requested(self, request) -> None:
+            request.accept()
+            view = self._attached_view()
+            window = view.window() if view is not None else None
+            set_fullscreen = getattr(window, "_set_video_fullscreen", None)
+            if callable(set_fullscreen):
+                set_fullscreen(bool(request.toggleOn()))
 
         def _redirect_telegram_channel_landing(self, url: QUrl) -> None:
             target = _telegram_in_player_url(url, channel_preview=False)
@@ -1661,12 +1671,11 @@ class PlayerLayoutMixin:
         self._vieneu_core_combo = QComboBox()
         self._compact_combo(self._vieneu_core_combo)
         self._vieneu_core_combo.addItem(self._tr("vieneu_core_local"), "local")
-        self._vieneu_core_combo.addItem(self._tr("vieneu_core_remote"), "remote")
-        self._vieneu_core_combo.setCurrentIndex(max(0, self._vieneu_core_combo.findData(self._config.vieneu_tts_core)))
+        self._vieneu_core_combo.setCurrentIndex(0)
         self._vieneu_path_edit = QLineEdit(self._config.vieneu_tts_path)
         self._vieneu_python_edit = QLineEdit(self._config.vieneu_tts_python)
-        self._vieneu_api_base_edit = QLineEdit(self._config.vieneu_tts_api_base)
-        self._vieneu_api_base_edit.setPlaceholderText("http://localhost:23333/v1")
+        self._vieneu_api_base_edit = QLineEdit("")
+        self._vieneu_api_base_edit.setEnabled(False)
         self._vieneu_decoder_path_edit = QLineEdit(self._config.vieneu_tts_decoder_path)
         self._vieneu_encoder_path_edit = QLineEdit(self._config.vieneu_tts_encoder_path)
         self._vieneu_standard_codec_path_edit = QLineEdit(self._config.vieneu_tts_standard_codec_path)
@@ -1865,14 +1874,12 @@ class PlayerLayoutMixin:
         tts_advanced_grid.addWidget(self._vieneu_path_edit, 0, 1)
         tts_advanced_grid.addWidget(self._field_label("vieneu_python"), 1, 0)
         tts_advanced_grid.addWidget(self._vieneu_python_edit, 1, 1)
-        tts_advanced_grid.addWidget(self._field_label("vieneu_api_base"), 2, 0)
-        tts_advanced_grid.addWidget(self._vieneu_api_base_edit, 2, 1)
-        tts_advanced_grid.addWidget(self._field_label("vieneu_decoder_path"), 3, 0)
-        tts_advanced_grid.addWidget(self._vieneu_decoder_path_edit, 3, 1)
-        tts_advanced_grid.addWidget(self._field_label("vieneu_encoder_path"), 4, 0)
-        tts_advanced_grid.addWidget(self._vieneu_encoder_path_edit, 4, 1)
-        tts_advanced_grid.addWidget(self._field_label("vieneu_standard_codec_path"), 5, 0)
-        tts_advanced_grid.addWidget(self._vieneu_standard_codec_path_edit, 5, 1)
+        tts_advanced_grid.addWidget(self._field_label("vieneu_decoder_path"), 2, 0)
+        tts_advanced_grid.addWidget(self._vieneu_decoder_path_edit, 2, 1)
+        tts_advanced_grid.addWidget(self._field_label("vieneu_encoder_path"), 3, 0)
+        tts_advanced_grid.addWidget(self._vieneu_encoder_path_edit, 3, 1)
+        tts_advanced_grid.addWidget(self._field_label("vieneu_standard_codec_path"), 4, 0)
+        tts_advanced_grid.addWidget(self._vieneu_standard_codec_path_edit, 4, 1)
 
         cleanup_grid = QGridLayout()
         cleanup_grid.setHorizontalSpacing(8)
@@ -2170,7 +2177,6 @@ class PlayerLayoutMixin:
             ("_vieneu_max_chars_slider", "tts_max_chars"),
             ("_vieneu_path_edit", "vieneu_path"),
             ("_vieneu_python_edit", "vieneu_python"),
-            ("_vieneu_api_base_edit", "vieneu_api_base"),
             ("_vieneu_decoder_path_edit", "vieneu_decoder_path"),
             ("_vieneu_encoder_path_edit", "vieneu_encoder_path"),
             ("_vieneu_standard_codec_path_edit", "vieneu_standard_codec_path"),

@@ -12,6 +12,7 @@ from ai_player.core.config import LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH, LOCAL_T
 from ai_player.services import document_reader
 from ai_player.services.document_reader import DocumentPage
 from ai_player.services.telegram_channel import TelegramChannelVideo
+from ai_player.services.youtube_channel import YouTubeChannelItem
 from ai_player.ui.player_window import PlayerWindow
 from ai_player.ui.player_window_layout import (
     DEFAULT_MEDIA_ASPECT_RATIO,
@@ -273,6 +274,34 @@ def test_browser_telegram_invite_uses_player_open_url_flow(qapp, monkeypatch) ->
         window.close()
 
 
+def test_browser_youtube_channel_uses_channel_browser_flow(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    opened: list[str] = []
+    try:
+        monkeypatch.setattr(window, "_start_youtube_channel_flow", lambda url: opened.append(url))
+
+        window._open_url_from_browser("https://www.youtube.com/@stapleai")
+
+        assert opened == ["https://www.youtube.com/@stapleai"]
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_browser_video_open_records_browser_fallback(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    try:
+        monkeypatch.setattr(window._video_url, "start", lambda *_args, **_kwargs: True)
+
+        window._open_url_from_browser("https://www.youtube.com/watch?v=HaptpffiOjE")
+
+        assert window._last_video_url_request["url"] == "https://www.youtube.com/watch?v=HaptpffiOjE"
+        assert window._last_video_url_request["browser_fallback_on_unavailable"] is True
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
 def test_telegram_deep_link_stays_in_player_browser() -> None:
     assert (
         _telegram_in_player_url(QUrl("tg://resolve?domain=DouyinFuliqun&post=2711")).toString()
@@ -315,6 +344,9 @@ def test_supported_browser_link_uses_player_open_url_flow() -> None:
     assert _player_supported_browser_url(
         QUrl("https://www.google.com/url?q=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dabc123")
     ).toString() == "https://www.youtube.com/watch?v=abc123"
+    assert _player_supported_browser_url(
+        QUrl("https://www.google.com/url?q=https%3A%2F%2Fwww.youtube.com%2F%40stapleai")
+    ).toString() == "https://www.youtube.com/@stapleai"
     assert _player_supported_browser_url(QUrl("https://cdn.example.test/video.mp4")).toString() == (
         "https://cdn.example.test/video.mp4"
     )
@@ -380,6 +412,46 @@ def test_telegram_page_redirects_tg_scheme_without_external_app(qapp, monkeypatc
             "https://www.youtube.com/watch?v=abc123",
             "https://www.youtube.com/watch?v=abc123",
         ]
+    finally:
+        page.deleteLater()
+
+
+def test_webengine_page_accepts_youtube_fullscreen_requests(qapp) -> None:
+    if _InPlayerWebEnginePage is None:
+        return
+    page = _InPlayerWebEnginePage()
+    calls: list[bool] = []
+
+    class FakeRequest:
+        def __init__(self, enabled: bool) -> None:
+            self._enabled = enabled
+            self.accepted = False
+
+        def accept(self) -> None:
+            self.accepted = True
+
+        def toggleOn(self) -> bool:  # noqa: N802
+            return self._enabled
+
+    class FakeWindow:
+        def _set_video_fullscreen(self, enabled: bool) -> None:
+            calls.append(enabled)
+
+    class FakeView:
+        def window(self) -> FakeWindow:
+            return FakeWindow()
+
+    try:
+        enter = FakeRequest(True)
+        leave = FakeRequest(False)
+        page._attached_view = lambda: FakeView()
+
+        page._full_screen_requested(enter)
+        page._full_screen_requested(leave)
+
+        assert enter.accepted is True
+        assert leave.accepted is True
+        assert calls == [True, False]
     finally:
         page.deleteLater()
 
@@ -493,6 +565,114 @@ def test_player_window_telegram_browser_up_down_selects_visible_videos(qapp) -> 
         assert window._telegram_channel_list.currentRow() == 2
         assert window._select_adjacent_telegram_channel_video(-1) is True
         assert window._telegram_channel_list.currentRow() == 0
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_youtube_status_refresh_does_not_auto_open_during_rebuild(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    opened: list[str] = []
+    try:
+        items = [
+            YouTubeChannelItem("Video 1", "https://www.youtube.com/watch?v=one", "one"),
+            YouTubeChannelItem("Video 2", "https://www.youtube.com/watch?v=two", "two"),
+        ]
+        monkeypatch.setattr(window, "_open_telegram_channel_item", lambda item: opened.append(item.post_id))
+        window._telegram_channel_provider = "youtube"
+        window._pending_telegram_url = "https://www.youtube.com/@demo"
+        window._telegram_channel_all_items = items
+        window._populate_telegram_channel_browser(items)
+        window._telegram_suppress_auto_open_selection = True
+        window._set_active_telegram_channel_video(items[1])
+        window._telegram_suppress_auto_open_selection = False
+
+        window._telegram_channel_state.mark_failed(items[0])
+        window._refresh_telegram_channel_item_statuses()
+
+        assert opened == []
+        assert window._telegram_channel_list.count() == 2
+        assert window._telegram_channel_list.currentRow() == 1
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_youtube_channel_item_failure_stays_in_browser(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    handled: list[str] = []
+    try:
+        item = YouTubeChannelItem("Unavailable", "https://www.youtube.com/watch?v=gone", "gone")
+        monkeypatch.setattr(window, "_handle_video_url_failure_action", lambda detail: handled.append(detail))
+        window._telegram_channel_provider = "youtube"
+        window._pending_telegram_url = "https://www.youtube.com/@demo"
+        window._telegram_channel_all_items = [item]
+        window._populate_telegram_channel_browser([item])
+        window._current_telegram_channel_item = item
+        window._last_video_url_request = {
+            "url": item.url,
+            "full_cache": False,
+            "quality": "best",
+            "keep_telegram_context": True,
+        }
+
+        window._video_url_failed("Could not download video from youtube: unavailable")
+
+        assert handled == []
+        assert window._media_stack.currentWidget() is window._telegram_channel_view
+        assert window._telegram_channel_state.item_status(item) == "failed"
+        assert "unavailable" in window._telegram_channel_status.text()
+        assert window.statusBar().currentMessage() == window._tr("youtube_channel_browser_ready").format(count=1)
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_browser_video_unavailable_falls_back_to_browser(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    handled: list[str] = []
+    opened: list[str] = []
+    try:
+        monkeypatch.setattr(window, "_handle_video_url_failure_action", lambda detail: handled.append(detail))
+        monkeypatch.setattr(window, "_open_video_url_in_browser", lambda url: opened.append(url) or True)
+        window._last_video_url_request = {
+            "url": "https://www.youtube.com/watch?v=HaptpffiOjE",
+            "full_cache": False,
+            "quality": "best",
+            "keep_telegram_context": False,
+            "browser_fallback_on_unavailable": True,
+        }
+
+        window._video_url_failed(
+            "Could not download video from youtube: [youtube] HaptpffiOjE: This video is not available"
+        )
+
+        assert handled == []
+        assert opened == ["https://www.youtube.com/watch?v=HaptpffiOjE"]
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_youtube_failed_item_is_not_auto_reopened(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    opened: list[str] = []
+    try:
+        item = YouTubeChannelItem("Unavailable", "https://www.youtube.com/watch?v=gone", "gone")
+        monkeypatch.setattr(window, "_open_telegram_channel_item", lambda item: opened.append(item.post_id))
+        window._telegram_channel_provider = "youtube"
+        window._pending_telegram_url = "https://www.youtube.com/@demo"
+        window._telegram_channel_all_items = [item]
+        window._populate_telegram_channel_browser([item])
+        window._telegram_channel_state.mark_failed(item)
+
+        window._maybe_auto_open_telegram_video(item)
+        window._queue_pending_telegram_channel_item(item)
+        window._telegram_channel_state.pending_open_item_key = window._telegram_channel_item_key(item)
+        window._open_pending_telegram_channel_item()
+
+        assert opened == []
+        assert window._telegram_channel_state.pending_open_item_key == ""
         window._settings_save_timer.stop()
     finally:
         window.close()
@@ -1659,17 +1839,18 @@ def test_player_window_exposes_advanced_config_controls(qapp) -> None:
         assert config.ocr_threshold is False
         assert config.ocr_min_confidence == 55
         assert config.ocr_merge_similarity == 0.91
-        assert config.vieneu_tts_core == "remote"
-        assert config.vieneu_tts_model_name == "pnnbao-ump/VieNeu-TTS"
-        assert config.vieneu_tts_offline is False
+        assert config.vieneu_tts_core == "local"
+        assert config.vieneu_tts_model_name != "pnnbao-ump/VieNeu-TTS"
+        assert config.vieneu_tts_offline is True
         assert config.vieneu_tts_path == "D:/vieneu"
         assert config.vieneu_tts_python == "D:/Python/python.exe"
-        assert config.vieneu_tts_api_base == "http://localhost:23333/v1"
+        assert config.vieneu_tts_api_base == ""
         assert config.vieneu_tts_decoder_path == "D:/models/decoder.onnx"
         assert config.vieneu_tts_encoder_path == "D:/models/encoder.onnx"
         assert config.vieneu_tts_standard_codec_path == "D:/models/codec"
-        assert window._vieneu_api_base_edit.isEnabled()
-        assert not window._vieneu_offline_check.isEnabled()
+        assert window._vieneu_core_combo.findData("remote") == -1
+        assert not window._vieneu_api_base_edit.isEnabled()
+        assert window._vieneu_offline_check.isEnabled()
         window._settings_save_timer.stop()
     finally:
         window.close()
@@ -2137,6 +2318,7 @@ def test_offline_models_manager_tab_exists(qapp) -> None:
         assert "whisper" in window._offline_model_rows
         assert "adult_extractors" in window._offline_model_rows
         assert "telegram_client" in window._offline_model_rows
+        assert "youtube_client" in window._offline_model_rows
         assert "backup" in window._offline_model_rows
         assert window._offline_model_target_text(window._offline_model_spec("adult_extractors")) == (
             "ai-player-adult-extractors"
@@ -2144,14 +2326,19 @@ def test_offline_models_manager_tab_exists(qapp) -> None:
         assert window._offline_model_target_text(window._offline_model_spec("telegram_client")) == (
             "ai-player-telegram-client"
         )
+        assert window._offline_model_target_text(window._offline_model_spec("youtube_client")) == (
+            "ai-player-youtube-client"
+        )
         assert window._offline_model_spec("adult_extractors")["script"] == "install_adult_extractors.ps1"
         assert window._offline_model_spec("telegram_client")["script"] == "install_telegram_client.ps1"
+        assert window._offline_model_spec("youtube_client")["script"] == "install_youtube_client.ps1"
         for key in ("whisper", "translation", "vieneu", "ocr", "speaker_gender"):
             button = window._offline_model_rows[key]["button"]
             assert isinstance(button, QPushButton)
             assert button.property("i18n_key") == "offline_models_download"
         assert window._offline_model_rows["adult_extractors"]["button"].property("i18n_key") == "offline_models_install"
         assert window._offline_model_rows["telegram_client"]["button"].property("i18n_key") == "offline_models_install"
+        assert window._offline_model_rows["youtube_client"]["button"].property("i18n_key") == "offline_models_install"
         assert window._offline_model_rows["portable"]["button"].property("i18n_key") == "offline_models_build"
         assert window._offline_model_rows["backup"]["button"].property("i18n_key") == "offline_models_backup_action"
         assert window._settings_tabs.count() == 6

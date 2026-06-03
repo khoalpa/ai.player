@@ -13,7 +13,10 @@ def test_normalize_tts_provider(value: str, expected: str) -> None:
     assert tts.normalize_tts_provider(value) == expected
 
 
-@pytest.mark.parametrize(("value", "expected"), [("standard", "standard"), ("api", "remote"), ("cuda", "fast")])
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("standard", "standard"), ("api", "turbo"), ("remote", "turbo"), ("cuda", "fast")],
+)
 def test_normalize_vieneu_mode(value: str, expected: str) -> None:
     assert tts.normalize_vieneu_mode(value) == expected
 
@@ -60,7 +63,7 @@ def test_vieneu_preferred_voice_fallbacks_use_southern_voices_first() -> None:
     assert tts._preferred_voice_ids("vieneu", standard_config, "male")[0] == "Vinh"
 
 
-def test_remote_vieneu_fallback_stays_remote_only(monkeypatch) -> None:
+def test_removed_remote_vieneu_core_uses_local_fallbacks(monkeypatch) -> None:
     config = AppConfig(
         vieneu_tts_core="remote",
         vieneu_tts_mode="turbo",
@@ -70,7 +73,18 @@ def test_remote_vieneu_fallback_stays_remote_only(monkeypatch) -> None:
     )
     monkeypatch.setattr(tts, "_runtime_has_cuda", lambda: True)
 
-    assert tts._vieneu_fallback_configs(config) == [config]
+    candidates = tts._vieneu_fallback_configs(config)
+
+    assert len(candidates) > 1
+    assert all(
+        tts.resolve_vieneu_effective_mode(
+            candidate.vieneu_tts_core,
+            candidate.vieneu_tts_mode,
+            candidate.vieneu_tts_device,
+        )
+        != "remote"
+        for candidate in candidates
+    )
 
 
 def test_vieneu_subprocess_requires_valid_python() -> None:
@@ -79,22 +93,20 @@ def test_vieneu_subprocess_requires_valid_python() -> None:
     assert not provider._should_use_subprocess(provider._config)
 
 
-def test_remote_vieneu_uses_standard_voice_catalog() -> None:
+def test_removed_remote_vieneu_core_uses_turbo_voice_catalog() -> None:
     config = AppConfig(vieneu_tts_core="remote", tts_voice="Thục Đoan")
 
-    assert [voice.id for voice in tts.available_voices("vieneu", config)] == [
-        "Binh",
-        "Tuyen",
-        "Ngoc",
-        "Ly",
-        "Vinh",
-        "Doan",
+    assert [voice.id.split(" (", 1)[0] for voice in tts.available_voices("vieneu", config)] == [
+        "Bích Ngọc",
+        "Phạm Tuyên",
+        "Thục Đoan",
+        "Xuân Vĩnh",
     ]
-    assert tts._compatible_vieneu_voice_id(config, "Thục Đoan") == "Doan"
-    assert tts._compatible_vieneu_voice_id(config, "Xuân Vĩnh") == "Vinh"
+    assert tts._compatible_vieneu_voice_id(config, "Thục Đoan").startswith("Thục Đoan")
+    assert tts._compatible_vieneu_voice_id(config, "Xuân Vĩnh").startswith("Xuân Vĩnh")
 
 
-def test_remote_vieneu_rejects_empty_audio(monkeypatch, tmp_path) -> None:
+def test_removed_remote_vieneu_core_rejects_empty_audio_as_local(monkeypatch, tmp_path) -> None:
     class FakeEngine:
         def get_preset_voice(self, voice_id):
             return {"id": voice_id}
@@ -110,28 +122,27 @@ def test_remote_vieneu_rejects_empty_audio(monkeypatch, tmp_path) -> None:
     provider = tts.VieNeuTTSProvider(config)
     monkeypatch.setattr(tts, "_get_vieneu_engine", lambda _config: FakeEngine())
 
-    with pytest.raises(tts.TTSError, match="remote API"):
+    with pytest.raises(tts.TTSError, match="audio"):
         provider._synthesize_in_process(config, "xin chao", tmp_path / "out.wav", "Doan")
 
 
-def test_remote_vieneu_engine_kwargs_use_lightweight_codec() -> None:
+def test_removed_remote_vieneu_engine_kwargs_do_not_use_api_base() -> None:
     kwargs = tts._build_vieneu_engine_kwargs(
-        mode="remote",
+        mode=tts.normalize_vieneu_mode("remote"),
         api_base="http://localhost:23333/v1",
         model_name="pnnbao-ump/VieNeu-TTS",
         device="cuda",
         backend="native",
     )
 
-    assert kwargs["api_base"] == "http://localhost:23333/v1"
-    assert kwargs["model_name"] == "pnnbao-ump/VieNeu-TTS"
-    assert kwargs["codec_repo"] == "neuphonic/neucodec-onnx-decoder-int8"
-    assert kwargs["codec_device"] == "cpu"
+    assert "api_base" not in kwargs
+    assert "codec_repo" not in kwargs
+    assert kwargs["backbone_repo"] == "pnnbao-ump/VieNeu-TTS"
 
 
-def test_remote_vieneu_subprocess_kwargs_use_lightweight_codec() -> None:
+def test_removed_remote_vieneu_subprocess_kwargs_do_not_use_api_base() -> None:
     kwargs = vieneu_tts_server._engine_kwargs(
-        mode="remote",
+        mode=tts.normalize_vieneu_mode("remote"),
         api_base="http://localhost:23333/v1",
         model_name="pnnbao-ump/VieNeu-TTS",
         device="cuda",
@@ -141,8 +152,9 @@ def test_remote_vieneu_subprocess_kwargs_use_lightweight_codec() -> None:
         standard_codec_path="",
     )
 
-    assert kwargs["codec_repo"] == "neuphonic/neucodec-onnx-decoder-int8"
-    assert kwargs["codec_device"] == "cpu"
+    assert "api_base" not in kwargs
+    assert "codec_repo" not in kwargs
+    assert kwargs["backbone_repo"] == "pnnbao-ump/VieNeu-TTS"
 
 
 def test_vieneu_effective_paths_fall_back_to_bundled_files(monkeypatch, tmp_path) -> None:

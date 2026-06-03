@@ -22,6 +22,7 @@ protect them.
   - `tests/test_recovery_baseline.py`
   - `tests/test_cli_encoding.py`
 - Media source loading and URL handling:
+  - `tests/test_channel_browser.py`
   - `tests/test_video_source.py`
   - `tests/test_video_url_controller.py`
   - `tests/test_player_window_media_cache.py`

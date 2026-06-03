@@ -227,6 +227,14 @@ class PlayerOfflineModelsMixin:
                 "required_modules": ("ai_player_telegram_client.adapter",),
             },
             {
+                "key": "youtube_client",
+                "title_key": "offline_models_youtube_client",
+                "action_key": "offline_models_install",
+                "script": "install_youtube_client.ps1",
+                "target_text": "ai-player-youtube-client",
+                "required_modules": ("ai_player_youtube_client.adapter",),
+            },
+            {
                 "key": "portable",
                 "title_key": "offline_models_portable",
                 "action_key": "offline_models_build",

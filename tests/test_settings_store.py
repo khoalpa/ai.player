@@ -218,6 +218,60 @@ def test_load_app_config_prefers_split_files_over_legacy_settings(tmp_path, monk
     assert config.whisper_device == "cuda"
 
 
+def test_load_app_config_migrates_removed_vieneu_remote_core(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}", encoding="utf-8")
+    (tmp_path / settings_store.RUNTIME_LOCAL_FILENAME).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "vieneu_tts_core": "remote",
+                "vieneu_tts_mode": "remote_api",
+                "vieneu_tts_api_base": "http://localhost:23333/v1",
+                "vieneu_tts_model_name": "pnnbao-ump/VieNeu-TTS",
+                "vieneu_tts_path": "D:/vieneu",
+                "vieneu_tts_python": "D:/Python/python.exe",
+                "vieneu_tts_offline": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+
+    config = settings_store.load_app_config(AppConfig())
+
+    assert config.vieneu_tts_core == "local"
+    assert config.vieneu_tts_mode == "turbo"
+    assert config.vieneu_tts_api_base == ""
+    assert config.vieneu_tts_model_name == AppConfig().vieneu_tts_model_name
+    assert config.vieneu_tts_path == AppConfig().vieneu_tts_path
+    assert config.vieneu_tts_python == AppConfig().vieneu_tts_python
+    assert config.vieneu_tts_offline is True
+
+
+def test_save_app_config_removes_vieneu_remote_core(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+
+    settings_store.save_app_config(
+        AppConfig(
+            vieneu_tts_core="remote",
+            vieneu_tts_mode="remote",
+            vieneu_tts_api_base="http://localhost:23333/v1",
+            vieneu_tts_model_name="pnnbao-ump/VieNeu-TTS",
+            vieneu_tts_offline=False,
+        )
+    )
+    settings_data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    runtime_data = json.loads(settings_store.runtime_local_file_path().read_text(encoding="utf-8"))
+
+    assert runtime_data["vieneu_tts_core"] == "local"
+    assert settings_data["vieneu_tts_mode"] == "turbo"
+    assert runtime_data["vieneu_tts_api_base"] == ""
+    assert runtime_data["vieneu_tts_model_name"] == AppConfig().vieneu_tts_model_name
+    assert runtime_data["vieneu_tts_offline"] is True
+
+
 def test_load_app_config_migrates_legacy_telegram_blacklist_to_separate_file(tmp_path, monkeypatch) -> None:
     settings_file = tmp_path / "settings.json"
     settings_file.write_text(

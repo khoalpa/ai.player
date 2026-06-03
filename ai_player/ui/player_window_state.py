@@ -97,6 +97,7 @@ class TelegramChannelState:
     browser_return_available: bool = False
     channel_thumbnail_source: object | None = None
     auto_load_pending_before_post_id: str = ""
+    channel_continuation: str = ""
     side_panel_visible: bool = True
     side_panel_sizes: list[int] = field(default_factory=lambda: [1, 1])
 
@@ -108,6 +109,7 @@ class TelegramChannelState:
         self.opened_item_keys.clear()
         self.failed_item_keys.clear()
         self.auto_load_pending_before_post_id = ""
+        self.channel_continuation = ""
 
     def replace_items(self, items: Iterable[object] | None) -> None:
         self.channel_all_items = list(items or [])
@@ -177,10 +179,10 @@ class TelegramChannelState:
             return "loading"
         if key == self.pending_open_item_key:
             return "queued"
-        if key and key == self.item_key(self.current_channel_item):
-            return "current"
         if key in self.failed_item_keys:
             return "failed"
+        if key and key == self.item_key(self.current_channel_item):
+            return "current"
         if key in self.opened_item_keys:
             return "opened"
         return ""
