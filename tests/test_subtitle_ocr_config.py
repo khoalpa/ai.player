@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -8,9 +9,24 @@ from ai_player.core.config import AppConfig
 from ai_player.services import subtitle_ocr
 
 
+class _FakeResponse:
+    def __init__(self, *, status_code=200, payload=None, text="", content=b"") -> None:
+        self.status_code = status_code
+        self._payload = payload if payload is not None else {}
+        self.text = text
+        self.content = content
+
+    def json(self):
+        return self._payload
+
+
 def test_normalize_ocr_provider_accepts_aliases() -> None:
     assert subtitle_ocr.normalize_ocr_provider("tesseract-ocr") == "tesseract"
     assert subtitle_ocr.normalize_ocr_provider("auto") == "tesseract"
+    assert subtitle_ocr.normalize_ocr_provider("ocrspace") == "ocr_space"
+    assert subtitle_ocr.normalize_ocr_provider("azure-read") == "azure_vision"
+    assert subtitle_ocr.normalize_ocr_provider("google") == "google_vision"
+    assert subtitle_ocr.normalize_ocr_provider("trocr") == "huggingface_trocr"
 
 
 def test_tessdata_dir_prefers_configured_model(tmp_path) -> None:
@@ -77,6 +93,116 @@ def test_ocr_frame_drops_low_confidence_text(monkeypatch, tmp_path) -> None:
     result = subtitle_ocr._ocr_frame(frame, "eng", Path("tesseract"), config=config)
 
     assert result.text == ""
+
+
+def test_ocr_space_online_frame_posts_file(monkeypatch, tmp_path) -> None:
+    calls = []
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"png")
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return _FakeResponse(payload={"ParsedResults": [{"ParsedText": " Xin chao\n"}]})
+
+    monkeypatch.setattr(subtitle_ocr.requests, "post", fake_post)
+    monkeypatch.setattr(subtitle_ocr, "_preprocess_frame", lambda path, **_kwargs: path)
+
+    result = subtitle_ocr._ocr_frame(
+        frame,
+        "vie",
+        None,
+        config=AppConfig(ocr_provider="ocr_space", ocr_api_key="key"),
+    )
+
+    assert result.text == "Xin chao"
+    assert calls[0][0] == "https://api.ocr.space/parse/image"
+    assert calls[0][1]["headers"]["apikey"] == "key"
+    assert calls[0][1]["data"]["language"] == "vnm"
+
+
+def test_azure_vision_online_frame_parses_read_result(monkeypatch, tmp_path) -> None:
+    calls = []
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"png")
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return _FakeResponse(
+            payload={
+                "readResult": {
+                    "blocks": [
+                        {"lines": [{"text": "Hello", "words": [{"confidence": 0.9}]}, {"text": "world"}]}
+                    ]
+                }
+            }
+        )
+
+    monkeypatch.setattr(subtitle_ocr.requests, "post", fake_post)
+    monkeypatch.setattr(subtitle_ocr, "_preprocess_frame", lambda path, **_kwargs: path)
+
+    result = subtitle_ocr._ocr_frame(
+        frame,
+        "eng",
+        None,
+        config=AppConfig(ocr_provider="azure_vision", ocr_api_key="key", ocr_api_region="eastus"),
+    )
+
+    assert result.text == "Hello world"
+    assert result.confidence == 90
+    assert calls[0][0].startswith("https://eastus.api.cognitive.microsoft.com/")
+    assert calls[0][1]["headers"]["Ocp-Apim-Subscription-Key"] == "key"
+
+
+def test_google_vision_online_frame_posts_base64(monkeypatch, tmp_path) -> None:
+    calls = []
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"png")
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return _FakeResponse(payload={"responses": [{"fullTextAnnotation": {"text": "Google OCR"}}]})
+
+    monkeypatch.setattr(subtitle_ocr.requests, "post", fake_post)
+    monkeypatch.setattr(subtitle_ocr, "_preprocess_frame", lambda path, **_kwargs: path)
+
+    result = subtitle_ocr._ocr_frame(
+        frame,
+        "eng",
+        None,
+        config=AppConfig(ocr_provider="google_vision", ocr_api_key="gkey"),
+    )
+
+    assert result.text == "Google OCR"
+    assert "key=gkey" in calls[0][0]
+    assert calls[0][1]["json"]["requests"][0]["image"]["content"] == base64.b64encode(b"png").decode("ascii")
+
+
+def test_huggingface_trocr_online_frame_parses_generated_text(monkeypatch, tmp_path) -> None:
+    calls = []
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"png")
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return _FakeResponse(payload=[{"generated_text": "handwritten line"}])
+
+    monkeypatch.setattr(subtitle_ocr.requests, "post", fake_post)
+    monkeypatch.setattr(subtitle_ocr, "_preprocess_frame", lambda path, **_kwargs: path)
+
+    result = subtitle_ocr._ocr_frame(
+        frame,
+        "eng",
+        None,
+        config=AppConfig(
+            ocr_provider="huggingface_trocr",
+            ocr_api_key="hfkey",
+            ocr_model="microsoft/trocr-base-handwritten",
+        ),
+    )
+
+    assert result.text == "handwritten line"
+    assert calls[0][0].endswith("/microsoft%2Ftrocr-base-handwritten")
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer hfkey"
 
 
 def test_recognize_hard_subtitles_merges_similar_frames(monkeypatch, tmp_path) -> None:

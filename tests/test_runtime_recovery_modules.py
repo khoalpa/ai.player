@@ -52,6 +52,23 @@ def test_runtime_warmup_cancel_raises() -> None:
 def test_tts_output_suffix() -> None:
     assert tts_output_suffix("edge") == "mp3"
     assert tts_output_suffix("vieneu") == "wav"
+    assert tts_output_suffix("azure_tts") == "mp3"
+
+
+def test_runtime_warmup_skips_online_tts(monkeypatch) -> None:
+    config = AppConfig(
+        runtime_warmup_enabled=True,
+        runtime_warmup_whisper=False,
+        runtime_warmup_translation=False,
+        runtime_warmup_tts=True,
+        tts_provider="azure_tts",
+    )
+    monkeypatch.setattr(
+        "ai_player.services.runtime_warmup.create_tts_provider",
+        lambda _config: (_ for _ in ()).throw(AssertionError("online TTS should not warm")),
+    )
+
+    assert warm_runtime_components(config) == {}
 
 
 def test_audio_pcm_conversion_shape() -> None:

@@ -17,6 +17,10 @@ class TranslationRuntimeKey:
     max_tokens: int
     beams: int
     target_language: str
+    api_base: str
+    api_key: str
+    api_region: str
+    timeout_seconds: int
     preserve_terms: bool
     preserved_terms: str
 
@@ -65,6 +69,10 @@ def translation_runtime_key(config: AppConfig) -> TranslationRuntimeKey:
         max_tokens=_int_value(config.translation_max_tokens, default=152, minimum=1),
         beams=_int_value(config.translation_num_beams, default=2, minimum=1),
         target_language=str(config.target_language),
+        api_base=str(getattr(config, "translator_api_base", "")),
+        api_key=str(getattr(config, "translator_api_key", "")),
+        api_region=str(getattr(config, "translator_api_region", "")),
+        timeout_seconds=_int_value(getattr(config, "translator_timeout_seconds", 30), default=30, minimum=1),
         preserve_terms=bool(config.preserve_source_terms),
         preserved_terms="\n".join(
             part for part in (str(config.preserved_source_terms), str(config.preserved_english_terms)) if part.strip()

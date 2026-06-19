@@ -24,6 +24,36 @@ EDGE_VOICES = [
     VoiceOption("vi-VN-NamMinhNeural", "Nam Minh (nam, Việt Nam)"),
 ]
 
+AZURE_TTS_VOICES = [
+    VoiceOption("vi-VN-HoaiMyNeural", "Azure Hoai My (female, vi-VN)"),
+    VoiceOption("vi-VN-NamMinhNeural", "Azure Nam Minh (male, vi-VN)"),
+]
+
+GOOGLE_TTS_VOICES = [
+    VoiceOption("vi-VN-Neural2-A", "Google Neural2 A (female, vi-VN)"),
+    VoiceOption("vi-VN-Neural2-D", "Google Neural2 D (male, vi-VN)"),
+    VoiceOption("vi-VN-Wavenet-A", "Google Wavenet A (female, vi-VN)"),
+    VoiceOption("vi-VN-Wavenet-B", "Google Wavenet B (male, vi-VN)"),
+    VoiceOption("vi-VN-Wavenet-C", "Google Wavenet C (female, vi-VN)"),
+    VoiceOption("vi-VN-Wavenet-D", "Google Wavenet D (male, vi-VN)"),
+    VoiceOption("vi-VN-Standard-A", "Google Standard A (female, vi-VN)"),
+    VoiceOption("vi-VN-Standard-B", "Google Standard B (male, vi-VN)"),
+    VoiceOption("vi-VN-Standard-C", "Google Standard C (female, vi-VN)"),
+    VoiceOption("vi-VN-Standard-D", "Google Standard D (male, vi-VN)"),
+]
+
+AMAZON_POLLY_VOICES = [
+    VoiceOption("Joanna", "Amazon Polly Joanna (female, en-US)"),
+    VoiceOption("Matthew", "Amazon Polly Matthew (male, en-US)"),
+    VoiceOption("Ruth", "Amazon Polly Ruth (female, en-US)"),
+    VoiceOption("Stephen", "Amazon Polly Stephen (male, en-US)"),
+]
+
+ELEVENLABS_TTS_VOICES = [
+    VoiceOption("21m00Tcm4TlvDq8ikWAM", "ElevenLabs Rachel (female)"),
+    VoiceOption("JBFqnCBsd6RMkjVDRZzb", "ElevenLabs George (male)"),
+]
+
 STANDARD_VIENEU_VOICES = [
     VoiceOption("Binh", "Bình (nam miền Bắc)"),
     VoiceOption("Tuyen", "Tuyên (nam miền Bắc)"),
@@ -46,6 +76,10 @@ def available_tts_provider_options() -> list[VoiceOption]:
         VoiceOption("none", "Không TTS"),
         VoiceOption("vieneu", "VieNeu-TTS"),
         VoiceOption("edge", "Edge TTS"),
+        VoiceOption("azure_tts", "Azure TTS"),
+        VoiceOption("google_tts", "Google Cloud TTS"),
+        VoiceOption("amazon_polly", "Amazon Polly"),
+        VoiceOption("elevenlabs_tts", "ElevenLabs TTS"),
     ]
 
 
@@ -58,10 +92,54 @@ def available_vieneu_mode_options() -> list[VoiceOption]:
 
 def voice_gender(provider: str, voice_id: object) -> str:
     normalized = normalize_voice_token(voice_id)
-    if _voice_provider_key(provider) == "edge":
+    provider_key = _voice_provider_key(provider)
+    if provider_key in {"edge", "azure_tts"}:
         if "namminh" in normalized or "nam minh" in normalized:
             return "male"
         if "hoai my" in normalized or "hoaimy" in normalized:
+            return "female"
+    if provider_key == "google_tts":
+        if any(
+            token in normalized
+            for token in (
+                "neural2 d",
+                "neural2-d",
+                "wavenet b",
+                "wavenet-b",
+                "wavenet d",
+                "wavenet-d",
+                "standard b",
+                "standard-b",
+                "standard d",
+                "standard-d",
+            )
+        ):
+            return "male"
+        if any(
+            token in normalized
+            for token in (
+                "neural2 a",
+                "neural2-a",
+                "wavenet a",
+                "wavenet-a",
+                "wavenet c",
+                "wavenet-c",
+                "standard a",
+                "standard-a",
+                "standard c",
+                "standard-c",
+            )
+        ):
+            return "female"
+    if provider_key == "amazon_polly":
+        if normalized in {"matthew", "stephen"}:
+            return "male"
+        if normalized in {"joanna", "ruth"}:
+            return "female"
+    if provider_key == "elevenlabs_tts":
+        if normalized in {"jbfqncbsd6rmkjvdrzzb", "george"}:
+            return "male"
+        if normalized in {"21m00tcm4tlvdq8ikwam", "rachel"}:
             return "female"
 
     female_tokens = {
@@ -168,6 +246,14 @@ def _voice_provider_key(value: object) -> str:
     raw = str(value or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
     if raw in {"edge", "edgetts", "edgecli"}:
         return "edge"
+    if raw in {"azure", "azuretts", "microsofttts", "microsoftazuretts"}:
+        return "azure_tts"
+    if raw in {"google", "googletts", "googlecloudtts", "gcp", "gcptts"}:
+        return "google_tts"
+    if raw in {"amazon", "amazonpolly", "polly", "awspolly"}:
+        return "amazon_polly"
+    if raw in {"elevenlabs", "elevenlabstts", "eleven", "elevenlabsapi"}:
+        return "elevenlabs_tts"
     if raw in {"none", "off", "notts", "no_tts", "khongtts", "khong_tts"}:
         return "none"
     return "vieneu"

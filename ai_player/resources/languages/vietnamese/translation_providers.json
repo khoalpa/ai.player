@@ -9,8 +9,20 @@
       "label": "NLLB Local"
     },
     {
+      "value": "azure_translator",
+      "label": "Azure Translator"
+    },
+    {
+      "value": "google_translate",
+      "label": "Google Translate"
+    },
+    {
+      "value": "deepl",
+      "label": "DeepL"
+    },
+    {
       "value": "none",
-      "label": "Không dịch"
+      "label": "Kh\u00f4ng d\u1ecbch"
     }
   ]
 }

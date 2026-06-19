@@ -18,6 +18,18 @@ REGRESSION_CASES = json.loads(
 )
 
 
+class FakeResponse:
+    def __init__(self, data: object) -> None:
+        self._data = data
+        self.raised = False
+
+    def raise_for_status(self) -> None:
+        self.raised = True
+
+    def json(self):
+        return self._data
+
+
 def test_transcript_cleaner_disabled_normalizes_whitespace() -> None:
     cleaner = transcript_cleanup.TranscriptCleaner(AppConfig(transcript_cleanup_mode="off"))
 
@@ -156,17 +168,115 @@ def test_transcript_cleaner_serializes_stateful_clean_calls(monkeypatch) -> None
         ("nhẹ", "light"),
         ("mạnh", "strong"),
         ("openai-compatible", "openai"),
+        ("groqcloud", "groq"),
+        ("google-gemini", "gemini"),
+        ("openrouter-free", "openrouter"),
+        ("hf-router", "huggingface"),
         ("headless-local", "local"),
     ],
 )
 def test_cleanup_aliases(value: str, expected: str) -> None:
     normalizer = (
-        transcript_cleanup._cleanup_provider
-        if "local" in value or "openai" in value
-        else transcript_cleanup._cleanup_mode
+        transcript_cleanup._cleanup_mode
+        if expected in {"light", "strong", "off"}
+        else transcript_cleanup._cleanup_provider
     )
 
     assert normalizer(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("provider", "url", "model"),
+    [
+        ("groq", "https://api.groq.com/openai/v1/chat/completions", "llama-3.1-8b-instant"),
+        ("openrouter", "https://openrouter.ai/api/v1/chat/completions", "openrouter/free"),
+        ("huggingface", "https://router.huggingface.co/v1/chat/completions", "meta-llama/Llama-3.1-8B-Instruct"),
+    ],
+)
+def test_online_openai_compatible_cleanup_providers_use_provider_defaults(
+    monkeypatch, provider: str, url: str, model: str
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_post(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        return FakeResponse({"choices": [{"message": {"content": "Xin chÃ o."}}]})
+
+    monkeypatch.setattr(transcript_cleanup.requests, "post", fake_post)
+    config = AppConfig(
+        transcript_cleanup_provider=provider,
+        transcript_cleanup_model=r"D:\project\ai.player\models\transcript_cleanup\Qwen2.5-3B-Instruct",
+        transcript_cleanup_api_base="http://127.0.0.1:11434",
+        transcript_cleanup_api_key="secret",
+    )
+
+    result = transcript_cleanup._call_cleanup_provider("raw prompt", provider, config)
+
+    assert result == "Xin chÃ o."
+    assert calls[0]["args"] == (url,)
+    kwargs = calls[0]["kwargs"]
+    assert kwargs["headers"]["Authorization"] == "Bearer secret"
+    assert kwargs["json"]["model"] == model
+    assert kwargs["json"]["messages"] == [{"role": "user", "content": "raw prompt"}]
+    assert kwargs["json"]["temperature"] == 0.1
+    assert kwargs["timeout"] == 12.0
+
+
+def test_cleanup_provider_defaults_replace_stale_provider_base_and_model(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_post(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        return FakeResponse({"candidates": [{"content": {"parts": [{"text": "Xin chÃƒÂ o."}]}}]})
+
+    monkeypatch.setattr(transcript_cleanup.requests, "post", fake_post)
+    config = AppConfig(
+        transcript_cleanup_provider="gemini",
+        transcript_cleanup_model="openrouter/free",
+        transcript_cleanup_api_base="https://api.groq.com/openai/v1",
+        transcript_cleanup_api_key="gemini-key",
+    )
+
+    transcript_cleanup._call_cleanup_provider("raw prompt", "gemini", config)
+
+    assert calls[0]["args"] == (
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
+    )
+
+
+def test_gemini_cleanup_uses_generate_content_endpoint(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_post(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        return FakeResponse({"candidates": [{"content": {"parts": [{"text": "Xin chÃ o."}]}}]})
+
+    monkeypatch.setattr(transcript_cleanup.requests, "post", fake_post)
+    config = AppConfig(
+        transcript_cleanup_provider="gemini",
+        transcript_cleanup_model="",
+        transcript_cleanup_api_base="",
+        transcript_cleanup_api_key="gemini-key",
+        transcript_cleanup_timeout_seconds=20,
+    )
+
+    result = transcript_cleanup._call_cleanup_provider("raw prompt", "gemini", config)
+
+    assert result == "Xin chÃ o."
+    assert calls[0]["args"] == (
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
+    )
+    kwargs = calls[0]["kwargs"]
+    assert kwargs["headers"] == {"Content-Type": "application/json", "X-goog-api-key": "gemini-key"}
+    assert kwargs["json"]["contents"] == [{"parts": [{"text": "raw prompt"}]}]
+    assert kwargs["json"]["generationConfig"] == {"temperature": 0.1}
+    assert kwargs["timeout"] == 20
+
+
+def test_online_cleanup_provider_detection() -> None:
+    assert transcript_cleanup.is_online_transcript_cleanup_provider("groq") is True
+    assert transcript_cleanup.is_online_transcript_cleanup_provider("gemini") is True
+    assert transcript_cleanup.is_online_transcript_cleanup_provider("local") is False
 
 
 def test_timeout_seconds_rejects_non_finite_values() -> None:

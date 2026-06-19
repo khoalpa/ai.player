@@ -66,6 +66,87 @@ def test_save_and_load_app_config_round_trips_secret_payload(tmp_path, monkeypat
     assert config.transcript_cleanup_api_key == "cleanup-secret"
 
 
+def test_save_and_load_app_config_round_trips_tts_secret_payloads(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(
+        settings_store,
+        "protect_text",
+        lambda value: {"scheme": "test", "value": f"protected:{value}"},
+    )
+    monkeypatch.setattr(
+        settings_store,
+        "reveal_text",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
+        if isinstance(payload, dict)
+        else "",
+    )
+
+    settings_store.save_app_config(AppConfig(tts_api_key="tts-key", tts_api_secret="tts-secret"))
+    data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    secrets_data = json.loads(settings_store.secrets_file_path().read_text(encoding="utf-8"))
+    config = settings_store.load_app_config(AppConfig(tts_api_key="", tts_api_secret=""))
+
+    assert "tts_api_key" not in data
+    assert "tts_api_secret" not in data
+    assert secrets_data["tts_api_key_secret"] == {"scheme": "test", "value": "protected:tts-key"}
+    assert secrets_data["tts_api_secret_secret"] == {"scheme": "test", "value": "protected:tts-secret"}
+    assert config.tts_api_key == "tts-key"
+    assert config.tts_api_secret == "tts-secret"
+
+
+def test_save_and_load_app_config_round_trips_speaker_gender_secret(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(
+        settings_store,
+        "protect_text",
+        lambda value: {"scheme": "test", "value": f"protected:{value}"},
+    )
+    monkeypatch.setattr(
+        settings_store,
+        "reveal_text",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
+        if isinstance(payload, dict)
+        else "",
+    )
+
+    settings_store.save_app_config(AppConfig(speaker_gender_api_key="hf-secret"))
+    data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    secrets_data = json.loads(settings_store.secrets_file_path().read_text(encoding="utf-8"))
+    config = settings_store.load_app_config(AppConfig(speaker_gender_api_key=""))
+
+    assert "speaker_gender_api_key" not in data
+    assert secrets_data["speaker_gender_api_key_secret"] == {"scheme": "test", "value": "protected:hf-secret"}
+    assert config.speaker_gender_api_key == "hf-secret"
+
+
+def test_save_and_load_app_config_round_trips_ocr_secret(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(
+        settings_store,
+        "protect_text",
+        lambda value: {"scheme": "test", "value": f"protected:{value}"},
+    )
+    monkeypatch.setattr(
+        settings_store,
+        "reveal_text",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
+        if isinstance(payload, dict)
+        else "",
+    )
+
+    settings_store.save_app_config(AppConfig(ocr_api_key="ocr-secret"))
+    data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    secrets_data = json.loads(settings_store.secrets_file_path().read_text(encoding="utf-8"))
+    config = settings_store.load_app_config(AppConfig(ocr_api_key=""))
+
+    assert "ocr_api_key" not in data
+    assert secrets_data["ocr_api_key_secret"] == {"scheme": "test", "value": "protected:ocr-secret"}
+    assert config.ocr_api_key == "ocr-secret"
+
+
 def test_load_app_config_keeps_env_secret_over_saved_secret(tmp_path, monkeypatch) -> None:
     settings_file = tmp_path / "settings.json"
     settings_file.write_text(

@@ -57,7 +57,7 @@ from ai_player.services.source_voice_filter import (
     SOURCE_VOICE_FILTER_DEMUCS_MODELS,
     normalize_source_voice_filter_model,
 )
-from ai_player.services.speaker_voice_selector import normalize_voice_gender_mode
+from ai_player.services.speaker_voice_selector import normalize_speaker_gender_provider, normalize_voice_gender_mode
 from ai_player.services.translation import normalize_translator_provider
 from ai_player.services.tts import available_tts_providers, available_vieneu_modes, normalize_tts_provider
 from ai_player.services.video_source import is_supported_browser_video_url
@@ -1289,6 +1289,11 @@ class PlayerLayoutMixin:
             self._asr_model_combo.addItem(self._config.whisper_model, self._config.whisper_model)
             asr_model_index = self._asr_model_combo.findData(self._config.whisper_model)
         self._asr_model_combo.setCurrentIndex(max(0, asr_model_index))
+        self._asr_api_base_edit = QLineEdit(self._config.asr_api_base)
+        self._asr_api_base_edit.setPlaceholderText(self._tr("asr_api_base_placeholder"))
+        self._asr_api_key_edit = QLineEdit(self._config.asr_api_key)
+        self._asr_api_key_edit.setPlaceholderText(self._tr("asr_api_key_placeholder"))
+        self._asr_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
 
         self._ocr_provider_combo = QComboBox()
         self._compact_combo(self._ocr_provider_combo)
@@ -1305,6 +1310,13 @@ class PlayerLayoutMixin:
             self._ocr_model_combo.addItem(self._config.ocr_model, self._config.ocr_model)
             ocr_model_index = self._ocr_model_combo.findData(self._config.ocr_model)
         self._ocr_model_combo.setCurrentIndex(max(0, ocr_model_index))
+        self._ocr_api_base_edit = QLineEdit(self._config.ocr_api_base)
+        self._ocr_api_base_edit.setPlaceholderText(self._tr("ocr_api_base_placeholder"))
+        self._ocr_api_key_edit = QLineEdit(self._config.ocr_api_key)
+        self._ocr_api_key_edit.setPlaceholderText(self._tr("ocr_api_key_placeholder"))
+        self._ocr_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._ocr_api_region_edit = QLineEdit(self._config.ocr_api_region)
+        self._ocr_api_region_edit.setPlaceholderText(self._tr("ocr_api_region_placeholder"))
 
         self._translator_combo = QComboBox()
         self._compact_combo(self._translator_combo)
@@ -1331,6 +1343,13 @@ class PlayerLayoutMixin:
             _dropdown_options("translation_devices", self._config.gui_language),
             self._config.local_translation_device,
         )
+        self._translator_api_base_edit = QLineEdit(self._config.translator_api_base)
+        self._translator_api_base_edit.setPlaceholderText(self._tr("translator_api_base_placeholder"))
+        self._translator_api_key_edit = QLineEdit(self._config.translator_api_key)
+        self._translator_api_key_edit.setPlaceholderText(self._tr("translator_api_key_placeholder"))
+        self._translator_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._translator_api_region_edit = QLineEdit(self._config.translator_api_region)
+        self._translator_api_region_edit.setPlaceholderText(self._tr("translator_api_region_placeholder"))
         self._preserve_terms_check = QCheckBox(self._tr("keep_terms"))
         self._preserve_terms_check.setProperty("i18n_key", "keep_terms")
         self._preserve_terms_check.setChecked(self._config.preserve_source_terms)
@@ -1385,10 +1404,25 @@ class PlayerLayoutMixin:
 
         self._tts_voice_combo = QComboBox()
         self._compact_combo(self._tts_voice_combo)
+        self._tts_voice_combo.setEditable(True)
         self._tts_male_voice_combo = QComboBox()
         self._compact_combo(self._tts_male_voice_combo)
+        self._tts_male_voice_combo.setEditable(True)
         self._tts_female_voice_combo = QComboBox()
         self._compact_combo(self._tts_female_voice_combo)
+        self._tts_female_voice_combo.setEditable(True)
+        self._tts_api_base_edit = QLineEdit(self._config.tts_api_base)
+        self._tts_api_base_edit.setPlaceholderText(self._tr("tts_api_base_placeholder"))
+        self._tts_api_key_edit = QLineEdit(self._config.tts_api_key)
+        self._tts_api_key_edit.setPlaceholderText(self._tr("tts_api_key_placeholder"))
+        self._tts_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._tts_api_secret_edit = QLineEdit(self._config.tts_api_secret)
+        self._tts_api_secret_edit.setPlaceholderText(self._tr("tts_api_secret_placeholder"))
+        self._tts_api_secret_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._tts_api_region_edit = QLineEdit(self._config.tts_api_region)
+        self._tts_api_region_edit.setPlaceholderText(self._tr("tts_api_region_placeholder"))
+        self._tts_model_edit = QLineEdit(self._config.tts_model)
+        self._tts_model_edit.setPlaceholderText(self._tr("tts_model_placeholder"))
         self._auto_voice_gender_check = QCheckBox(self._tr("auto_gender"))
         self._auto_voice_gender_check.setProperty("i18n_key", "auto_gender")
         self._auto_voice_gender_check.setChecked(self._config.dubbing_auto_voice_gender)
@@ -1424,6 +1458,32 @@ class PlayerLayoutMixin:
         self._speaker_gender_model_combo.setCurrentIndex(max(0, speaker_gender_model_index))
         self._speaker_gender_model_combo.setToolTip(self._tr("speaker_gender_model_tooltip"))
         self._speaker_gender_model_combo.setProperty("i18n_tooltip_key", "speaker_gender_model_tooltip")
+        self._speaker_gender_provider_combo = QComboBox()
+        self._compact_combo(self._speaker_gender_provider_combo)
+        self._speaker_gender_provider_combo.addItem(self._tr("speaker_gender_provider_local"), "local")
+        self._speaker_gender_provider_combo.addItem(
+            self._tr("speaker_gender_provider_huggingface"), "huggingface_gender"
+        )
+        self._speaker_gender_provider_combo.setCurrentIndex(
+            max(
+                0,
+                self._speaker_gender_provider_combo.findData(
+                    normalize_speaker_gender_provider(self._config.speaker_gender_provider)
+                ),
+            )
+        )
+        self._speaker_gender_api_base_edit = QLineEdit(self._config.speaker_gender_api_base)
+        self._speaker_gender_api_base_edit.setPlaceholderText(self._tr("speaker_gender_api_base_placeholder"))
+        self._speaker_gender_api_key_edit = QLineEdit(self._config.speaker_gender_api_key)
+        self._speaker_gender_api_key_edit.setPlaceholderText(self._tr("speaker_gender_api_key_placeholder"))
+        self._speaker_gender_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._speaker_gender_timeout_slider, self._speaker_gender_timeout_value = self._labeled_slider(
+            minimum=3,
+            maximum=120,
+            step=1,
+            value=int(self._config.speaker_gender_timeout_seconds),
+            formatter=lambda value: f"{value} s",
+        )
         self._auto_match_audio_check = QCheckBox(self._tr("auto_match"))
         self._auto_match_audio_check.setProperty("i18n_key", "auto_match")
         self._auto_match_audio_check.setChecked(self._config.dubbing_auto_match_audio)
@@ -1667,6 +1727,13 @@ class PlayerLayoutMixin:
             value=int(self._config.ocr_merge_similarity * 100),
             formatter=lambda value: f"{value} %",
         )
+        self._ocr_timeout_slider, self._ocr_timeout_value = self._labeled_slider(
+            minimum=3,
+            maximum=180,
+            step=1,
+            value=int(self._config.ocr_timeout_seconds),
+            formatter=lambda value: f"{value} s",
+        )
 
         self._vieneu_core_combo = QComboBox()
         self._compact_combo(self._vieneu_core_combo)
@@ -1793,14 +1860,18 @@ class PlayerLayoutMixin:
         asr_grid.addWidget(self._asr_provider_combo, 0, 1)
         asr_grid.addWidget(self._field_label("asr_model"), 1, 0)
         asr_grid.addWidget(self._asr_model_combo, 1, 1)
-        asr_grid.addWidget(self._field_label("whisper_device"), 2, 0)
-        asr_grid.addWidget(self._whisper_device_combo, 2, 1)
-        asr_grid.addWidget(self._field_label("whisper_compute"), 3, 0)
-        asr_grid.addWidget(self._whisper_compute_combo, 3, 1)
-        asr_grid.addWidget(self._field_label("whisper_beam"), 4, 0)
-        asr_grid.addWidget(self._slider_row(self._whisper_beam_slider, self._whisper_beam_value), 4, 1)
-        asr_grid.addWidget(self._whisper_vad_check, 5, 0, 1, 2)
-        asr_grid.addWidget(self._whisper_offline_check, 6, 0, 1, 2)
+        asr_grid.addWidget(self._field_label("asr_api_base"), 2, 0)
+        asr_grid.addWidget(self._asr_api_base_edit, 2, 1)
+        asr_grid.addWidget(self._field_label("asr_api_key"), 3, 0)
+        asr_grid.addWidget(self._asr_api_key_edit, 3, 1)
+        asr_grid.addWidget(self._field_label("whisper_device"), 4, 0)
+        asr_grid.addWidget(self._whisper_device_combo, 4, 1)
+        asr_grid.addWidget(self._field_label("whisper_compute"), 5, 0)
+        asr_grid.addWidget(self._whisper_compute_combo, 5, 1)
+        asr_grid.addWidget(self._field_label("whisper_beam"), 6, 0)
+        asr_grid.addWidget(self._slider_row(self._whisper_beam_slider, self._whisper_beam_value), 6, 1)
+        asr_grid.addWidget(self._whisper_vad_check, 7, 0, 1, 2)
+        asr_grid.addWidget(self._whisper_offline_check, 8, 0, 1, 2)
 
         ocr_grid = QGridLayout()
         ocr_grid.setHorizontalSpacing(8)
@@ -1809,21 +1880,29 @@ class PlayerLayoutMixin:
         ocr_grid.addWidget(self._ocr_provider_combo, 0, 1)
         ocr_grid.addWidget(self._field_label("ocr_model"), 1, 0)
         ocr_grid.addWidget(self._ocr_model_combo, 1, 1)
-        ocr_grid.addWidget(self._field_label("ocr_fps"), 2, 0)
-        ocr_grid.addWidget(self._slider_row(self._ocr_fps_slider, self._ocr_fps_value), 2, 1)
-        ocr_grid.addWidget(self._field_label("ocr_crop_top"), 3, 0)
-        ocr_grid.addWidget(self._slider_row(self._ocr_crop_top_slider, self._ocr_crop_top_value), 3, 1)
-        ocr_grid.addWidget(self._field_label("ocr_crop_height"), 4, 0)
-        ocr_grid.addWidget(self._slider_row(self._ocr_crop_height_slider, self._ocr_crop_height_value), 4, 1)
-        ocr_grid.addWidget(self._field_label("ocr_scale"), 5, 0)
-        ocr_grid.addWidget(self._slider_row(self._ocr_scale_slider, self._ocr_scale_value), 5, 1)
-        ocr_grid.addWidget(self._field_label("ocr_psm"), 6, 0)
-        ocr_grid.addWidget(self._slider_row(self._ocr_psm_slider, self._ocr_psm_value), 6, 1)
-        ocr_grid.addWidget(self._ocr_threshold_check, 7, 0, 1, 2)
-        ocr_grid.addWidget(self._field_label("ocr_min_confidence"), 8, 0)
-        ocr_grid.addWidget(self._slider_row(self._ocr_min_confidence_slider, self._ocr_min_confidence_value), 8, 1)
-        ocr_grid.addWidget(self._field_label("ocr_merge_similarity"), 9, 0)
-        ocr_grid.addWidget(self._slider_row(self._ocr_merge_similarity_slider, self._ocr_merge_similarity_value), 9, 1)
+        ocr_grid.addWidget(self._field_label("ocr_api_base"), 2, 0)
+        ocr_grid.addWidget(self._ocr_api_base_edit, 2, 1)
+        ocr_grid.addWidget(self._field_label("ocr_api_key"), 3, 0)
+        ocr_grid.addWidget(self._ocr_api_key_edit, 3, 1)
+        ocr_grid.addWidget(self._field_label("ocr_api_region"), 4, 0)
+        ocr_grid.addWidget(self._ocr_api_region_edit, 4, 1)
+        ocr_grid.addWidget(self._field_label("ocr_timeout"), 5, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_timeout_slider, self._ocr_timeout_value), 5, 1)
+        ocr_grid.addWidget(self._field_label("ocr_fps"), 6, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_fps_slider, self._ocr_fps_value), 6, 1)
+        ocr_grid.addWidget(self._field_label("ocr_crop_top"), 7, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_crop_top_slider, self._ocr_crop_top_value), 7, 1)
+        ocr_grid.addWidget(self._field_label("ocr_crop_height"), 8, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_crop_height_slider, self._ocr_crop_height_value), 8, 1)
+        ocr_grid.addWidget(self._field_label("ocr_scale"), 9, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_scale_slider, self._ocr_scale_value), 9, 1)
+        ocr_grid.addWidget(self._field_label("ocr_psm"), 10, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_psm_slider, self._ocr_psm_value), 10, 1)
+        ocr_grid.addWidget(self._ocr_threshold_check, 11, 0, 1, 2)
+        ocr_grid.addWidget(self._field_label("ocr_min_confidence"), 12, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_min_confidence_slider, self._ocr_min_confidence_value), 12, 1)
+        ocr_grid.addWidget(self._field_label("ocr_merge_similarity"), 13, 0)
+        ocr_grid.addWidget(self._slider_row(self._ocr_merge_similarity_slider, self._ocr_merge_similarity_value), 13, 1)
 
         translation_grid = QGridLayout()
         translation_grid.setHorizontalSpacing(8)
@@ -1834,15 +1913,21 @@ class PlayerLayoutMixin:
         translation_grid.addWidget(self._nllb_model_combo, 1, 1)
         translation_grid.addWidget(self._field_label("translator_device"), 2, 0)
         translation_grid.addWidget(self._translation_device_combo, 2, 1)
-        translation_grid.addWidget(self._field_label("translation_max_tokens"), 3, 0)
+        translation_grid.addWidget(self._field_label("translator_api_base"), 3, 0)
+        translation_grid.addWidget(self._translator_api_base_edit, 3, 1)
+        translation_grid.addWidget(self._field_label("translator_api_key"), 4, 0)
+        translation_grid.addWidget(self._translator_api_key_edit, 4, 1)
+        translation_grid.addWidget(self._field_label("translator_api_region"), 5, 0)
+        translation_grid.addWidget(self._translator_api_region_edit, 5, 1)
+        translation_grid.addWidget(self._field_label("translation_max_tokens"), 6, 0)
         translation_grid.addWidget(
-            self._slider_row(self._translation_max_tokens_slider, self._translation_max_tokens_value), 3, 1
+            self._slider_row(self._translation_max_tokens_slider, self._translation_max_tokens_value), 6, 1
         )
-        translation_grid.addWidget(self._field_label("translation_beams"), 4, 0)
+        translation_grid.addWidget(self._field_label("translation_beams"), 7, 0)
         translation_grid.addWidget(
-            self._slider_row(self._translation_beams_slider, self._translation_beams_value), 4, 1
+            self._slider_row(self._translation_beams_slider, self._translation_beams_value), 7, 1
         )
-        translation_grid.addWidget(self._translation_offline_check, 5, 0, 1, 2)
+        translation_grid.addWidget(self._translation_offline_check, 8, 0, 1, 2)
 
         tts_grid = QGridLayout()
         tts_grid.setHorizontalSpacing(8)
@@ -1880,6 +1965,16 @@ class PlayerLayoutMixin:
         tts_advanced_grid.addWidget(self._vieneu_encoder_path_edit, 3, 1)
         tts_advanced_grid.addWidget(self._field_label("vieneu_standard_codec_path"), 4, 0)
         tts_advanced_grid.addWidget(self._vieneu_standard_codec_path_edit, 4, 1)
+        tts_advanced_grid.addWidget(self._field_label("tts_api_base"), 5, 0)
+        tts_advanced_grid.addWidget(self._tts_api_base_edit, 5, 1)
+        tts_advanced_grid.addWidget(self._field_label("tts_api_key"), 6, 0)
+        tts_advanced_grid.addWidget(self._tts_api_key_edit, 6, 1)
+        tts_advanced_grid.addWidget(self._field_label("tts_api_secret"), 7, 0)
+        tts_advanced_grid.addWidget(self._tts_api_secret_edit, 7, 1)
+        tts_advanced_grid.addWidget(self._field_label("tts_api_region"), 8, 0)
+        tts_advanced_grid.addWidget(self._tts_api_region_edit, 8, 1)
+        tts_advanced_grid.addWidget(self._field_label("tts_model"), 9, 0)
+        tts_advanced_grid.addWidget(self._tts_model_edit, 9, 1)
 
         cleanup_grid = QGridLayout()
         cleanup_grid.setHorizontalSpacing(8)
@@ -1900,10 +1995,22 @@ class PlayerLayoutMixin:
         voice_ai_grid = QGridLayout()
         voice_ai_grid.setHorizontalSpacing(8)
         voice_ai_grid.setVerticalSpacing(7)
-        voice_ai_grid.addWidget(self._field_label("speaker_gender_model"), 0, 0)
-        voice_ai_grid.addWidget(self._speaker_gender_model_combo, 0, 1)
-        voice_ai_grid.addWidget(self._field_label("source_filter_model"), 1, 0)
-        voice_ai_grid.addWidget(self._source_filter_model_combo, 1, 1)
+        voice_ai_grid.addWidget(self._field_label("speaker_gender_provider"), 0, 0)
+        voice_ai_grid.addWidget(self._speaker_gender_provider_combo, 0, 1)
+        voice_ai_grid.addWidget(self._field_label("speaker_gender_model"), 1, 0)
+        voice_ai_grid.addWidget(self._speaker_gender_model_combo, 1, 1)
+        voice_ai_grid.addWidget(self._field_label("speaker_gender_api_base"), 2, 0)
+        voice_ai_grid.addWidget(self._speaker_gender_api_base_edit, 2, 1)
+        voice_ai_grid.addWidget(self._field_label("speaker_gender_api_key"), 3, 0)
+        voice_ai_grid.addWidget(self._speaker_gender_api_key_edit, 3, 1)
+        voice_ai_grid.addWidget(self._field_label("speaker_gender_timeout"), 4, 0)
+        voice_ai_grid.addWidget(
+            self._slider_row(self._speaker_gender_timeout_slider, self._speaker_gender_timeout_value),
+            4,
+            1,
+        )
+        voice_ai_grid.addWidget(self._field_label("source_filter_model"), 5, 0)
+        voice_ai_grid.addWidget(self._source_filter_model_combo, 5, 1)
 
         self._transcript = QTextEdit()
         self._transcript.setObjectName("transcript")
@@ -2026,6 +2133,9 @@ class PlayerLayoutMixin:
         self._refresh_tts_options()
         self._sync_auto_voice_controls_enabled()
         self._sync_auto_match_controls_enabled()
+        self._sync_asr_controls()
+        self._sync_ocr_controls()
+        self._sync_translation_model_combo_enabled()
         self._sync_source_filter_controls()
         self._sync_transcript_cleanup_controls()
         self._sync_vieneu_advanced_controls()
@@ -2119,8 +2229,14 @@ class PlayerLayoutMixin:
             ("_target_language_combo", "target_language"),
             ("_asr_provider_combo", "asr_provider"),
             ("_asr_model_combo", "asr_model"),
+            ("_asr_api_base_edit", "asr_api_base_placeholder"),
+            ("_asr_api_key_edit", "asr_api_key_placeholder"),
             ("_ocr_provider_combo", "ocr_provider"),
             ("_ocr_model_combo", "ocr_model"),
+            ("_ocr_api_base_edit", "ocr_api_base_placeholder"),
+            ("_ocr_api_key_edit", "ocr_api_key_placeholder"),
+            ("_ocr_api_region_edit", "ocr_api_region_placeholder"),
+            ("_ocr_timeout_slider", "ocr_timeout"),
             ("_ocr_fps_slider", "ocr_fps"),
             ("_ocr_crop_top_slider", "ocr_crop_top"),
             ("_ocr_crop_height_slider", "ocr_crop_height"),
@@ -2131,7 +2247,19 @@ class PlayerLayoutMixin:
             ("_ocr_merge_similarity_slider", "ocr_merge_similarity"),
             ("_translator_combo", "translator"),
             ("_nllb_model_combo", "translation_model"),
+            ("_translator_api_base_edit", "translator_api_base_placeholder"),
+            ("_translator_api_key_edit", "translator_api_key_placeholder"),
+            ("_translator_api_region_edit", "translator_api_region_placeholder"),
+            ("_tts_api_base_edit", "tts_api_base_placeholder"),
+            ("_tts_api_key_edit", "tts_api_key_placeholder"),
+            ("_tts_api_secret_edit", "tts_api_secret_placeholder"),
+            ("_tts_api_region_edit", "tts_api_region_placeholder"),
+            ("_tts_model_edit", "tts_model_placeholder"),
             ("_speaker_gender_model_combo", "speaker_gender_model_tooltip"),
+            ("_speaker_gender_provider_combo", "speaker_gender_provider"),
+            ("_speaker_gender_api_base_edit", "speaker_gender_api_base_placeholder"),
+            ("_speaker_gender_api_key_edit", "speaker_gender_api_key_placeholder"),
+            ("_speaker_gender_timeout_slider", "speaker_gender_timeout"),
             ("_performance_preset_combo", "preset"),
             ("_export_video_quality_combo", "export_video_quality"),
             ("_translation_device_combo", "translator_device"),

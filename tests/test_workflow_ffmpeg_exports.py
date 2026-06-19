@@ -1381,6 +1381,21 @@ def test_dubbing_worker_skips_local_cleanup_for_realtime_sources(qapp, tmp_path)
     assert statuses
 
 
+def test_dubbing_worker_skips_online_cleanup_for_realtime_sources(qapp) -> None:
+    config = AppConfig(
+        audio_source="original",
+        transcript_cleanup_mode="light",
+        transcript_cleanup_provider="groq",
+    )
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    statuses: list[str] = []
+    worker.status_changed.connect(statuses.append)
+    worker._transcript_cleaner.clean = lambda *_args, **_kwargs: pytest.fail("online cleanup should be skipped")
+
+    assert worker._clean_transcript_text("  hello   world  ", "en") == "hello world"
+    assert statuses
+
+
 def test_dubbing_worker_keeps_nonlocal_cleanup_for_realtime_sources(qapp) -> None:
     config = AppConfig(
         audio_source="original",

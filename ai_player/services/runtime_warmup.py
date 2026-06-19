@@ -7,10 +7,15 @@ from ai_player.core.app_logging import get_logger
 from ai_player.core.config import RUNTIME_DIR, AppConfig
 from ai_player.core.i18n import ui_text
 from ai_player.core.performance import measure_stage
-from ai_player.services.transcript_cleanup import TranscriptCleaner
-from ai_player.services.translation import effective_translator_provider
+from ai_player.services.transcript_cleanup import TranscriptCleaner, is_online_transcript_cleanup_provider
+from ai_player.services.translation import effective_translator_provider, is_online_translation_provider
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
-from ai_player.services.tts import create_tts_provider, normalize_tts_provider, tts_output_suffix
+from ai_player.services.tts import (
+    create_tts_provider,
+    is_online_tts_provider,
+    normalize_tts_provider,
+    tts_output_suffix,
+)
 from ai_player.services.whisper_runtime import (
     effective_whisper_compute_type,
     effective_whisper_device,
@@ -43,17 +48,17 @@ def warm_runtime_components(
         _emit(progress_callback, ui_text("warmup_loading_whisper", config.gui_language))
         timings["whisper_load_seconds"] = _time_call(lambda: _warm_whisper(config))
 
-    if getattr(config, "runtime_warmup_translation", True) and effective_translator_provider(config) != "none":
+    if _should_warm_translation(config):
         check_cancelled()
         _emit(progress_callback, ui_text("warmup_loading_translation", config.gui_language))
         timings["translation_seconds"] = _time_call(lambda: _warm_translation(config))
 
-    if getattr(config, "transcript_cleanup_mode", "off") != "off":
+    if _should_warm_transcript_cleanup(config):
         check_cancelled()
         _emit(progress_callback, ui_text("warmup_loading_transcript_cleanup", config.gui_language))
         timings["transcript_cleanup_seconds"] = _time_call(lambda: _warm_transcript_cleanup(config))
 
-    if getattr(config, "runtime_warmup_tts", False) and normalize_tts_provider(config.tts_provider) != "none":
+    if _should_warm_tts(config):
         check_cancelled()
         _emit(progress_callback, ui_text("warmup_loading_tts", config.gui_language))
         timings["tts_seconds"] = _time_call(lambda: _warm_tts(config))
@@ -67,11 +72,11 @@ def has_runtime_warmup_stage(config: AppConfig) -> bool:
         return False
     if getattr(config, "runtime_warmup_whisper", True):
         return True
-    if getattr(config, "runtime_warmup_translation", True) and effective_translator_provider(config) != "none":
+    if _should_warm_translation(config):
         return True
-    if getattr(config, "transcript_cleanup_mode", "off") != "off":
+    if _should_warm_transcript_cleanup(config):
         return True
-    return getattr(config, "runtime_warmup_tts", False) and normalize_tts_provider(config.tts_provider) != "none"
+    return _should_warm_tts(config)
 
 
 def _warm_whisper(config: AppConfig) -> None:
@@ -107,6 +112,26 @@ def _warm_translation(config: AppConfig) -> None:
     translator = get_shared_vietnamese_translator(config)
     with measure_stage("warmup", "translation"):
         translator.translate("Hello, this short sentence warms the translation model.", "en")
+
+
+def _should_warm_translation(config: AppConfig) -> bool:
+    if not getattr(config, "runtime_warmup_translation", True):
+        return False
+    provider = effective_translator_provider(config)
+    return provider != "none" and not is_online_translation_provider(provider)
+
+
+def _should_warm_tts(config: AppConfig) -> bool:
+    if not getattr(config, "runtime_warmup_tts", False):
+        return False
+    provider = normalize_tts_provider(config.tts_provider)
+    return provider != "none" and not is_online_tts_provider(provider)
+
+
+def _should_warm_transcript_cleanup(config: AppConfig) -> bool:
+    if getattr(config, "transcript_cleanup_mode", "off") == "off":
+        return False
+    return not is_online_transcript_cleanup_provider(getattr(config, "transcript_cleanup_provider", "ollama"))
 
 
 def _warm_transcript_cleanup(config: AppConfig) -> None:

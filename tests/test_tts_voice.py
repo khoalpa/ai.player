@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 import queue
 
 import pytest
@@ -8,7 +10,31 @@ from ai_player.core.config import AppConfig
 from ai_player.services import tts, vieneu_tts_server
 
 
-@pytest.mark.parametrize(("value", "expected"), [("edge-tts", "edge"), ("off", "none"), ("local", "vieneu")])
+class _FakeResponse:
+    def __init__(self, *, status_code=200, content=b"audio", payload=None, text="") -> None:
+        self.status_code = status_code
+        self.content = content
+        self._payload = payload
+        self.text = text
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("not json")
+        return self._payload
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("edge-tts", "edge"),
+        ("off", "none"),
+        ("local", "vieneu"),
+        ("azure", "azure_tts"),
+        ("google-cloud-tts", "google_tts"),
+        ("polly", "amazon_polly"),
+        ("elevenlabs", "elevenlabs_tts"),
+    ],
+)
 def test_normalize_tts_provider(value: str, expected: str) -> None:
     assert tts.normalize_tts_provider(value) == expected
 
@@ -33,11 +59,26 @@ def test_normalize_vieneu_device(value: str, expected: str) -> None:
         ("edge", "vi-VN-HoaiMyNeural", "female"),
         ("vieneu", "Binh", "male"),
         ("vieneu", "Doan", "female"),
+        ("azure_tts", "vi-VN-NamMinhNeural", "male"),
+        ("google_tts", "vi-VN-Neural2-A", "female"),
+        ("amazon_polly", "Matthew", "male"),
+        ("elevenlabs_tts", "21m00Tcm4TlvDq8ikWAM", "female"),
         ("vieneu", "unknown", "unknown"),
     ],
 )
 def test_voice_gender(provider: str, voice: str, expected: str) -> None:
     assert tts.voice_gender(provider, voice) == expected
+
+
+def test_online_tts_provider_options_include_confirmed_providers() -> None:
+    assert {provider.id for provider in tts.available_tts_providers()} >= {
+        "azure_tts",
+        "google_tts",
+        "amazon_polly",
+        "elevenlabs_tts",
+    }
+    assert tts.is_online_tts_provider("azure")
+    assert tts.tts_output_suffix("google_tts") == "mp3"
 
 
 @pytest.mark.parametrize(
@@ -313,3 +354,92 @@ def test_edge_tts_provider_retries_empty_audio(monkeypatch, tmp_path) -> None:
 
     assert attempts == 3
     assert (tmp_path / "out.mp3").read_bytes() == b"audio"
+
+
+def test_azure_online_tts_posts_ssml(monkeypatch, tmp_path) -> None:
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return _FakeResponse(content=b"azure-audio")
+
+    monkeypatch.setattr(tts.requests, "post", fake_post)
+    provider = tts.OnlineTTSProvider(
+        AppConfig(tts_provider="azure_tts", tts_api_key="key", tts_api_region="eastus"),
+        "azure_tts",
+    )
+
+    provider.synthesize("Xin chao", tmp_path / "out.mp3", voice="vi-VN-HoaiMyNeural")
+
+    assert calls[0][0] == "https://eastus.tts.speech.microsoft.com/cognitiveservices/v1"
+    assert calls[0][1]["headers"]["Ocp-Apim-Subscription-Key"] == "key"
+    assert b"vi-VN-HoaiMyNeural" in calls[0][1]["data"]
+    assert (tmp_path / "out.mp3").read_bytes() == b"azure-audio"
+
+
+def test_google_online_tts_decodes_audio_content(monkeypatch, tmp_path) -> None:
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return _FakeResponse(payload={"audioContent": base64.b64encode(b"google-audio").decode("ascii")})
+
+    monkeypatch.setattr(tts.requests, "post", fake_post)
+    provider = tts.OnlineTTSProvider(AppConfig(tts_api_key="google-key"), "google_tts")
+
+    provider.synthesize("Xin chao", tmp_path / "out.mp3", voice="vi-VN-Neural2-A")
+
+    assert "key=google-key" in calls[0][0]
+    assert calls[0][1]["json"]["voice"]["name"] == "vi-VN-Neural2-A"
+    assert calls[0][1]["json"]["audioConfig"]["audioEncoding"] == "MP3"
+    assert (tmp_path / "out.mp3").read_bytes() == b"google-audio"
+
+
+def test_amazon_polly_online_tts_signs_request(monkeypatch, tmp_path) -> None:
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return _FakeResponse(content=b"polly-audio")
+
+    monkeypatch.setattr(tts.requests, "post", fake_post)
+    provider = tts.OnlineTTSProvider(
+        AppConfig(
+            tts_api_key="access",
+            tts_api_secret="secret",
+            tts_api_region="us-east-1",
+            tts_model="standard",
+        ),
+        "amazon_polly",
+    )
+
+    provider.synthesize("Hello", tmp_path / "out.mp3", voice="Joanna")
+
+    assert calls[0][0] == "https://polly.us-east-1.amazonaws.com/v1/speech"
+    headers = calls[0][1]["headers"]
+    assert headers["Authorization"].startswith("AWS4-HMAC-SHA256 Credential=access/")
+    payload = json.loads(calls[0][1]["data"].decode("utf-8"))
+    assert payload["VoiceId"] == "Joanna"
+    assert payload["Engine"] == "standard"
+    assert (tmp_path / "out.mp3").read_bytes() == b"polly-audio"
+
+
+def test_elevenlabs_online_tts_posts_voice_and_model(monkeypatch, tmp_path) -> None:
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return _FakeResponse(content=b"eleven-audio")
+
+    monkeypatch.setattr(tts.requests, "post", fake_post)
+    provider = tts.OnlineTTSProvider(
+        AppConfig(tts_api_key="eleven-key", tts_model="eleven_flash_v2_5"),
+        "elevenlabs_tts",
+    )
+
+    provider.synthesize("Xin chao", tmp_path / "out.mp3", voice="voice/id")
+
+    assert calls[0][0].endswith("/text-to-speech/voice%2Fid?output_format=mp3_44100_128")
+    assert calls[0][1]["headers"]["xi-api-key"] == "eleven-key"
+    assert calls[0][1]["json"]["model_id"] == "eleven_flash_v2_5"
+    assert (tmp_path / "out.mp3").read_bytes() == b"eleven-audio"

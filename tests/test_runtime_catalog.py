@@ -32,7 +32,14 @@ def test_available_translation_provider_options_uses_language_pack_labels() -> N
     english = catalog.available_translation_provider_options("en")
     vietnamese = catalog.available_translation_provider_options("vi")
 
-    assert [option.id for option in english] == ["nllb_ct2", "nllb", "none"]
+    assert [option.id for option in english] == [
+        "nllb_ct2",
+        "nllb",
+        "azure_translator",
+        "google_translate",
+        "deepl",
+        "none",
+    ]
     assert english[-1].name == "No translation"
     assert vietnamese[-1].name == "Không dịch"
 
@@ -74,7 +81,8 @@ def test_available_local_llm_options_skips_tts_gguf(monkeypatch, tmp_path) -> No
 
     options = catalog.available_local_llm_options()
 
-    assert [option.name for option in options] == ["Qwen"]
+    assert "Qwen" in [option.name for option in options]
+    assert catalog.RuntimeOption("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite") in options
 
 
 def test_available_asr_models_scans_local_whisper_dirs(monkeypatch, tmp_path) -> None:
@@ -98,9 +106,9 @@ def test_available_ocr_models_scans_tessdata_dirs(monkeypatch, tmp_path) -> None
 
     options = catalog.available_ocr_models()
 
-    assert options[0].id == str(tessdata.resolve())
-    assert "en" in options[0].name
-    assert "vi" in options[0].name
+    tessdata_option = catalog.RuntimeOption(str(tessdata.resolve()), "tessdata (en, vi)")
+    assert tessdata_option in options
+    assert catalog.RuntimeOption("microsoft/trocr-base-handwritten", "HF TrOCR base handwritten") in options
 
 
 def test_available_speaker_gender_models_scans_audio_classifiers(monkeypatch, tmp_path) -> None:
@@ -113,7 +121,11 @@ def test_available_speaker_gender_models_scans_audio_classifiers(monkeypatch, tm
 
     options = catalog.available_speaker_gender_models()
 
-    assert options == [catalog.RuntimeOption(str(model_dir.resolve()), "common-voice-gender-detection")]
+    assert catalog.RuntimeOption(str(model_dir.resolve()), "common-voice-gender-detection") in options
+    assert catalog.RuntimeOption(
+        "audeering/wav2vec2-large-robust-6-ft-age-gender",
+        "HF audeering age/gender 6-layer",
+    ) in options
 
 
 def test_read_dropdown_options_file_accepts_wrapped_options(tmp_path) -> None:
@@ -173,7 +185,21 @@ def test_default_config_matches_default_performance_preset(monkeypatch) -> None:
         "AI_PLAYER_TRANSLATION_MAX_TOKENS",
         "AI_PLAYER_TRANSLATION_BEAMS",
         "AI_PLAYER_TRANSLATOR_PROVIDER",
+        "AI_PLAYER_TRANSLATOR_API_BASE",
+        "AI_PLAYER_TRANSLATOR_API_KEY",
+        "AI_PLAYER_TRANSLATOR_API_REGION",
+        "AI_PLAYER_TRANSLATOR_TIMEOUT_SECONDS",
         "AI_PLAYER_TTS_PROVIDER",
+        "AI_PLAYER_TTS_API_BASE",
+        "AI_PLAYER_TTS_API_KEY",
+        "AI_PLAYER_TTS_API_SECRET",
+        "AI_PLAYER_TTS_API_REGION",
+        "AI_PLAYER_TTS_MODEL",
+        "AI_PLAYER_TTS_TIMEOUT_SECONDS",
+        "AI_PLAYER_SPEAKER_GENDER_PROVIDER",
+        "AI_PLAYER_SPEAKER_GENDER_API_BASE",
+        "AI_PLAYER_SPEAKER_GENDER_API_KEY",
+        "AI_PLAYER_SPEAKER_GENDER_TIMEOUT_SECONDS",
         "AI_PLAYER_VIENEU_TTS_BACKEND",
         "AI_PLAYER_VIENEU_TTS_DEVICE",
         "AI_PLAYER_VIENEU_TTS_MAX_CHARS_CHUNK",
@@ -189,8 +215,15 @@ def test_default_config_matches_default_performance_preset(monkeypatch) -> None:
         "AI_PLAYER_WHISPER_OFFLINE",
         "AI_PLAYER_WHISPER_MODEL",
         "AI_PLAYER_ASR_PROVIDER",
+        "AI_PLAYER_ASR_API_BASE",
+        "AI_PLAYER_ASR_API_KEY",
+        "AI_PLAYER_ASR_TIMEOUT_SECONDS",
         "AI_PLAYER_OCR_PROVIDER",
         "AI_PLAYER_OCR_MODEL",
+        "AI_PLAYER_OCR_API_BASE",
+        "AI_PLAYER_OCR_API_KEY",
+        "AI_PLAYER_OCR_API_REGION",
+        "AI_PLAYER_OCR_TIMEOUT_SECONDS",
         "AI_PLAYER_PERFORMANCE_PRESET",
     )
     for name in env_names:

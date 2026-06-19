@@ -86,6 +86,21 @@ DEFAULT_TRANSLATION_PROVIDERS = (
     ("NLLB Local", "nllb"),
     ("No translation", "none"),
 )
+DEFAULT_ONLINE_SPEAKER_GENDER_MODELS = (
+    ("HF audeering age/gender 6-layer", "audeering/wav2vec2-large-robust-6-ft-age-gender"),
+    ("HF audeering age/gender 24-layer", "audeering/wav2vec2-large-robust-24-ft-age-gender"),
+    ("HF XLS-R gender LibriSpeech", "alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech"),
+)
+DEFAULT_ONLINE_OCR_MODELS = (
+    ("HF TrOCR base handwritten", "microsoft/trocr-base-handwritten"),
+    ("HF TrOCR large handwritten", "microsoft/trocr-large-handwritten"),
+)
+DEFAULT_ONLINE_TRANSCRIPT_CLEANUP_MODELS = (
+    ("Groq Llama 3.1 8B Instant", "llama-3.1-8b-instant"),
+    ("Gemini 2.5 Flash Lite", "gemini-2.5-flash-lite"),
+    ("OpenRouter Free Router", "openrouter/free"),
+    ("HF Llama 3.1 8B Instruct", "meta-llama/Llama-3.1-8B-Instruct"),
+)
 LANGUAGE_PACKS_DIR = RESOURCE_ROOT / "languages"
 LANGUAGE_PACK_FALLBACKS = ("vi", "en", "vietnamese", "english")
 PRESET_PATH_SETTING_KEYS = {
@@ -474,9 +489,11 @@ def _unique_options(options: list[RuntimeOption]) -> list[RuntimeOption]:
 
 
 def available_local_llm_options() -> list[RuntimeOption]:
+    options: list[RuntimeOption] = [
+        RuntimeOption(model_id, name) for name, model_id in DEFAULT_ONLINE_TRANSCRIPT_CLEANUP_MODELS
+    ]
+    seen: set[str] = {option.id for option in options}
     roots = [TRANSCRIPT_CLEANUP_MODELS_PATH]
-    options: list[RuntimeOption] = []
-    seen: set[str] = set()
     for root in roots:
         if not root.exists():
             continue
@@ -491,7 +508,11 @@ def available_local_llm_options() -> list[RuntimeOption]:
 
 
 def available_asr_providers() -> list[RuntimeOption]:
-    return [RuntimeOption("faster_whisper", "Faster Whisper")]
+    return [
+        RuntimeOption("faster_whisper", "Faster Whisper"),
+        RuntimeOption("assemblyai", "AssemblyAI"),
+        RuntimeOption("speechmatics", "Speechmatics"),
+    ]
 
 
 def available_asr_models() -> list[RuntimeOption]:
@@ -508,12 +529,18 @@ def available_asr_models() -> list[RuntimeOption]:
 
 
 def available_ocr_providers() -> list[RuntimeOption]:
-    return [RuntimeOption("tesseract", "Tesseract OCR")]
+    return [
+        RuntimeOption("tesseract", "Tesseract OCR"),
+        RuntimeOption("ocr_space", "OCR.space"),
+        RuntimeOption("azure_vision", "Azure Vision Read"),
+        RuntimeOption("google_vision", "Google Vision OCR"),
+        RuntimeOption("huggingface_trocr", "Hugging Face TrOCR"),
+    ]
 
 
 def available_ocr_models() -> list[RuntimeOption]:
-    options: list[RuntimeOption] = []
-    seen: set[str] = set()
+    options: list[RuntimeOption] = [RuntimeOption(model_id, name) for name, model_id in DEFAULT_ONLINE_OCR_MODELS]
+    seen: set[str] = {option.id for option in options}
     for path in _tessdata_candidates():
         if not path.exists() or not path.is_dir():
             continue
@@ -528,8 +555,10 @@ def available_ocr_models() -> list[RuntimeOption]:
 
 
 def available_speaker_gender_models() -> list[RuntimeOption]:
-    options: list[RuntimeOption] = []
-    seen: set[str] = set()
+    options: list[RuntimeOption] = [
+        RuntimeOption(model_id, name) for name, model_id in DEFAULT_ONLINE_SPEAKER_GENDER_MODELS
+    ]
+    seen: set[str] = {option.id for option in options}
     if SPEAKER_GENDER_MODELS_PATH.exists():
         for path in sorted(SPEAKER_GENDER_MODELS_PATH.iterdir(), key=lambda item: item.name.lower()):
             if path.is_dir() and _looks_like_audio_classifier(path):

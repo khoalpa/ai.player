@@ -17,6 +17,7 @@ from ai_player.core.config import AppConfig
 from ai_player.core.i18n import ui_text
 from ai_player.core.offline_env import OfflineEnvironmentToken, pop_hf_offline_environment, push_hf_offline_environment
 from ai_player.core.performance import measure_stage
+from ai_player.services.asr import is_online_asr_provider, transcribe_online_asr
 from ai_player.services.capture_sources import capture_system_microphone_audio
 from ai_player.services.ffmpeg import concat_escape, ffmpeg_executable, ffplay_executable, terminate_process
 from ai_player.services.transcript_cleanup import TranscriptCleaner
@@ -193,6 +194,8 @@ class MeetingWorker(QThread):
         return push_hf_offline_environment(self._config.whisper_offline)
 
     def _validate_whisper_model(self) -> None:
+        if is_online_asr_provider(self._config.asr_provider):
+            return
         if self._config.whisper_offline and not Path(self._config.whisper_model).exists():
             raise RuntimeError(self._tr("meeting_error_missing_whisper_offline"))
 
@@ -224,6 +227,8 @@ class MeetingWorker(QThread):
         return self._model
 
     def _transcribe_segments(self, audio_path: Path):
+        if is_online_asr_provider(self._config.asr_provider):
+            return transcribe_online_asr(self._config, audio_path, language=self._selected_whisper_language())
         if self._model is None:
             self._model = self._load_model()
         kwargs = whisper_transcribe_kwargs(self._config, self._selected_whisper_language())

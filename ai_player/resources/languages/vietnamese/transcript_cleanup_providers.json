@@ -11,6 +11,22 @@
     {
       "value": "openai",
       "label": "Tương thích OpenAI"
+    },
+    {
+      "value": "groq",
+      "label": "Groq"
+    },
+    {
+      "value": "gemini",
+      "label": "Google Gemini"
+    },
+    {
+      "value": "openrouter",
+      "label": "OpenRouter miễn phí"
+    },
+    {
+      "value": "huggingface",
+      "label": "Hugging Face"
     }
   ]
 }

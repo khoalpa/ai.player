@@ -190,6 +190,9 @@ class AppConfig:
     transcript_cleanup_timeout_seconds: float = 12.0
     transcript_path: str = ""
     asr_provider: str = DEFAULT_ASR_PROVIDER
+    asr_api_base: str = ""
+    asr_api_key: str = ""
+    asr_timeout_seconds: float = 600.0
     whisper_model: str = LOCAL_WHISPER_MODEL_PATH
     whisper_offline: bool = True
     whisper_device: str = "auto"
@@ -198,6 +201,10 @@ class AppConfig:
     whisper_vad_filter: bool = True
     ocr_provider: str = DEFAULT_OCR_PROVIDER
     ocr_model: str = DEFAULT_OCR_MODEL_PATH
+    ocr_api_base: str = ""
+    ocr_api_key: str = ""
+    ocr_api_region: str = ""
+    ocr_timeout_seconds: float = 30.0
     ocr_fps: float = 2.0
     ocr_crop_top_ratio: float = 0.58
     ocr_crop_height_ratio: float = 0.38
@@ -212,6 +219,10 @@ class AppConfig:
     local_translation_device: str = "auto"
     local_translation_offline: bool = True
     translator_provider: str = "nllb_ct2"
+    translator_api_base: str = ""
+    translator_api_key: str = ""
+    translator_api_region: str = ""
+    translator_timeout_seconds: float = 30.0
     performance_preset: str = DEFAULT_PERFORMANCE_PRESET
     export_video_quality: str = "balanced"
     preserve_source_terms: bool = True
@@ -233,6 +244,10 @@ class AppConfig:
     dubbing_overlap_policy: str = "smart"
     dubbing_auto_voice_gender: bool = False
     dubbing_auto_voice_gender_mode: str = "balanced"
+    speaker_gender_provider: str = "local"
+    speaker_gender_api_base: str = ""
+    speaker_gender_api_key: str = ""
+    speaker_gender_timeout_seconds: float = 20.0
     speaker_gender_model: str = field(default_factory=lambda: str(LOCAL_SPEAKER_GENDER_MODEL_PATH))
     dubbing_speed_min: float = 0.92
     dubbing_speed_max: float = 1.12
@@ -248,6 +263,12 @@ class AppConfig:
     tts_voice: str = "Thục Đoan"
     tts_male_voice: str = "Xuân Vĩnh"
     tts_female_voice: str = "Thục Đoan"
+    tts_api_base: str = ""
+    tts_api_key: str = ""
+    tts_api_secret: str = ""
+    tts_api_region: str = ""
+    tts_model: str = ""
+    tts_timeout_seconds: float = 30.0
     vieneu_tts_path: str = INTERNAL_VIENEU_TTS_PATH
     vieneu_tts_runtime: str = "subprocess"
     vieneu_tts_python: str = field(default_factory=lambda: sys.executable)
@@ -291,6 +312,9 @@ _APP_CONFIG_ENV_FIELDS = {
     "transcript_cleanup_timeout_seconds": ("AI_PLAYER_TRANSCRIPT_CLEANUP_TIMEOUT_SECONDS", "float"),
     "transcript_path": ("AI_PLAYER_TRANSCRIPT_PATH", "str"),
     "asr_provider": ("AI_PLAYER_ASR_PROVIDER", "str"),
+    "asr_api_base": ("AI_PLAYER_ASR_API_BASE", "str"),
+    "asr_api_key": ("AI_PLAYER_ASR_API_KEY", "str"),
+    "asr_timeout_seconds": ("AI_PLAYER_ASR_TIMEOUT_SECONDS", "float"),
     "whisper_model": ("AI_PLAYER_WHISPER_MODEL", "str"),
     "whisper_offline": ("AI_PLAYER_WHISPER_OFFLINE", "bool"),
     "whisper_device": ("AI_PLAYER_WHISPER_DEVICE", "str"),
@@ -299,6 +323,10 @@ _APP_CONFIG_ENV_FIELDS = {
     "whisper_vad_filter": ("AI_PLAYER_WHISPER_VAD_FILTER", "bool"),
     "ocr_provider": ("AI_PLAYER_OCR_PROVIDER", "str"),
     "ocr_model": ("AI_PLAYER_OCR_MODEL", "str"),
+    "ocr_api_base": ("AI_PLAYER_OCR_API_BASE", "str"),
+    "ocr_api_key": ("AI_PLAYER_OCR_API_KEY", "str"),
+    "ocr_api_region": ("AI_PLAYER_OCR_API_REGION", "str"),
+    "ocr_timeout_seconds": ("AI_PLAYER_OCR_TIMEOUT_SECONDS", "float"),
     "ocr_fps": ("AI_PLAYER_OCR_FPS", "float"),
     "ocr_crop_top_ratio": ("AI_PLAYER_OCR_CROP_TOP_RATIO", "float"),
     "ocr_crop_height_ratio": ("AI_PLAYER_OCR_CROP_HEIGHT_RATIO", "float"),
@@ -313,6 +341,10 @@ _APP_CONFIG_ENV_FIELDS = {
     "local_translation_device": ("AI_PLAYER_TRANSLATION_DEVICE", "str"),
     "local_translation_offline": ("AI_PLAYER_TRANSLATION_OFFLINE", "bool"),
     "translator_provider": ("AI_PLAYER_TRANSLATOR_PROVIDER", "str"),
+    "translator_api_base": ("AI_PLAYER_TRANSLATOR_API_BASE", "str"),
+    "translator_api_key": ("AI_PLAYER_TRANSLATOR_API_KEY", "str"),
+    "translator_api_region": ("AI_PLAYER_TRANSLATOR_API_REGION", "str"),
+    "translator_timeout_seconds": ("AI_PLAYER_TRANSLATOR_TIMEOUT_SECONDS", "float"),
     "performance_preset": ("AI_PLAYER_PERFORMANCE_PRESET", "str"),
     "export_video_quality": ("AI_PLAYER_EXPORT_VIDEO_QUALITY", "str"),
     "preserve_source_terms": ("AI_PLAYER_PRESERVE_SOURCE_TERMS", "bool"),
@@ -334,6 +366,10 @@ _APP_CONFIG_ENV_FIELDS = {
     "dubbing_overlap_policy": ("AI_PLAYER_DUBBING_OVERLAP_POLICY", "str"),
     "dubbing_auto_voice_gender": ("AI_PLAYER_DUBBING_AUTO_VOICE_GENDER", "bool"),
     "dubbing_auto_voice_gender_mode": ("AI_PLAYER_DUBBING_AUTO_VOICE_GENDER_MODE", "str"),
+    "speaker_gender_provider": ("AI_PLAYER_SPEAKER_GENDER_PROVIDER", "str"),
+    "speaker_gender_api_base": ("AI_PLAYER_SPEAKER_GENDER_API_BASE", "str"),
+    "speaker_gender_api_key": ("AI_PLAYER_SPEAKER_GENDER_API_KEY", "str"),
+    "speaker_gender_timeout_seconds": ("AI_PLAYER_SPEAKER_GENDER_TIMEOUT_SECONDS", "float"),
     "speaker_gender_model": ("AI_PLAYER_SPEAKER_GENDER_AI_MODEL", "str"),
     "dubbing_speed_min": ("AI_PLAYER_DUBBING_SPEED_MIN", "float"),
     "dubbing_speed_max": ("AI_PLAYER_DUBBING_SPEED_MAX", "float"),
@@ -349,6 +385,12 @@ _APP_CONFIG_ENV_FIELDS = {
     "tts_voice": ("AI_PLAYER_TTS_VOICE", "str"),
     "tts_male_voice": ("AI_PLAYER_TTS_MALE_VOICE", "str"),
     "tts_female_voice": ("AI_PLAYER_TTS_FEMALE_VOICE", "str"),
+    "tts_api_base": ("AI_PLAYER_TTS_API_BASE", "str"),
+    "tts_api_key": ("AI_PLAYER_TTS_API_KEY", "str"),
+    "tts_api_secret": ("AI_PLAYER_TTS_API_SECRET", "str"),
+    "tts_api_region": ("AI_PLAYER_TTS_API_REGION", "str"),
+    "tts_model": ("AI_PLAYER_TTS_MODEL", "str"),
+    "tts_timeout_seconds": ("AI_PLAYER_TTS_TIMEOUT_SECONDS", "float"),
     "vieneu_tts_runtime": ("AI_PLAYER_VIENEU_TTS_RUNTIME", "str"),
     "vieneu_tts_python": ("AI_PLAYER_VIENEU_TTS_PYTHON", "str"),
     "vieneu_tts_core": ("AI_PLAYER_VIENEU_TTS_CORE", "str"),

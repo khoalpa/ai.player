@@ -120,6 +120,25 @@ def test_runtime_warmup_stage_detection_skips_empty_configuration() -> None:
     assert runtime_warmup.has_runtime_warmup_stage(config) is False
 
 
+def test_runtime_warmup_skips_online_translation(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime_warmup,
+        "_warm_translation",
+        lambda _config: pytest.fail("online translation should not warm"),
+    )
+    config = AppConfig(
+        runtime_warmup_enabled=True,
+        runtime_warmup_whisper=False,
+        runtime_warmup_translation=True,
+        translator_provider="azure_translator",
+        runtime_warmup_tts=False,
+        transcript_cleanup_mode="off",
+    )
+
+    assert runtime_warmup.has_runtime_warmup_stage(config) is False
+    assert runtime_warmup.warm_runtime_components(config) == {}
+
+
 def test_runtime_warmup_stage_detection_keeps_tts_default_off() -> None:
     config = AppConfig(
         runtime_warmup_enabled=True,
@@ -155,6 +174,25 @@ def test_runtime_warmup_stage_detection_includes_cleanup() -> None:
     )
 
     assert runtime_warmup.has_runtime_warmup_stage(config) is True
+
+
+def test_runtime_warmup_skips_online_cleanup(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime_warmup,
+        "_warm_transcript_cleanup",
+        lambda _config: pytest.fail("online transcript cleanup should not warm"),
+    )
+    config = AppConfig(
+        runtime_warmup_enabled=True,
+        runtime_warmup_whisper=False,
+        runtime_warmup_translation=False,
+        runtime_warmup_tts=False,
+        transcript_cleanup_mode="light",
+        transcript_cleanup_provider="groq",
+    )
+
+    assert runtime_warmup.has_runtime_warmup_stage(config) is False
+    assert runtime_warmup.warm_runtime_components(config) == {}
 
 
 def test_cuda_runtime_files_available_finds_nested_dll(monkeypatch, tmp_path) -> None:

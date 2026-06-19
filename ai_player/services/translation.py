@@ -5,7 +5,10 @@ import re
 import sys
 import threading
 from dataclasses import dataclass
+from html import unescape
 from pathlib import Path
+
+import requests
 
 from ai_player.core.config import (
     LOCAL_TRANSLATION_MODEL_13B_PATH,
@@ -43,6 +46,10 @@ WHISPER_TO_NLLB = {
 }
 
 NLLB_CT2_MODEL_PATH = TRANSLATION_MODELS_PATH / "nllb-200-distilled-600M-ct2-int8"
+AZURE_TRANSLATOR_API_BASE = "https://api.cognitive.microsofttranslator.com"
+GOOGLE_TRANSLATE_API_BASE = "https://translation.googleapis.com/language/translate/v2"
+DEEPL_API_BASE = "https://api-free.deepl.com/v2"
+ONLINE_TRANSLATION_PROVIDERS = {"azure_translator", "google_translate", "deepl"}
 
 
 @dataclass(frozen=True)
@@ -96,6 +103,8 @@ def available_nllb_models() -> list[NllbModelOption]:
 
 def available_translation_models(provider: object) -> list[NllbModelOption]:
     normalized = normalize_translator_provider(provider)
+    if normalized in ONLINE_TRANSLATION_PROVIDERS:
+        return [NllbModelOption("none", "No local model", "")]
     if normalized == "nllb_ct2":
         models = [
             NllbModelOption(
@@ -130,6 +139,12 @@ def normalize_translator_provider(value: object) -> str:
     raw = str(value or "nllb_ct2").strip().lower().replace("-", "_").replace(" ", "_")
     if raw in {"none", "off", "passthrough", "no_translate", "khong_dich"}:
         return "none"
+    if raw in {"azure", "azure_translate", "azure_translator", "microsoft", "microsoft_translator"}:
+        return "azure_translator"
+    if raw in {"google", "google_translate", "google_translator", "cloud_translate"}:
+        return "google_translate"
+    if raw in {"deepl", "deep_l"}:
+        return "deepl"
     if raw in {"nllb_ct2", "ctranslate2", "ct2", "nllb_ctranslate2"}:
         return "nllb_ct2"
     if raw in {"nllb", "local_nllb", "nllb_local"}:
@@ -144,12 +159,130 @@ def effective_translator_provider(config: AppConfig) -> str:
     return provider
 
 
+def is_online_translation_provider(value: object) -> bool:
+    return normalize_translator_provider(value) in ONLINE_TRANSLATION_PROVIDERS
+
+
 class PassthroughTranslator:
     def translate(self, text: str, source_language: str | None = None) -> str:
         return " ".join(str(text or "").split())
 
     def translate_many(self, texts: list[str], source_language: str | None = None) -> list[str]:
         return [self.translate(text, source_language) for text in texts]
+
+
+class OnlineTranslator:
+    def __init__(self, config: AppConfig) -> None:
+        self._config = config
+        self._provider = effective_translator_provider(config)
+        self._timeout = _positive_timeout(config.translator_timeout_seconds)
+        self._api_base = _online_translation_api_base(config, self._provider)
+
+    def translate(self, text: str, source_language: str | None = None) -> str:
+        return self.translate_many([text], source_language)[0]
+
+    def translate_many(self, texts: list[str], source_language: str | None = None) -> list[str]:
+        clean_texts = [" ".join(str(text or "").split()) for text in texts]
+        if not clean_texts:
+            return []
+        source_code = _online_source_language(source_language)
+        target_code = _online_target_language(self._config)
+        if source_code and source_code == target_code:
+            return clean_texts
+
+        active_items = [(index, clean) for index, clean in enumerate(clean_texts) if clean]
+        if not active_items:
+            return clean_texts
+
+        protected_items = [(index, _protect_english_terms(clean, self._config)) for index, clean in active_items]
+        translated_batch = self._translate_online_batch(
+            [protected.text for _index, protected in protected_items],
+            source_code,
+            target_code,
+        )
+        results, retry_items = _finalize_preserved_translations(clean_texts, protected_items, translated_batch)
+        if retry_items:
+            retried_batch = self._translate_online_batch(
+                [source_text for _index, source_text, _protected, _primary in retry_items],
+                source_code,
+                target_code,
+            )
+            for (index, _source_text, protected, primary), retried in zip(retry_items, retried_batch, strict=False):
+                results[index] = _select_preserved_translation(primary, retried, protected)
+        return results
+
+    def _translate_online_batch(self, texts: list[str], source_language: str | None, target_language: str) -> list[str]:
+        if self._provider == "azure_translator":
+            return self._translate_azure(texts, source_language, target_language)
+        if self._provider == "google_translate":
+            return self._translate_google(texts, source_language, target_language)
+        if self._provider == "deepl":
+            return self._translate_deepl(texts, source_language, target_language)
+        raise TranslationError(f"Unsupported online translator provider: {self._provider}")
+
+    def _translate_azure(self, texts: list[str], source_language: str | None, target_language: str) -> list[str]:
+        params = {"api-version": "3.0", "to": target_language}
+        if source_language:
+            params["from"] = source_language
+        headers = {
+            "Ocp-Apim-Subscription-Key": _required_translator_api_key(self._config),
+            "Content-Type": "application/json",
+        }
+        region = str(self._config.translator_api_region or "").strip()
+        if region:
+            headers["Ocp-Apim-Subscription-Region"] = region
+        data = _request_json(
+            "POST",
+            f"{self._api_base}/translate",
+            context="Azure Translator request failed",
+            timeout=self._timeout,
+            params=params,
+            headers=headers,
+            json=[{"Text": text} for text in texts],
+        )
+        if not isinstance(data, list):
+            raise TranslationError("Azure Translator returned an unexpected response.")
+        translated: list[str] = []
+        for item in data:
+            translations = item.get("translations") if isinstance(item, dict) else None
+            first = translations[0] if isinstance(translations, list) and translations else {}
+            translated.append(str(first.get("text") or "").strip() if isinstance(first, dict) else "")
+        return _align_translation_results(texts, translated)
+
+    def _translate_google(self, texts: list[str], source_language: str | None, target_language: str) -> list[str]:
+        payload: dict[str, object] = {"q": texts, "target": target_language, "format": "text"}
+        if source_language:
+            payload["source"] = source_language
+        data = _request_json(
+            "POST",
+            self._api_base,
+            context="Google Translate request failed",
+            timeout=self._timeout,
+            params={"key": _required_translator_api_key(self._config)},
+            json=payload,
+        )
+        translations = data.get("data", {}).get("translations", []) if isinstance(data, dict) else []
+        translated = [
+            unescape(str(item.get("translatedText") or "")).strip()
+            for item in translations
+            if isinstance(item, dict)
+        ]
+        return _align_translation_results(texts, translated)
+
+    def _translate_deepl(self, texts: list[str], source_language: str | None, target_language: str) -> list[str]:
+        data: dict[str, object] = {"text": texts, "target_lang": _deepl_language(target_language, target=True)}
+        if source_language:
+            data["source_lang"] = _deepl_language(source_language, target=False)
+        response = requests.post(
+            f"{self._api_base}/translate",
+            headers={"Authorization": f"DeepL-Auth-Key {_required_translator_api_key(self._config)}"},
+            data=data,
+            timeout=self._timeout,
+        )
+        payload = _response_json(response, "DeepL request failed")
+        translations = payload.get("translations", []) if isinstance(payload, dict) else []
+        translated = [str(item.get("text") or "").strip() for item in translations if isinstance(item, dict)]
+        return _align_translation_results(texts, translated)
 
 
 class LocalNllbTranslator:
@@ -393,6 +526,8 @@ class VietnameseTranslator:
         provider = effective_translator_provider(config)
         if provider == "none":
             self._translator = PassthroughTranslator()
+        elif provider in ONLINE_TRANSLATION_PROVIDERS:
+            self._translator = OnlineTranslator(config)
         elif provider == "nllb_ct2":
             self._translator = CTranslate2NllbTranslator(config)
         else:
@@ -440,10 +575,84 @@ def configured_translation_backend(config: AppConfig) -> str:
     provider = effective_translator_provider(config)
     if provider == "none":
         return "Không dịch"
+    if provider == "azure_translator":
+        return "Azure Translator"
+    if provider == "google_translate":
+        return "Google Translate"
+    if provider == "deepl":
+        return "DeepL"
     if provider == "nllb_ct2":
         return f"NLLB CTranslate2 ({_resolve_ctranslate2_model_path(config.local_translation_model)})"
     mode = "offline" if config.local_translation_offline else "download-if-needed"
     return f"Local NLLB ({config.local_translation_model}, {mode})"
+
+
+def _online_translation_api_base(config: AppConfig, provider: str) -> str:
+    configured = str(config.translator_api_base or "").strip().rstrip("/")
+    if configured:
+        return configured
+    if provider == "azure_translator":
+        return AZURE_TRANSLATOR_API_BASE
+    if provider == "google_translate":
+        return GOOGLE_TRANSLATE_API_BASE
+    if provider == "deepl":
+        return DEEPL_API_BASE
+    return ""
+
+
+def _online_source_language(source_language: str | None) -> str | None:
+    language = str(source_language or "").strip().lower().split("-")[0]
+    return language or None
+
+
+def _online_target_language(config: AppConfig) -> str:
+    language = str(getattr(config, "target_language", "vi") or "vi").strip().lower().split("-")[0]
+    return language or "vi"
+
+
+def _deepl_language(language: str, *, target: bool) -> str:
+    code = str(language or "").strip().upper().replace("_", "-")
+    if target and code == "EN":
+        return "EN-US"
+    return code
+
+
+def _required_translator_api_key(config: AppConfig) -> str:
+    key = str(config.translator_api_key or "").strip()
+    if not key:
+        raise TranslationError("Online translator provider requires an API key.")
+    return key
+
+
+def _positive_timeout(value: object) -> float:
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError, OverflowError):
+        timeout = 30.0
+    return max(5.0, min(300.0, timeout))
+
+
+def _request_json(method: str, url: str, *, context: str, timeout: float, **kwargs: object):
+    response = requests.request(method, url, timeout=timeout, **kwargs)
+    return _response_json(response, context)
+
+
+def _response_json(response: requests.Response, context: str):
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        message = str(getattr(response, "text", "") or "").strip()[:500]
+        raise TranslationError(f"{context}: HTTP {response.status_code} {message}") from exc
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise TranslationError(f"{context}: invalid JSON response") from exc
+
+
+def _align_translation_results(source_texts: list[str], translated_texts: list[str]) -> list[str]:
+    if len(translated_texts) >= len(source_texts):
+        return [str(text or "").strip() for text in translated_texts[: len(source_texts)]]
+    return [*translated_texts, *source_texts[len(translated_texts) :]]
 
 
 @dataclass(frozen=True)

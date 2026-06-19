@@ -155,18 +155,20 @@ GUIDE_TEXT = {
             "export_video_quality": "Preset chất lượng khi xuất video lồng tiếng hoặc video tài liệu.",
             "video_url_full_cache": "Tải video URL về cache trước khi phát để ổn định hơn, đổi lại chờ lâu hơn.",
             "asr_provider": "Backend nhận dạng giọng nói dùng cho nguồn cần nghe âm thanh.",
+            "asr_api_base": "Endpoint API dùng khi chọn provider nhận dạng giọng nói online.",
+            "asr_api_key": "Khóa API cho provider nhận dạng giọng nói online.",
             "whisper_device": "Thiết bị chạy Whisper, ví dụ CPU, CUDA hoặc Auto.",
             "whisper_compute": "Kiểu tính toán của Whisper; int8 nhẹ hơn, float16 nhanh hơn trên GPU phù hợp.",
             "whisper_beam": "Số beam khi nhận dạng; cao hơn có thể chính xác hơn nhưng chậm hơn.",
             "whisper_vad_filter": "Bộ lọc đoạn có tiếng nói để giảm xử lý khoảng lặng.",
             "whisper_offline": "Chỉ dùng model Whisper đã có trên máy, không tải từ mạng.",
-            "ocr_provider": "Backend OCR dùng khi đọc phụ đề cứng hoặc nội dung hình ảnh.",
+            "ocr_provider": "Backend OCR dùng khi đọc phụ đề cứng hoặc nội dung hình ảnh. OCR.space có demo key public `helloworld` nhưng quota thấp; nên dùng key riêng khi chạy batch/export.",
             "ocr_model": "Thư mục/model OCR đang được dùng.",
             "transcript_cleanup": "Mức làm sạch lời thoại sau ASR/OCR trước khi dịch.",
-            "cleanup_provider": "Backend làm sạch lời thoại: local, Ollama hoặc API tương thích OpenAI.",
+            "cleanup_provider": "Backend làm sạch lời thoại: local, Ollama, Groq, Gemini, OpenRouter, Hugging Face hoặc API tương thích OpenAI.",
             "cleanup_model": "Model dùng cho tác vụ làm sạch lời thoại.",
-            "cleanup_api_base": "Endpoint API dùng khi provider làm sạch lời thoại cần server.",
-            "cleanup_api_key": "Khóa API cho provider làm sạch lời thoại, nếu cần.",
+            "cleanup_api_base": "Endpoint API dùng khi provider làm sạch lời thoại cần server; để trống để dùng mặc định của provider online.",
+            "cleanup_api_key": "Khóa API cho provider làm sạch lời thoại online, nếu cần. Transcript sẽ được gửi tới provider đó.",
             "translator_device": "Thiết bị chạy model dịch local.",
             "translation_max_tokens": "Giới hạn độ dài đầu ra mỗi lượt dịch.",
             "translation_beams": "Số beam khi dịch; cao hơn có thể ổn định hơn nhưng chậm hơn.",
@@ -284,6 +286,14 @@ GUIDE_TEXT = {
                 "faster_whisper": {
                     "description": "Backend Faster-Whisper dùng CTranslate2 để nhận dạng giọng nói nhanh và nhẹ hơn Whisper gốc.",
                     "when": "Khuyến nghị mặc định cho video, live, meeting và transcript tạo từ âm thanh.",
+                },
+                "assemblyai": {
+                    "description": "Provider online AssemblyAI cho nhận dạng giọng nói qua API.",
+                    "when": "Dùng khi muốn giảm tải máy local hoặc so chất lượng với Whisper.",
+                },
+                "speechmatics": {
+                    "description": "Provider online Speechmatics cho batch transcription đa ngôn ngữ.",
+                    "when": "Dùng khi cần nhận dạng online với quota miễn phí rộng và hỗ trợ nhiều ngôn ngữ.",
                 }
             },
             "asr_model": {
@@ -649,19 +659,24 @@ GUIDE_TEXT = {
             "export_video_quality": "Quality preset for dubbed video or document video export.",
             "video_url_full_cache": "Caches URL video before playback for stability, at the cost of a longer wait.",
             "asr_provider": "Speech-recognition backend used for sources that need audio transcription.",
+            "asr_api_base": "API endpoint used when an online speech-recognition provider is selected.",
+            "asr_api_key": "API key for the selected online speech-recognition provider.",
             "whisper_device": "Device used for Whisper, such as CPU, CUDA, or Auto.",
             "whisper_compute": "Whisper compute type; int8 is lighter, float16 is faster on suitable GPUs.",
             "whisper_beam": "Beam count for recognition; higher can be more accurate but slower.",
             "whisper_vad_filter": "Filters speech segments to reduce work on silence.",
             "whisper_offline": "Uses only local Whisper models and avoids network downloads.",
-            "ocr_provider": "OCR backend used for hard subtitles or image-based text.",
+            "ocr_provider": "OCR backend used for hard subtitles or image-based text. OCR.space has a public `helloworld` demo key with low quota; use a personal key for batch/export workflows.",
             "ocr_model": "OCR model or tessdata folder currently used.",
             "transcript_cleanup": "Cleanup strength applied after ASR/OCR and before translation.",
-            "cleanup_provider": "Transcript cleanup backend: local, Ollama, or OpenAI-compatible API.",
+            "cleanup_provider": "Transcript cleanup backend: local, Ollama, Groq, Gemini, OpenRouter, Hugging Face, or OpenAI-compatible API.",
             "cleanup_model": "Model used for transcript cleanup.",
-            "cleanup_api_base": "API endpoint used when cleanup provider needs a server.",
-            "cleanup_api_key": "API key for transcript cleanup provider, if required.",
+            "cleanup_api_base": "API endpoint used when cleanup provider needs a server; leave blank for the online provider default.",
+            "cleanup_api_key": "API key for online transcript cleanup providers, if required. Transcript text is sent to that provider.",
             "translator_device": "Device used for local translation models.",
+            "translator_api_base": "API endpoint used when an online translation provider is selected.",
+            "translator_api_key": "API key for the selected online translation provider.",
+            "translator_api_region": "Region used by Azure Translator; other providers usually leave it blank.",
             "translation_max_tokens": "Maximum output length per translation request.",
             "translation_beams": "Beam count for translation; higher can be steadier but slower.",
             "translator_offline": "Uses only local translation models and avoids network downloads.",
@@ -780,6 +795,14 @@ GUIDE_TEXT = {
                         "Faster-Whisper backend using CTranslate2 for faster, lighter speech recognition."
                     ),
                     "when": "Recommended default for video, live, meeting, and audio-derived transcripts.",
+                },
+                "assemblyai": {
+                    "description": "AssemblyAI online speech-recognition provider.",
+                    "when": "Use when you want to offload ASR from the local machine or compare quality with Whisper.",
+                },
+                "speechmatics": {
+                    "description": "Speechmatics online provider for multilingual batch transcription.",
+                    "when": "Use when you want online ASR with a broad free quota and multilingual coverage.",
                 }
             },
             "asr_model": {
@@ -798,6 +821,10 @@ GUIDE_TEXT = {
                 "tesseract": {
                     "description": "Traditional local OCR backend driven by language-specific tessdata.",
                     "when": "Use for clear burned-in subtitles or relatively clean document text.",
+                },
+                "ocr_space": {
+                    "description": "OCR.space online API. If the key is blank, the app uses the public `helloworld` demo key with very low quota.",
+                    "when": "Use for quick online OCR trials; batch/export workflows should use a personal API key to avoid rate limits.",
                 }
             },
             "ocr_model": {
@@ -818,6 +845,22 @@ GUIDE_TEXT = {
                 "openai": {
                     "description": "Calls an OpenAI-compatible API for dialogue cleanup.",
                     "when": "Use when an external API is acceptable and better sentence repair is desired.",
+                },
+                "groq": {
+                    "description": "Calls Groq's OpenAI-compatible API for fast dialogue cleanup.",
+                    "when": "Use when low-latency online cleanup and free Groq quota are useful.",
+                },
+                "gemini": {
+                    "description": "Calls the Google Gemini API through generateContent for transcript normalization.",
+                    "when": "Use when you want to use Google AI Studio/Gemini API free quota.",
+                },
+                "openrouter": {
+                    "description": "Calls OpenRouter chat-completions for free-router or free-model cleanup.",
+                    "when": "Use when you want quick switching between free models or a fallback provider.",
+                },
+                "huggingface": {
+                    "description": "Calls Hugging Face Inference Providers through the OpenAI-compatible router.",
+                    "when": "Use when you have an HF token and want to try online instruct models.",
                 },
             },
             "cleanup_model": {
@@ -842,6 +885,18 @@ GUIDE_TEXT = {
                 "none": {
                     "description": "Disables translation and keeps the source text for reading or display.",
                     "when": "Use when the source content is already in the desired language.",
+                },
+                "azure_translator": {
+                    "description": "Microsoft Azure Translator online REST API.",
+                    "when": "Use when you want a broad free quota and wide language coverage.",
+                },
+                "google_translate": {
+                    "description": "Google Cloud Translation online REST API.",
+                    "when": "Use when you want stable quality and strong language auto-detection.",
+                },
+                "deepl": {
+                    "description": "DeepL online API.",
+                    "when": "Use when writing quality matters and the language pair is supported by DeepL.",
                 },
             },
             "translation_model": {

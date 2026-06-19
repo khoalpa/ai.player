@@ -30,6 +30,30 @@ _LOCAL_GGUF_CACHE: dict[str, Any] = {}
 _LOCAL_TRANSFORMERS_CACHE: dict[str, tuple[Any, Any]] = {}
 _MAX_CLEANUP_LENGTH_RATIO = 2.6
 _MAX_CLEANUP_EXTRA_CHARS = 120
+OLLAMA_API_BASE = "http://127.0.0.1:11434"
+OPENAI_API_BASE = "https://api.openai.com/v1"
+GROQ_API_BASE = "https://api.groq.com/openai/v1"
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+OPENROUTER_API_BASE = "https://openrouter.ai/api/v1"
+HUGGINGFACE_API_BASE = "https://router.huggingface.co/v1"
+OPENAI_COMPATIBLE_CLEANUP_PROVIDERS = {"openai", "groq", "openrouter", "huggingface"}
+ONLINE_CLEANUP_PROVIDERS = OPENAI_COMPATIBLE_CLEANUP_PROVIDERS | {"gemini"}
+DEFAULT_CLEANUP_MODELS = {
+    "ollama": "llama3.1",
+    "openai": "gpt-4.1-mini",
+    "groq": "llama-3.1-8b-instant",
+    "gemini": "gemini-2.5-flash-lite",
+    "openrouter": "openrouter/free",
+    "huggingface": "meta-llama/Llama-3.1-8B-Instruct",
+}
+DEFAULT_CLEANUP_API_BASES = {
+    "ollama": OLLAMA_API_BASE,
+    "openai": OPENAI_API_BASE,
+    "groq": GROQ_API_BASE,
+    "gemini": GEMINI_API_BASE,
+    "openrouter": OPENROUTER_API_BASE,
+    "huggingface": HUGGINGFACE_API_BASE,
+}
 
 
 @dataclass(frozen=True)
@@ -162,8 +186,10 @@ def _clean_many_with_provider(texts: list[str], context: CleanupContext, config:
 
 
 def _call_cleanup_provider(prompt: str, provider: str, config: AppConfig) -> str:
-    if provider == "openai":
-        return _call_openai_compatible(prompt, config)
+    if provider in OPENAI_COMPATIBLE_CLEANUP_PROVIDERS:
+        return _call_openai_compatible(prompt, config, provider)
+    if provider == "gemini":
+        return _call_gemini(prompt, config)
     if provider == "local":
         return _call_headless_local(prompt, config)
     return _call_ollama(prompt, config)
@@ -226,11 +252,11 @@ def _build_batch_prompt(texts: list[str], context: CleanupContext, config: AppCo
 
 
 def _call_ollama(prompt: str, config: AppConfig) -> str:
-    base = str(config.transcript_cleanup_api_base or "http://127.0.0.1:11434").rstrip("/")
+    base = _cleanup_api_base(config, "ollama")
     response = requests.post(
         f"{base}/api/generate",
         json={
-            "model": config.transcript_cleanup_model or "llama3.1",
+            "model": _cleanup_model(config, "ollama"),
             "prompt": prompt,
             "stream": False,
             "options": {"temperature": 0.1},
@@ -242,24 +268,102 @@ def _call_ollama(prompt: str, config: AppConfig) -> str:
     return str(data.get("response") or "")
 
 
-def _call_openai_compatible(prompt: str, config: AppConfig) -> str:
-    base = str(config.transcript_cleanup_api_base or "https://api.openai.com/v1").rstrip("/")
-    headers = {"Content-Type": "application/json"}
+def _call_openai_compatible(prompt: str, config: AppConfig, provider: str = "openai") -> str:
+    base = _cleanup_api_base(config, provider)
+    headers = _cleanup_headers(config, provider)
     if config.transcript_cleanup_api_key:
         headers["Authorization"] = f"Bearer {config.transcript_cleanup_api_key}"
     response = requests.post(
         f"{base}/chat/completions",
         headers=headers,
         json={
-            "model": config.transcript_cleanup_model,
+            "model": _cleanup_model(config, provider),
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
         },
         timeout=_timeout_seconds(config.transcript_cleanup_timeout_seconds),
     )
     response.raise_for_status()
-    data = _response_json_object(response, "OpenAI-compatible cleanup")
+    data = _response_json_object(response, _cleanup_provider_label(provider))
     return _chat_completion_content(data)
+
+
+def _call_gemini(prompt: str, config: AppConfig) -> str:
+    api_key = str(config.transcript_cleanup_api_key or "").strip()
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["X-goog-api-key"] = api_key
+    response = requests.post(
+        f"{_cleanup_api_base(config, 'gemini')}/models/{_cleanup_model(config, 'gemini')}:generateContent",
+        headers=headers,
+        json={
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.1},
+        },
+        timeout=_timeout_seconds(config.transcript_cleanup_timeout_seconds),
+    )
+    response.raise_for_status()
+    data = _response_json_object(response, "Gemini cleanup")
+    return _gemini_content(data)
+
+
+def _cleanup_headers(config: AppConfig, provider: str) -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if provider == "openrouter":
+        headers["X-OpenRouter-Title"] = "AI Player"
+    return headers
+
+
+def _cleanup_api_base(config: AppConfig, provider: str) -> str:
+    configured = str(config.transcript_cleanup_api_base or "").strip().rstrip("/")
+    default = DEFAULT_CLEANUP_API_BASES.get(provider, OLLAMA_API_BASE)
+    if not configured:
+        return default
+    known_default_bases = set(DEFAULT_CLEANUP_API_BASES.values())
+    if configured in known_default_bases and configured != default:
+        return default
+    return configured
+
+
+def _cleanup_model(config: AppConfig, provider: str) -> str:
+    configured = str(config.transcript_cleanup_model or "").strip()
+    default = DEFAULT_CLEANUP_MODELS.get(provider, DEFAULT_CLEANUP_MODELS["ollama"])
+    if not configured:
+        return default
+    known_default_models = set(DEFAULT_CLEANUP_MODELS.values())
+    if configured in known_default_models and configured != default:
+        return default
+    if provider in ONLINE_CLEANUP_PROVIDERS and _looks_like_local_cleanup_model(configured):
+        return default
+    return configured
+
+
+def _looks_like_local_cleanup_model(value: str) -> bool:
+    text = value.strip()
+    if not text:
+        return False
+    lowered = text.lower().replace("\\", "/")
+    if lowered in {"llama3.1", "llama3"}:
+        return True
+    if lowered.startswith("models/transcript_cleanup/") or lowered.endswith(".gguf"):
+        return True
+    try:
+        path = Path(text)
+    except (OSError, ValueError):
+        return False
+    if path.exists():
+        return True
+    return path.is_absolute()
+
+
+def _cleanup_provider_label(provider: str) -> str:
+    labels = {
+        "openai": "OpenAI-compatible cleanup",
+        "groq": "Groq cleanup",
+        "openrouter": "OpenRouter cleanup",
+        "huggingface": "Hugging Face cleanup",
+    }
+    return labels.get(provider, "Online cleanup")
 
 
 def _call_headless_local(prompt: str, config: AppConfig) -> str:
@@ -305,6 +409,22 @@ def _chat_completion_content(data: dict[str, Any]) -> str:
     if content is None:
         raise TranscriptCleanupError("OpenAI-compatible cleanup trả về dữ liệu không đúng định dạng.")
     return str(content)
+
+
+def _gemini_content(data: dict[str, Any]) -> str:
+    try:
+        candidates = data["candidates"]
+        first_candidate = candidates[0] if isinstance(candidates, list) else {}
+        content = first_candidate.get("content") if isinstance(first_candidate, dict) else {}
+        parts = content.get("parts") if isinstance(content, dict) else []
+    except (IndexError, KeyError, TypeError) as exc:
+        raise TranscriptCleanupError("Gemini cleanup tráº£ vá» dá»¯ liá»‡u khÃ´ng Ä‘Ãºng Ä‘á»‹nh dáº¡ng.") from exc
+    if not isinstance(parts, list):
+        raise TranscriptCleanupError("Gemini cleanup tráº£ vá» dá»¯ liá»‡u khÃ´ng Ä‘Ãºng Ä‘á»‹nh dáº¡ng.")
+    texts = [str(part.get("text") or "") for part in parts if isinstance(part, dict) and part.get("text")]
+    if not texts:
+        raise TranscriptCleanupError("Gemini cleanup tráº£ vá» dá»¯ liá»‡u khÃ´ng Ä‘Ãºng Ä‘á»‹nh dáº¡ng.")
+    return "".join(texts)
 
 
 def _call_local_gguf(prompt: str, model_path: Path, config: AppConfig) -> str:
@@ -522,6 +642,18 @@ def _cleanup_provider(value: object) -> str:
     raw = str(value or "ollama").strip().lower().replace("-", "_").replace(" ", "_")
     if raw in {"openai", "openai_compatible", "api"}:
         return "openai"
+    if raw in {"groq", "groqcloud"}:
+        return "groq"
+    if raw in {"gemini", "google_gemini", "google_ai", "ai_studio"}:
+        return "gemini"
+    if raw in {"openrouter", "open_router", "openrouter_free"}:
+        return "openrouter"
+    if raw in {"huggingface", "hugging_face", "hf", "hf_inference", "hf_router"}:
+        return "huggingface"
     if raw in {"local", "headless", "headless_local", "local_headless", "transformers", "llamacpp", "llama_cpp"}:
         return "local"
     return "ollama"
+
+
+def is_online_transcript_cleanup_provider(value: object) -> bool:
+    return _cleanup_provider(value) in ONLINE_CLEANUP_PROVIDERS

@@ -30,6 +30,7 @@ from ai_player.pipeline.transcript_source import (
 from ai_player.pipeline.transcript_source import (
     load_transcript_entries as _load_transcript_entries,
 )
+from ai_player.services.asr import is_online_asr_provider, transcribe_online_asr
 from ai_player.services.audio_matcher import (
     audio_duration_seconds,
     extract_audio_range,
@@ -55,7 +56,7 @@ from ai_player.services.ffmpeg import (
 )
 from ai_player.services.speaker_voice_selector import VoiceGenderSelector, select_voice_for_reference
 from ai_player.services.subtitle_ocr import recognize_hard_subtitles
-from ai_player.services.transcript_cleanup import TranscriptCleaner
+from ai_player.services.transcript_cleanup import TranscriptCleaner, is_online_transcript_cleanup_provider
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
 from ai_player.services.tts import (
     create_tts_provider,
@@ -555,6 +556,8 @@ class DubbingWorker(QThread):
         return selected_source_language(self._config)
 
     def _validate_whisper_model(self) -> None:
+        if is_online_asr_provider(self._config.asr_provider):
+            return
         if not self._config.whisper_offline:
             return
         model_path = Path(self._config.whisper_model)
@@ -590,6 +593,8 @@ class DubbingWorker(QThread):
         return self._model
 
     def _transcribe_with_fallback(self, wav_path: Path):
+        if is_online_asr_provider(self._config.asr_provider):
+            return transcribe_online_asr(self._config, wav_path, language=self._selected_whisper_language())
         if self._model is None:
             self._model = self._load_whisper_model()
         kwargs = whisper_transcribe_kwargs(self._config, self._selected_whisper_language())
@@ -1085,19 +1090,20 @@ class DubbingWorker(QThread):
         clean_text = _clean_worker_text(text)
         if not clean_text:
             return clean_text
-        if self._skip_realtime_local_cleanup():
+        if self._skip_realtime_cleanup():
             if not self._realtime_cleanup_skip_warned:
                 self._realtime_cleanup_skip_warned = True
-                self._emit_status("worker_skipping_realtime_local_cleanup")
+                self._emit_status("worker_skipping_realtime_cleanup")
             return clean_text
         if self._transcript_cleaner.enabled:
             self._emit_status("worker_cleaning_transcript")
         return self._transcript_cleaner.clean(clean_text, source_language)
 
-    def _skip_realtime_local_cleanup(self) -> bool:
+    def _skip_realtime_cleanup(self) -> bool:
         if not self._transcript_cleaner.enabled:
             return False
-        if str(self._config.transcript_cleanup_provider or "").strip().lower() != "local":
+        provider = str(self._config.transcript_cleanup_provider or "").strip().lower()
+        if provider != "local" and not is_online_transcript_cleanup_provider(provider):
             return False
         return self._config.audio_source in {"original", "system", "microphone", "system_microphone", "subtitle"}
 

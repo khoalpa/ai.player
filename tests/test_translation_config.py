@@ -14,6 +14,9 @@ from ai_player.services import translation
     [
         ("off", "none"),
         ("offline auto", "nllb_ct2"),
+        ("azure", "azure_translator"),
+        ("google", "google_translate"),
+        ("deepl", "deepl"),
         ("ct2", "nllb_ct2"),
         ("nllb", "nllb"),
         ("anything", "nllb_ct2"),
@@ -31,6 +34,89 @@ def test_local_nllb_source_language_mapping(source: str, expected: str) -> None:
 @pytest.mark.parametrize(("target", "expected"), [("en-US", "eng_Latn"), ("xx", "vie_Latn")])
 def test_local_nllb_target_language_mapping(target: str, expected: str) -> None:
     assert translation.LocalNllbTranslator(AppConfig(target_language=target))._target_language() == expected
+
+
+class FakeResponse:
+    def __init__(self, payload, status_code: int = 200) -> None:
+        self._payload = payload
+        self.status_code = status_code
+        self.text = str(payload)
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            import requests
+
+            raise requests.HTTPError(response=self)
+
+
+def test_azure_translator_posts_batch(monkeypatch) -> None:
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        return FakeResponse(
+            [
+                {"translations": [{"text": "Xin chao"}]},
+                {"translations": [{"text": "The gioi"}]},
+            ]
+        )
+
+    monkeypatch.setattr(translation.requests, "request", fake_request)
+    translator = translation.OnlineTranslator(
+        AppConfig(
+            translator_provider="azure_translator",
+            translator_api_key="azure-key",
+            translator_api_region="eastus",
+        )
+    )
+
+    assert translator.translate_many(["Hello", "World"], "en") == ["Xin chao", "The gioi"]
+    method, url, kwargs = calls[0]
+    assert method == "POST"
+    assert url.endswith("/translate")
+    assert kwargs["params"] == {"api-version": "3.0", "to": "vi", "from": "en"}
+    assert kwargs["headers"]["Ocp-Apim-Subscription-Key"] == "azure-key"
+    assert kwargs["headers"]["Ocp-Apim-Subscription-Region"] == "eastus"
+
+
+def test_google_translate_posts_batch(monkeypatch) -> None:
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        return FakeResponse({"data": {"translations": [{"translatedText": "Xin &amp; chao"}]}})
+
+    monkeypatch.setattr(translation.requests, "request", fake_request)
+    translator = translation.OnlineTranslator(
+        AppConfig(translator_provider="google_translate", translator_api_key="google-key")
+    )
+
+    assert translator.translate_many(["Hello"], None) == ["Xin & chao"]
+    _method, _url, kwargs = calls[0]
+    assert kwargs["params"] == {"key": "google-key"}
+    assert kwargs["json"] == {"q": ["Hello"], "target": "vi", "format": "text"}
+
+
+def test_deepl_translate_posts_batch(monkeypatch) -> None:
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return FakeResponse({"translations": [{"text": "Hallo"}, {"text": "Welt"}]})
+
+    monkeypatch.setattr(translation.requests, "post", fake_post)
+    translator = translation.OnlineTranslator(
+        AppConfig(translator_provider="deepl", translator_api_key="deepl-key", target_language="de")
+    )
+
+    assert translator.translate_many(["Hello", "World"], "en") == ["Hallo", "Welt"]
+    url, kwargs = calls[0]
+    assert url == "https://api-free.deepl.com/v2/translate"
+    assert kwargs["headers"] == {"Authorization": "DeepL-Auth-Key deepl-key"}
+    assert kwargs["data"] == {"text": ["Hello", "World"], "target_lang": "DE", "source_lang": "EN"}
 
 
 def test_protect_and_restore_preserved_english_terms() -> None:
