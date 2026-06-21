@@ -9,7 +9,7 @@ from typing import Any
 from ai_player.core.config import AppConfig
 from ai_player.core.performance import measure_stage
 from ai_player.pipeline.export_plan import ExportCue, ExportRange
-from ai_player.services.tts import is_non_speech_tts_text
+from ai_player.services.tts import is_pathological_tts_duration, prepare_tts_text
 from ai_player.workers.export_utils import _format_hhmmss, _probe_duration_seconds, _tts_disabled
 
 MakeSilence = Callable[[float, Path], object]
@@ -43,7 +43,8 @@ def build_transcript_export_cue(
 ) -> ExportCue:
     tts_path, wav_path = transcript_export_artifact_paths(temp_dir, index, tts_suffix)
     duration = max(0.25, entry_end - entry_start)
-    if _tts_disabled(config) or is_non_speech_tts_text(translated):
+    tts_text = prepare_tts_text(translated, config.target_language)
+    if _tts_disabled(config) or not tts_text:
         make_silence(duration, wav_path)
         return ExportCue(
             start_seconds=export_range.shift(entry_start),
@@ -54,7 +55,16 @@ def build_transcript_export_cue(
         )
     with tts_lock:
         with measure_stage("export", "tts", cue=index):
-            tts_provider.synthesize(translated, tts_path, voice=config.tts_voice)
+            tts_provider.synthesize(tts_text, tts_path, voice=config.tts_voice)
+    if is_pathological_tts_duration(tts_text, _probe_duration_seconds(tts_path), duration):
+        make_silence(duration, wav_path)
+        return ExportCue(
+            start_seconds=export_range.shift(entry_start),
+            original=original,
+            translated=translated,
+            audio_path=wav_path,
+            duration_seconds=duration,
+        )
     with measure_stage("export", "postprocess", cue=index):
         to_wav(trim_leading_silence(tts_path), wav_path)
         duration = _probe_duration_seconds(wav_path)

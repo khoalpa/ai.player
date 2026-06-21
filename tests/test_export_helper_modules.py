@@ -257,6 +257,38 @@ def test_staged_target_voice_helper_replaces_non_speech_with_silence(tmp_path) -
     assert audio_path.read_bytes() == b"silence"
 
 
+def test_staged_target_voice_helper_replaces_pathological_tts_with_silence(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(staged_target_voice, "_probe_duration_seconds", lambda _path: 9.0)
+    silences: list[tuple[float, Path]] = []
+    synthesized: list[str] = []
+
+    audio_path = staged_target_voice.build_target_voice_cue(
+        index=0,
+        target_cue=export_worker.TranscriptCue(1.0, 2.0, "Kh\u00f4ng"),
+        reference_path=tmp_path / "reference.wav",
+        voice="voice",
+        tts_suffix="mp3",
+        config=AppConfig(tts_provider="edge"),
+        tts_dir=tmp_path,
+        tts_provider=SimpleNamespace(
+            synthesize=lambda text, output_path, voice=None: synthesized.append(text)
+            or Path(output_path).write_bytes(b"loop")
+        ),
+        tts_lock=nullcontext(),
+        make_silence=lambda duration, output_path: silences.append((duration, output_path))
+        or Path(output_path).write_bytes(b"silence"),
+        trim_leading_silence=lambda path: pytest.fail("pathological TTS should not be trimmed"),
+        to_wav=lambda *_args: pytest.fail("pathological TTS should not be converted"),
+        match_to_reference=lambda **_kwargs: pytest.fail("pathological TTS should not be matched"),
+        cancel_callback=lambda: False,
+    )
+
+    assert synthesized == ["Kh\u00f4ng"]
+    assert silences == [(1.0, tmp_path / "0001-aligned.wav")]
+    assert audio_path == tmp_path / "0001-aligned.wav"
+    assert audio_path.read_bytes() == b"silence"
+
+
 def test_staged_target_voice_cues_extract_reference_and_select_voice(tmp_path) -> None:
     references: list[tuple[float, float, Path]] = []
     built: list[tuple[int, str, str, str]] = []
@@ -376,6 +408,39 @@ def test_source_export_voice_helper_synthesizes_and_matches_trimmed_audio(tmp_pa
     assert matched_calls[0]["output_path"] == tmp_path / "cue-00003-matched.wav"
     assert cue.audio_path == final_audio
     assert cue.duration_seconds == 1.25
+
+
+def test_source_export_voice_helper_replaces_pathological_tts_with_silence(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(source_export_voice, "_probe_duration_seconds", lambda _path: 8.0)
+    silences: list[tuple[float, Path]] = []
+    synthesized: list[str] = []
+
+    cue = source_export_voice.build_source_export_cue(
+        index=4,
+        original="no",
+        translated="Kh\u00f4ng",
+        start_seconds=3.0,
+        duration_seconds=1.0,
+        reference_path=tmp_path / "reference.wav",
+        voice="voice-a",
+        tts_suffix="mp3",
+        temp_dir=tmp_path,
+        config=AppConfig(tts_provider="edge"),
+        tts_provider=SimpleNamespace(
+            synthesize=lambda text, path, voice=None: synthesized.append(text) or Path(path).write_bytes(b"loop")
+        ),
+        tts_lock=nullcontext(),
+        make_silence=lambda duration, output_path: silences.append((duration, output_path))
+        or Path(output_path).write_bytes(b"silence"),
+        trim_leading_silence=lambda path: pytest.fail("pathological TTS should not be trimmed"),
+        match_to_reference=lambda **_kwargs: pytest.fail("pathological TTS should not be matched"),
+        cancel_callback=lambda: False,
+    )
+
+    assert synthesized == ["Kh\u00f4ng"]
+    assert silences == [(1.0, tmp_path / "cue-00004-matched.wav")]
+    assert cue.audio_path == tmp_path / "cue-00004-matched.wav"
+    assert cue.duration_seconds == 1.0
 
 
 def test_prepare_source_export_items_extracts_reference_and_selects_voice(tmp_path) -> None:
@@ -524,6 +589,37 @@ def test_transcript_export_voice_helper_creates_silence_for_disabled_tts(tmp_pat
         tmp_path / "transcript-cue-00002.wav",
         duration_seconds=2.0,
     )
+
+
+def test_transcript_export_voice_helper_replaces_pathological_tts_with_silence(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(transcript_export_voice, "_probe_duration_seconds", lambda _path: 8.0)
+    silences: list[tuple[float, Path]] = []
+    synthesized: list[str] = []
+
+    cue = transcript_export_voice.build_transcript_export_cue(
+        index=3,
+        original="no",
+        translated="Kh\u00f4ng",
+        entry_start=2.0,
+        entry_end=3.0,
+        tts_suffix="mp3",
+        temp_dir=tmp_path,
+        export_range=export_worker.ExportRange(0.0, None),
+        config=AppConfig(tts_provider="edge"),
+        tts_provider=SimpleNamespace(
+            synthesize=lambda text, path, voice=None: synthesized.append(text) or Path(path).write_bytes(b"loop")
+        ),
+        tts_lock=nullcontext(),
+        make_silence=lambda duration, output_path: silences.append((duration, output_path))
+        or Path(output_path).write_bytes(b"silence"),
+        trim_leading_silence=lambda path: pytest.fail("pathological TTS should not be trimmed"),
+        to_wav=lambda *_args: pytest.fail("pathological TTS should not be converted"),
+    )
+
+    assert synthesized == ["Kh\u00f4ng"]
+    assert silences == [(1.0, tmp_path / "transcript-cue-00003.wav")]
+    assert cue.audio_path == tmp_path / "transcript-cue-00003.wav"
+    assert cue.duration_seconds == 1.0
 
 
 def test_build_prepared_transcript_export_cues_reports_progress_and_sorts(tmp_path) -> None:
@@ -683,6 +779,35 @@ def test_document_export_voice_helper_sanitizes_invalid_cue_timing(tmp_path) -> 
     assert cue.start_seconds == 0.0
     assert cue.duration_seconds == 0.25
     assert cue.audio_path == tmp_path / "document-cue-00004.wav"
+
+
+def test_document_export_voice_helper_replaces_pathological_tts_with_silence(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(document_export_voice, "_probe_duration_seconds", lambda _path: 8.0)
+    silences: list[tuple[float, Path]] = []
+    synthesized: list[str] = []
+
+    cue = document_export_voice.build_document_export_cue(
+        index=5,
+        cue=export_worker.TranscriptCue(4.0, 5.0, "no"),
+        original="no",
+        translated="Kh\u00f4ng",
+        tts_suffix="mp3",
+        temp_dir=tmp_path,
+        config=AppConfig(tts_provider="edge"),
+        tts_provider=SimpleNamespace(
+            synthesize=lambda text, path, voice=None: synthesized.append(text) or Path(path).write_bytes(b"loop")
+        ),
+        tts_lock=nullcontext(),
+        make_silence=lambda duration, output_path: silences.append((duration, output_path))
+        or Path(output_path).write_bytes(b"silence"),
+        trim_leading_silence=lambda path: pytest.fail("pathological TTS should not be trimmed"),
+        to_wav=lambda *_args: pytest.fail("pathological TTS should not be converted"),
+    )
+
+    assert synthesized == ["Kh\u00f4ng"]
+    assert silences == [(1.0, tmp_path / "document-cue-00005.wav")]
+    assert cue.audio_path == tmp_path / "document-cue-00005.wav"
+    assert cue.duration_seconds == 1.0
 
 
 def test_build_prepared_document_export_cues_reports_progress_and_sorts(tmp_path) -> None:

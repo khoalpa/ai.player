@@ -8,8 +8,8 @@ from typing import Any
 from ai_player.core.config import AppConfig
 from ai_player.core.performance import measure_stage
 from ai_player.pipeline.export_plan import ExportCue, TranscriptCue
-from ai_player.services.tts import is_non_speech_tts_text
-from ai_player.workers.export_utils import _format_hhmmss, _nonempty_file, _tts_disabled
+from ai_player.services.tts import is_pathological_tts_duration, prepare_tts_text
+from ai_player.workers.export_utils import _format_hhmmss, _nonempty_file, _probe_duration_seconds, _tts_disabled
 from ai_player.workers.worker_values import voice_tts_suffix
 
 MakeSilence = Callable[[float, Path], object]
@@ -105,12 +105,16 @@ def build_target_voice_cue(
 ) -> Path:
     duration = max(0.25, target_cue.end_seconds - target_cue.start_seconds)
     raw_path, final_path = target_voice_artifact_paths(tts_dir, index, tts_suffix)
-    if _tts_disabled(config) or not target_cue.text.strip() or is_non_speech_tts_text(target_cue.text):
+    tts_text = prepare_tts_text(target_cue.text, config.target_language)
+    if _tts_disabled(config) or not tts_text:
         make_silence(duration, final_path)
         return final_path
     with tts_lock:
         with measure_stage("staged_export", "tts", cue=index):
-            tts_provider.synthesize(target_cue.text, raw_path, voice=voice)
+            tts_provider.synthesize(tts_text, raw_path, voice=voice)
+    if is_pathological_tts_duration(tts_text, _probe_duration_seconds(raw_path), duration):
+        make_silence(duration, final_path)
+        return final_path
     with measure_stage("staged_export", "postprocess", cue=index):
         matched_path = match_to_reference(
             reference_path=reference_path,

@@ -65,6 +65,62 @@ def test_balanced_selector_uses_gendered_voice(monkeypatch, tmp_path) -> None:
     assert decision.voice == "Binh"
 
 
+def test_selector_locks_one_voice_per_gender(monkeypatch, tmp_path) -> None:
+    genders = iter(["male", "male", "female", "female", "male"])
+    voice_options = {
+        "male": iter(["male-a", "male-b"]),
+        "female": iter(["female-a", "female-b"]),
+    }
+    resolved_calls: list[str] = []
+
+    def fake_profile(_path, _mode, **_kwargs):
+        return _profile(next(genders), 0.9)
+
+    def fake_select_voice_for_gender(_provider, _config, gender):
+        resolved_calls.append(gender)
+        return next(voice_options[gender])
+
+    monkeypatch.setattr(selector, "_profile_for_mode", fake_profile)
+    monkeypatch.setattr(selector, "select_voice_for_gender", fake_select_voice_for_gender)
+    config = AppConfig(
+        dubbing_auto_voice_gender_mode="balanced",
+        tts_provider="vieneu",
+        tts_voice="default",
+    )
+    voice_selector = selector.VoiceGenderSelector(config)
+
+    decisions = [
+        voice_selector.select_voice(tmp_path / f"ref-{index}.wav", provider="vieneu", config=config)
+        for index in range(5)
+    ]
+
+    assert [decision.voice for decision in decisions] == ["male-a", "male-a", "female-a", "female-a", "male-a"]
+    assert resolved_calls == ["male", "female"]
+
+
+def test_selector_reset_releases_locked_gender_voices(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(selector, "_profile_for_mode", lambda _path, _mode, **_kwargs: _profile("male", 0.9))
+    resolved_voices = iter(["male-a", "male-b"])
+    monkeypatch.setattr(
+        selector,
+        "select_voice_for_gender",
+        lambda _provider, _config, _gender: next(resolved_voices),
+    )
+    config = AppConfig(
+        dubbing_auto_voice_gender_mode="balanced",
+        tts_provider="vieneu",
+        tts_voice="default",
+    )
+    voice_selector = selector.VoiceGenderSelector(config)
+
+    first = voice_selector.select_voice(tmp_path / "ref-1.wav", provider="vieneu", config=config)
+    voice_selector.reset()
+    second = voice_selector.select_voice(tmp_path / "ref-2.wav", provider="vieneu", config=config)
+
+    assert first.voice == "male-a"
+    assert second.voice == "male-b"
+
+
 def test_stable_selector_waits_for_repeated_gender(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(selector, "_profile_for_mode", lambda _path, _mode, **_kwargs: _profile("female", 0.8))
     config = AppConfig(

@@ -10,7 +10,7 @@ from typing import Any
 from ai_player.core.config import AppConfig
 from ai_player.core.performance import measure_stage
 from ai_player.pipeline.export_plan import ExportCue
-from ai_player.services.tts import is_non_speech_tts_text
+from ai_player.services.tts import is_pathological_tts_duration, prepare_tts_text
 from ai_player.workers.export_utils import (
     _export_reference_audio_required,
     _format_hhmmss,
@@ -164,7 +164,8 @@ def build_source_export_cue(
             audio_path=reference_path,
             duration_seconds=duration_seconds,
         )
-    if is_non_speech_tts_text(translated):
+    tts_text = prepare_tts_text(translated, config.target_language)
+    if not tts_text:
         make_silence(duration_seconds, matched_path)
         return ExportCue(
             start_seconds=start_seconds,
@@ -175,7 +176,16 @@ def build_source_export_cue(
         )
     with tts_lock:
         with measure_stage("export", "tts", cue=index):
-            tts_provider.synthesize(translated, tts_path, voice=voice)
+            tts_provider.synthesize(tts_text, tts_path, voice=voice)
+    if is_pathological_tts_duration(tts_text, _probe_duration_seconds(tts_path), duration_seconds):
+        make_silence(duration_seconds, matched_path)
+        return ExportCue(
+            start_seconds=start_seconds,
+            original=original,
+            translated=translated,
+            audio_path=matched_path,
+            duration_seconds=duration_seconds,
+        )
     with measure_stage("export", "postprocess", cue=index):
         final_audio = match_to_reference(
             reference_path=reference_path,

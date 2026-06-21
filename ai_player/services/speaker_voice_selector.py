@@ -94,19 +94,22 @@ class VoiceGenderSelector:
         self._last_confidence = 0.0
         self._pending_gender = "unknown"
         self._pending_count = 0
+        self._locked_voices: dict[str, str] = {}
 
     def reset(self) -> None:
         self._last_gender = "unknown"
+        self._last_voice = ""
         self._last_confidence = 0.0
         self._pending_gender = "unknown"
         self._pending_count = 0
+        self._locked_voices.clear()
 
     def select_voice(self, reference_path: Path, *, provider: str, config: AppConfig) -> VoiceGenderDecision:
         profile = _profile_for_mode(reference_path, self._mode, config=config)
         gender, confidence, reason = self._smooth(profile)
         voice = config.tts_voice
         if gender in {"male", "female"}:
-            voice = select_voice_for_gender(provider, config, gender)
+            voice = self._voice_for_gender(provider, config, gender)
         elif self._last_gender in {"male", "female"} and self._last_voice:
             voice = self._last_voice
             reason = f"{reason}; hold-last"
@@ -129,6 +132,14 @@ class VoiceGenderSelector:
             decision=decision,
         )
         return decision
+
+    def _voice_for_gender(self, provider: str, config: AppConfig, gender: str) -> str:
+        cached = self._locked_voices.get(gender)
+        if cached:
+            return cached
+        voice = select_voice_for_gender(provider, config, gender)
+        self._locked_voices[gender] = voice
+        return voice
 
     def _smooth(self, profile: AudioProfile) -> tuple[str, float, str]:
         raw_gender = profile.gender
