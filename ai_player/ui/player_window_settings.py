@@ -19,13 +19,19 @@ from ai_player.services.speaker_voice_selector import (
     normalize_speaker_gender_provider,
     normalize_voice_gender_mode,
 )
-from ai_player.services.subtitle_ocr import is_online_ocr_provider
+from ai_player.services.subtitle_ocr import is_online_ocr_provider, normalize_ocr_provider
 from ai_player.services.translation import (
     available_translation_models,
     is_ctranslate2_model_path,
     is_online_translation_provider,
 )
-from ai_player.services.tts import available_vieneu_models, available_voices, is_online_tts_provider, voice_gender
+from ai_player.services.tts import (
+    available_vieneu_models,
+    available_voices,
+    is_online_tts_provider,
+    normalize_tts_provider,
+    voice_gender,
+)
 from ai_player.ui.player_window_utils import (
     PERFORMANCE_PRESETS,
     UI_TEXT,
@@ -78,9 +84,11 @@ class PlayerSettingsMixin:
 
     def _refresh_tts_voices(self, *_args) -> None:
         provider = self._selected_tts_provider()
-        previous_voice = self._tts_voice_combo.currentData() or self._config.tts_voice
-        previous_male_voice = self._tts_male_voice_combo.currentData() or self._config.tts_male_voice
-        previous_female_voice = self._tts_female_voice_combo.currentData() or self._config.tts_female_voice
+        previous_voice = self._editable_combo_value(self._tts_voice_combo) or self._config.tts_voice
+        previous_male_voice = self._editable_combo_value(self._tts_male_voice_combo) or self._config.tts_male_voice
+        previous_female_voice = (
+            self._editable_combo_value(self._tts_female_voice_combo) or self._config.tts_female_voice
+        )
         self._tts_voice_combo.clear()
         self._tts_male_voice_combo.clear()
         self._tts_female_voice_combo.clear()
@@ -130,6 +138,7 @@ class PlayerSettingsMixin:
             widget = getattr(self, widget_name, None)
             if widget is not None:
                 widget.setEnabled(online)
+        self._sync_api_key_statuses()
 
     def _sync_auto_match_controls_enabled(self, *_args) -> None:
         if not hasattr(self, "_auto_match_audio_check"):
@@ -248,6 +257,7 @@ class PlayerSettingsMixin:
             widget = getattr(self, widget_name, None)
             if widget is not None:
                 widget.setEnabled(online)
+        self._sync_api_key_statuses()
 
     def _selected_ocr_provider(self) -> str:
         if hasattr(self, "_ocr_provider_combo"):
@@ -277,6 +287,7 @@ class PlayerSettingsMixin:
             widget = getattr(self, widget_name, None)
             if widget is not None:
                 widget.setEnabled(not online)
+        self._sync_api_key_statuses()
 
     def _selected_translator_provider(self) -> str:
         provider = self._translator_combo.currentData() or "nllb"
@@ -350,6 +361,7 @@ class PlayerSettingsMixin:
             widget = getattr(self, widget_name, None)
             if widget is not None:
                 widget.setEnabled(online)
+        self._sync_api_key_statuses()
 
     def _selected_performance_preset(self) -> str:
         return self._performance_preset_combo.currentData() or DEFAULT_PERFORMANCE_PRESET
@@ -466,6 +478,7 @@ class PlayerSettingsMixin:
         self._transcript_cleanup_api_key_edit.setEnabled(enabled and provider in key_providers)
         self._cleanup_timeout_slider.setEnabled(enabled and provider in api_providers)
         self._cleanup_timeout_value.setEnabled(enabled and provider in api_providers)
+        self._sync_api_key_statuses()
 
     def _sync_vieneu_advanced_controls(self, *_args) -> None:
         if not hasattr(self, "_vieneu_api_base_edit"):
@@ -502,6 +515,106 @@ class PlayerSettingsMixin:
             widget = getattr(self, widget_name, None)
             if widget is not None:
                 widget.setEnabled(is_online)
+        self._sync_api_key_statuses()
+
+    def _sync_api_key_statuses(self, *_args) -> None:
+        required_widgets = (
+            "_asr_api_key_status",
+            "_ocr_api_key_status",
+            "_translator_api_key_status",
+            "_transcript_cleanup_api_key_status",
+            "_tts_api_key_status",
+            "_tts_api_secret_status",
+            "_speaker_gender_api_key_status",
+        )
+        if not all(hasattr(self, widget_name) for widget_name in required_widgets):
+            return
+
+        self._set_api_key_status(
+            self._asr_api_key_status,
+            required=is_online_asr_provider(self._selected_asr_provider()),
+            has_value=bool(self._asr_api_key_edit.text().strip()),
+        )
+
+        ocr_provider = normalize_ocr_provider(self._selected_ocr_provider())
+        ocr_online = is_online_ocr_provider(ocr_provider)
+        ocr_has_key = bool(self._ocr_api_key_edit.text().strip())
+        self._set_api_key_status(
+            self._ocr_api_key_status,
+            required=ocr_online and (ocr_provider != "ocr_space" or ocr_has_key),
+            has_value=ocr_has_key,
+            demo=ocr_online and ocr_provider == "ocr_space" and not ocr_has_key,
+        )
+
+        self._set_api_key_status(
+            self._translator_api_key_status,
+            required=is_online_translation_provider(self._translator_combo.currentData()),
+            has_value=bool(self._translator_api_key_edit.text().strip()),
+        )
+
+        cleanup_provider = self._selected_transcript_cleanup_provider()
+        cleanup_enabled = self._selected_transcript_cleanup_mode() != "off"
+        cleanup_key_required = cleanup_enabled and cleanup_provider in {
+            "openai",
+            "groq",
+            "gemini",
+            "openrouter",
+            "huggingface",
+        }
+        self._set_api_key_status(
+            self._transcript_cleanup_api_key_status,
+            required=cleanup_key_required,
+            has_value=bool(self._transcript_cleanup_api_key_edit.text().strip()),
+        )
+
+        tts_provider = normalize_tts_provider(self._selected_tts_provider())
+        self._set_api_key_status(
+            self._tts_api_key_status,
+            required=is_online_tts_provider(tts_provider),
+            has_value=bool(self._tts_api_key_edit.text().strip()),
+        )
+        self._set_api_key_status(
+            self._tts_api_secret_status,
+            required=tts_provider == "amazon_polly",
+            has_value=bool(self._tts_api_secret_edit.text().strip()),
+            secret=True,
+        )
+
+        speaker_gender_required = (
+            self._auto_voice_gender_check.isChecked()
+            and self._selected_auto_voice_gender_mode() == "ai"
+            and is_online_speaker_gender_provider(self._selected_speaker_gender_provider())
+        )
+        self._set_api_key_status(
+            self._speaker_gender_api_key_status,
+            required=speaker_gender_required,
+            has_value=bool(self._speaker_gender_api_key_edit.text().strip()),
+        )
+
+    def _set_api_key_status(
+        self,
+        label: QLabel,
+        *,
+        required: bool,
+        has_value: bool,
+        demo: bool = False,
+        secret: bool = False,
+    ) -> None:
+        if demo:
+            key = "api_key_status_demo"
+            color = "#b45309"
+        elif not required:
+            key = "api_secret_status_not_needed" if secret else "api_key_status_not_needed"
+            color = "#667085"
+        elif has_value:
+            key = "api_secret_status_saved" if secret else "api_key_status_saved"
+            color = "#237a57"
+        else:
+            key = "api_secret_status_missing" if secret else "api_key_status_missing"
+            color = "#b42318"
+        label.setText(self._tr(key))
+        label.setProperty("api_status_key", key)
+        label.setStyleSheet(f"color: {color}; font-size: 8.5pt;")
 
     def _vieneu_core_changed(self, *_args) -> None:
         self._refresh_vieneu_models()
@@ -517,6 +630,14 @@ class PlayerSettingsMixin:
         if text and text not in {"Auto", "Tự động"}:
             return text
         return "" if data is None else str(data).strip()
+
+    def _editable_combo_value(self, combo: QComboBox) -> str:
+        line_edit = combo.lineEdit() if combo.isEditable() else None
+        if line_edit is not None:
+            text = line_edit.text().strip()
+            if text:
+                return text
+        return self._combo_value(combo)
 
     def _current_runtime_config(self) -> AppConfig:
         preserved_terms = read_preserved_source_terms_file()
@@ -660,6 +781,8 @@ class PlayerSettingsMixin:
         self._set_combo_data(self._nllb_model_combo, preset.get("local_translation_model"))
         self._set_combo_data(self._translation_device_combo, preset.get("local_translation_device"))
         self._set_checkbox(self._translation_offline_check, preset.get("local_translation_offline"))
+        self._set_line_edit_text(self._translator_api_base_edit, preset.get("translator_api_base"))
+        self._set_line_edit_text(self._translator_api_region_edit, preset.get("translator_api_region"))
         self._set_slider_value(self._translation_max_tokens_slider, preset.get("translation_max_tokens"))
         self._set_slider_value(self._translation_beams_slider, preset.get("translation_num_beams"))
 
@@ -679,6 +802,9 @@ class PlayerSettingsMixin:
         self._set_line_edit_text(self._vieneu_encoder_path_edit, preset.get("vieneu_tts_encoder_path"))
         self._set_line_edit_text(self._vieneu_standard_codec_path_edit, preset.get("vieneu_tts_standard_codec_path"))
         self._set_checkbox(self._vieneu_offline_check, preset.get("vieneu_tts_offline"))
+        self._set_line_edit_text(self._tts_api_base_edit, preset.get("tts_api_base"))
+        self._set_line_edit_text(self._tts_api_region_edit, preset.get("tts_api_region"))
+        self._set_line_edit_text(self._tts_model_edit, preset.get("tts_model"))
         self._set_slider_value(
             self._vieneu_temperature_slider,
             self._scaled_preset_value(
@@ -692,8 +818,12 @@ class PlayerSettingsMixin:
         self._set_combo_data(self._whisper_device_combo, preset.get("whisper_device"))
         self._set_combo_data(self._asr_provider_combo, preset.get("asr_provider"))
         self._set_combo_data(self._asr_model_combo, preset.get("whisper_model"))
+        self._set_line_edit_text(self._asr_api_base_edit, preset.get("asr_api_base"))
         self._set_combo_data(self._ocr_provider_combo, preset.get("ocr_provider"))
         self._set_combo_data(self._ocr_model_combo, preset.get("ocr_model"))
+        self._set_line_edit_text(self._ocr_api_base_edit, preset.get("ocr_api_base"))
+        self._set_line_edit_text(self._ocr_api_region_edit, preset.get("ocr_api_region"))
+        self._set_slider_value(self._ocr_timeout_slider, preset.get("ocr_timeout_seconds"))
         self._set_combo_data(self._whisper_compute_combo, preset.get("whisper_compute_type"))
         self._set_slider_value(self._whisper_beam_slider, preset.get("whisper_beam_size"))
         self._set_checkbox(self._whisper_vad_check, preset.get("whisper_vad_filter"))
@@ -715,11 +845,16 @@ class PlayerSettingsMixin:
         self._set_slider_value(self._dub_speed_slider, preset.get("dubbing_speed_percent"))
         self._set_checkbox(self._auto_voice_gender_check, preset.get("dubbing_auto_voice_gender"))
         self._set_combo_data(self._auto_voice_gender_mode_combo, preset.get("dubbing_auto_voice_gender_mode"))
+        self._set_combo_data(self._speaker_gender_provider_combo, preset.get("speaker_gender_provider"))
+        self._set_combo_data(self._speaker_gender_model_combo, preset.get("speaker_gender_model"))
+        self._set_line_edit_text(self._speaker_gender_api_base_edit, preset.get("speaker_gender_api_base"))
+        self._set_slider_value(self._speaker_gender_timeout_slider, preset.get("speaker_gender_timeout_seconds"))
         self._set_checkbox(self._auto_match_audio_check, preset.get("dubbing_auto_match_audio"))
         self._set_combo_data(self._overlap_policy_combo, preset.get("dubbing_overlap_policy"))
         self._set_slider_value(self._video_delay_slider, preset.get("original_audio_playback_delay_seconds"))
         self._set_checkbox(self._source_filter_check, preset.get("original_audio_voice_filter"))
         self._set_combo_data(self._source_filter_mode_combo, preset.get("original_audio_voice_filter_mode"))
+        self._set_combo_data(self._source_filter_model_combo, preset.get("original_audio_voice_filter_model"))
         self._set_combo_data(self._export_video_quality_combo, preset.get("export_video_quality"))
         self._set_slider_value(
             self._speed_min_slider,
@@ -740,6 +875,11 @@ class PlayerSettingsMixin:
         self._set_slider_value(self._volume_gain_min_slider, preset.get("dubbing_volume_gain_min_db"))
         self._set_slider_value(self._volume_gain_max_slider, preset.get("dubbing_volume_gain_max_db"))
         self._set_checkbox(self._runtime_warmup_tts_check, preset.get("runtime_warmup_tts"))
+        self._set_combo_data(self._transcript_cleanup_mode_combo, preset.get("transcript_cleanup_mode"))
+        self._set_combo_data(self._transcript_cleanup_provider_combo, preset.get("transcript_cleanup_provider"))
+        self._set_combo_data(self._transcript_cleanup_model_combo, preset.get("transcript_cleanup_model"))
+        self._set_line_edit_text(self._transcript_cleanup_api_base_edit, preset.get("transcript_cleanup_api_base"))
+        self._set_slider_value(self._cleanup_timeout_slider, preset.get("transcript_cleanup_timeout_seconds"))
         self._sync_auto_voice_controls_enabled()
         self._sync_auto_match_controls_enabled()
         self._sync_audio_source_controls()
@@ -855,21 +995,28 @@ class PlayerSettingsMixin:
 
         self._asr_api_base_edit.textEdited.connect(self._queue_save_settings)
         self._asr_api_key_edit.textEdited.connect(self._queue_save_settings)
+        self._asr_api_key_edit.textEdited.connect(self._sync_api_key_statuses)
         self._ocr_api_base_edit.textEdited.connect(self._queue_save_settings)
         self._ocr_api_key_edit.textEdited.connect(self._queue_save_settings)
+        self._ocr_api_key_edit.textEdited.connect(self._sync_api_key_statuses)
         self._ocr_api_region_edit.textEdited.connect(self._queue_save_settings)
         self._translator_api_base_edit.textEdited.connect(self._queue_save_settings)
         self._translator_api_key_edit.textEdited.connect(self._queue_save_settings)
+        self._translator_api_key_edit.textEdited.connect(self._sync_api_key_statuses)
         self._translator_api_region_edit.textEdited.connect(self._queue_save_settings)
         self._tts_api_base_edit.textEdited.connect(self._queue_save_settings)
         self._tts_api_key_edit.textEdited.connect(self._queue_save_settings)
+        self._tts_api_key_edit.textEdited.connect(self._sync_api_key_statuses)
         self._tts_api_secret_edit.textEdited.connect(self._queue_save_settings)
+        self._tts_api_secret_edit.textEdited.connect(self._sync_api_key_statuses)
         self._tts_api_region_edit.textEdited.connect(self._queue_save_settings)
         self._tts_model_edit.textEdited.connect(self._queue_save_settings)
         self._speaker_gender_api_base_edit.textEdited.connect(self._queue_save_settings)
         self._speaker_gender_api_key_edit.textEdited.connect(self._queue_save_settings)
+        self._speaker_gender_api_key_edit.textEdited.connect(self._sync_api_key_statuses)
         self._transcript_cleanup_api_base_edit.textEdited.connect(self._queue_save_settings)
         self._transcript_cleanup_api_key_edit.textEdited.connect(self._queue_save_settings)
+        self._transcript_cleanup_api_key_edit.textEdited.connect(self._sync_api_key_statuses)
         for line_edit in (
             self._vieneu_path_edit,
             self._vieneu_python_edit,
@@ -924,6 +1071,8 @@ class PlayerSettingsMixin:
             self._transcript.setPlaceholderText(self._tr("transcript_placeholder"))
         if hasattr(self, "_transcript_path_edit"):
             self._transcript_path_edit.setPlaceholderText(self._tr("transcript_file_placeholder"))
+        if hasattr(self, "_open_video_with_subtitle_action"):
+            self._open_video_with_subtitle_action.setText(self._tr("open_video_with_subtitle"))
         if hasattr(self, "_preserve_terms_check"):
             self._set_preserve_terms_tooltip()
         if hasattr(self, "_transcript_view_combo"):
@@ -939,6 +1088,7 @@ class PlayerSettingsMixin:
         if hasattr(self, "_sync_panel_visibility_buttons"):
             self._sync_panel_visibility_buttons()
         self._retranslate_inline_option_combos()
+        self._sync_api_key_statuses()
 
     def _refresh_language_pack_combos(self) -> None:
         language = self._selected_gui_language()

@@ -49,11 +49,6 @@ AMAZON_POLLY_VOICES = [
     VoiceOption("Stephen", "Amazon Polly Stephen (male, en-US)"),
 ]
 
-ELEVENLABS_TTS_VOICES = [
-    VoiceOption("21m00Tcm4TlvDq8ikWAM", "ElevenLabs Rachel (female)"),
-    VoiceOption("JBFqnCBsd6RMkjVDRZzb", "ElevenLabs George (male)"),
-]
-
 STANDARD_VIENEU_VOICES = [
     VoiceOption("Binh", "Bình (nam miền Bắc)"),
     VoiceOption("Tuyen", "Tuyên (nam miền Bắc)"),
@@ -79,7 +74,6 @@ def available_tts_provider_options() -> list[VoiceOption]:
         VoiceOption("azure_tts", "Azure TTS"),
         VoiceOption("google_tts", "Google Cloud TTS"),
         VoiceOption("amazon_polly", "Amazon Polly"),
-        VoiceOption("elevenlabs_tts", "ElevenLabs TTS"),
     ]
 
 
@@ -136,12 +130,6 @@ def voice_gender(provider: str, voice_id: object) -> str:
             return "male"
         if normalized in {"joanna", "ruth"}:
             return "female"
-    if provider_key == "elevenlabs_tts":
-        if normalized in {"jbfqncbsd6rmkjvdrzzb", "george"}:
-            return "male"
-        if normalized in {"21m00tcm4tlvdq8ikwam", "rachel"}:
-            return "female"
-
     female_tokens = {
         "doan",
         "thuc doan",
@@ -252,8 +240,6 @@ def _voice_provider_key(value: object) -> str:
         return "google_tts"
     if raw in {"amazon", "amazonpolly", "polly", "awspolly"}:
         return "amazon_polly"
-    if raw in {"elevenlabs", "elevenlabstts", "eleven", "elevenlabsapi"}:
-        return "elevenlabs_tts"
     if raw in {"none", "off", "notts", "no_tts", "khongtts", "khong_tts"}:
         return "none"
     return "vieneu"

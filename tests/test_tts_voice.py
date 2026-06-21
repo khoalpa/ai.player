@@ -32,7 +32,6 @@ class _FakeResponse:
         ("azure", "azure_tts"),
         ("google-cloud-tts", "google_tts"),
         ("polly", "amazon_polly"),
-        ("elevenlabs", "elevenlabs_tts"),
     ],
 )
 def test_normalize_tts_provider(value: str, expected: str) -> None:
@@ -62,7 +61,6 @@ def test_normalize_vieneu_device(value: str, expected: str) -> None:
         ("azure_tts", "vi-VN-NamMinhNeural", "male"),
         ("google_tts", "vi-VN-Neural2-A", "female"),
         ("amazon_polly", "Matthew", "male"),
-        ("elevenlabs_tts", "21m00Tcm4TlvDq8ikWAM", "female"),
         ("vieneu", "unknown", "unknown"),
     ],
 )
@@ -75,7 +73,6 @@ def test_online_tts_provider_options_include_confirmed_providers() -> None:
         "azure_tts",
         "google_tts",
         "amazon_polly",
-        "elevenlabs_tts",
     }
     assert tts.is_online_tts_provider("azure")
     assert tts.tts_output_suffix("google_tts") == "mp3"
@@ -423,23 +420,3 @@ def test_amazon_polly_online_tts_signs_request(monkeypatch, tmp_path) -> None:
     assert payload["Engine"] == "standard"
     assert (tmp_path / "out.mp3").read_bytes() == b"polly-audio"
 
-
-def test_elevenlabs_online_tts_posts_voice_and_model(monkeypatch, tmp_path) -> None:
-    calls = []
-
-    def fake_post(url, **kwargs):
-        calls.append((url, kwargs))
-        return _FakeResponse(content=b"eleven-audio")
-
-    monkeypatch.setattr(tts.requests, "post", fake_post)
-    provider = tts.OnlineTTSProvider(
-        AppConfig(tts_api_key="eleven-key", tts_model="eleven_flash_v2_5"),
-        "elevenlabs_tts",
-    )
-
-    provider.synthesize("Xin chao", tmp_path / "out.mp3", voice="voice/id")
-
-    assert calls[0][0].endswith("/text-to-speech/voice%2Fid?output_format=mp3_44100_128")
-    assert calls[0][1]["headers"]["xi-api-key"] == "eleven-key"
-    assert calls[0][1]["json"]["model_id"] == "eleven_flash_v2_5"
-    assert (tmp_path / "out.mp3").read_bytes() == b"eleven-audio"

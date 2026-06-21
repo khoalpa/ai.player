@@ -34,8 +34,9 @@ Use this checklist before sharing a build.
 - Open a transcript file and confirm transcript mode can be selected.
 - Open a small text/PDF document and confirm segments are created.
 - Enter text in the document editor source and confirm a transcript timeline is created.
-- If an OpenAI cleanup API key is configured, restart the app and confirm the key
-  remains configured without plaintext in `data\config\settings.json`.
+- If an online provider API key is configured, restart the app and confirm the key
+  remains configured without plaintext in `data\config\settings.json` or
+  `data\config\online_providers.local.json`.
 
 ## AI Pipeline Smoke Test
 

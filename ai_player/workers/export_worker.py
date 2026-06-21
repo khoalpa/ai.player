@@ -4,6 +4,7 @@ import json
 import shutil
 import tempfile
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
@@ -73,7 +74,7 @@ from ai_player.services.whisper_runtime import (
 from ai_player.services.whisper_runtime import (
     effective_whisper_compute_type as shared_whisper_compute_type,
 )
-from ai_player.workers.aligned_audio import aligned_timeline_inputs
+from ai_player.workers.aligned_audio import aligned_timeline_inputs, mix_timeline_inputs_chunked
 from ai_player.workers.asr_fallback import transcribe_model_with_device_fallback
 from ai_player.workers.document_export_worker import DocumentReviewExportWorker
 from ai_player.workers.export_media import (
@@ -102,6 +103,7 @@ from ai_player.workers.export_utils import (
     _transcript_export_items,
     _translate_texts,
     _trim_leading_silence,
+    _tts_disabled,
 )
 from ai_player.workers.export_utils import (
     _source_cues_from_segments as _source_cues_from_segments_data,
@@ -119,7 +121,11 @@ from ai_player.workers.staged_export_utils import (
     staged_manifest_payload,
     write_staged_manifest,
 )
-from ai_player.workers.staged_target_voice import build_target_voice_cue, build_target_voice_cues
+from ai_player.workers.staged_target_voice import (
+    build_target_voice_cue,
+    build_target_voice_cues,
+    target_voice_artifact_paths,
+)
 from ai_player.workers.transcript_export_voice import (
     build_prepared_transcript_export_cues,
     build_transcript_export_cue,
@@ -134,6 +140,8 @@ __all__ = [
     "DemucsSeparationError",
     "ExportCue",
     "ExportRange",
+    "STAGED_EXPORT_STAGE_LABEL_KEYS",
+    "STAGED_EXPORT_STAGES",
     "StagedDubbingExportWorker",
     "TranscriptCue",
     "VideoQualitySettings",
@@ -159,6 +167,39 @@ __all__ = [
     "_translate_texts",
     "_trim_leading_silence",
 ]
+
+STAGED_EXPORT_STAGES: tuple[str, ...] = (
+    "source_audio_extracted",
+    "source_transcribed",
+    "target_subtitles_ready",
+    "source_voice_filtered",
+    "target_voice_segments_ready",
+    "target_voice_aligned",
+    "final_mix_ready",
+    "dubbed_video_ready",
+)
+
+STAGED_EXPORT_STAGE_LABEL_KEYS: dict[str, str] = {
+    "source_audio_extracted": "staged_export_stage_source_audio",
+    "source_transcribed": "staged_export_stage_source_transcribed",
+    "target_subtitles_ready": "staged_export_stage_target_subtitles",
+    "source_voice_filtered": "staged_export_stage_source_voice_filtered",
+    "target_voice_segments_ready": "staged_export_stage_target_voice_segments",
+    "target_voice_aligned": "staged_export_stage_target_voice_aligned",
+    "final_mix_ready": "staged_export_stage_final_mix",
+    "dubbed_video_ready": "staged_export_stage_dubbed_video",
+}
+
+_STAGED_STAGE_INDEX = {stage: index for index, stage in enumerate(STAGED_EXPORT_STAGES)}
+
+
+def _normalize_staged_stage(value: object, *, default: str) -> str:
+    stage = str(value or "").strip()
+    return stage if stage in _STAGED_STAGE_INDEX else default
+
+
+def _staged_stage_index(stage: str) -> int:
+    return _STAGED_STAGE_INDEX.get(stage, 0)
 
 
 class DubbingExportWorker(QThread):
@@ -537,9 +578,12 @@ class DubbingExportWorker(QThread):
             self._make_silence(1.0, output_path)
             return
 
-        self._run_ffmpeg(
-            _timeline_mix_args(timeline_inputs, output_path),
-            respect_stop=not self._keep_partial_requested,
+        mix_timeline_inputs_chunked(
+            timeline_inputs,
+            output_path,
+            temp_dir=self._temp_dir,
+            run_ffmpeg=lambda args: self._run_ffmpeg(args, respect_stop=not self._keep_partial_requested),
+            timeline_mix_args=_timeline_mix_args,
         )
 
     def _make_silence(self, duration_seconds: float, output_path: Path) -> None:
@@ -636,11 +680,17 @@ class StagedDubbingExportWorker(DubbingExportWorker):
         output_dir: str,
         config: AppConfig,
         export_range: ExportRange | None = None,
+        start_stage: str | None = None,
+        end_stage: str | None = None,
+        force_stage: bool = True,
+        artifact_overrides: dict[str, str] | None = None,
         parent=None,
     ) -> None:
         output_root = Path(output_dir)
+        normalized_overrides = self._normalize_artifact_overrides(artifact_overrides)
+        video_source_path = normalized_overrides.get("source_video", Path(video_path))
         super().__init__(
-            video_path,
+            str(video_source_path),
             str(output_root / "dubbed_video.mp4"),
             "video",
             config,
@@ -648,11 +698,49 @@ class StagedDubbingExportWorker(DubbingExportWorker):
             parent,
         )
         self._output_dir = output_root
-        self._paths = StagedExportPaths.from_output_dir(output_root)
+        self._artifact_overrides = normalized_overrides
+        self._paths = self._staged_paths_with_overrides(output_root, self._artifact_overrides)
         self._audio_dir = self._paths.audio_dir
         self._subtitle_dir = self._paths.subtitle_dir
         self._tts_dir = self._paths.tts_dir
         self._staged_manifest_stage = "initializing"
+        self._start_stage = _normalize_staged_stage(start_stage, default=STAGED_EXPORT_STAGES[0])
+        self._end_stage = _normalize_staged_stage(end_stage, default=STAGED_EXPORT_STAGES[-1])
+        if _staged_stage_index(self._end_stage) < _staged_stage_index(self._start_stage):
+            self._end_stage = self._start_stage
+        self._force_stage = bool(force_stage)
+
+    @staticmethod
+    def _normalize_artifact_overrides(overrides: dict[str, str] | None) -> dict[str, Path]:
+        allowed = {
+            "source_full",
+            "source_srt",
+            "words_json",
+            "target_srt",
+            "source_voice",
+            "background",
+            "target_voice",
+            "final_mix",
+            "final_video",
+            "tts_dir",
+            "source_video",
+        }
+        normalized: dict[str, Path] = {}
+        for key, value in (overrides or {}).items():
+            if key not in allowed:
+                continue
+            text = str(value or "").strip()
+            if text:
+                normalized[key] = Path(text)
+        return normalized
+
+    @staticmethod
+    def _staged_paths_with_overrides(output_dir: Path, overrides: dict[str, Path]) -> StagedExportPaths:
+        paths = StagedExportPaths.from_output_dir(output_dir)
+        path_overrides = {key: value for key, value in overrides.items() if key != "source_video"}
+        if not path_overrides:
+            return paths
+        return replace(paths, **path_overrides)
 
     def run(self) -> None:
         offline_env: OfflineEnvironmentToken | None = None
@@ -661,6 +749,8 @@ class StagedDubbingExportWorker(DubbingExportWorker):
         self._staged_manifest_stage = "initializing"
         separation_backend = ""
         try:
+            previous_manifest = self._read_existing_staged_manifest()
+            separation_backend = self._manifest_separation_backend(previous_manifest)
             offline_env = self._configure_offline_environment()
             self._voice_selector.reset()
             self._set_progress(0)
@@ -669,7 +759,18 @@ class StagedDubbingExportWorker(DubbingExportWorker):
             self._translator = get_shared_vietnamese_translator(self._config)
             if self._config.audio_source != "original":
                 raise RuntimeError(self._tr("staged_export_error_source_unsupported"))
-            self._validate_whisper_model()
+            if self._will_run_staged_stage("target_voice_segments_ready") and _tts_disabled(self._config):
+                raise RuntimeError(self._tr("staged_export_error_tts_disabled"))
+            if (
+                self._config.dubbing_voice_volume <= 0
+                and (
+                    self._will_run_staged_stage("final_mix_ready")
+                    or self._will_run_staged_stage("dubbed_video_ready")
+                )
+            ):
+                raise RuntimeError(self._tr("staged_export_error_voice_volume_muted"))
+            if self._will_run_staged_stage("source_transcribed"):
+                self._validate_whisper_model()
 
             paths = self._paths
             self._temp_dir = paths.work_dir
@@ -684,102 +785,144 @@ class StagedDubbingExportWorker(DubbingExportWorker):
             )
             self._staged_manifest_stage = "initialized"
 
-            self._emit_progress("staged_export_progress_extracting_audio")
-            self._set_progress(8)
-            self._extract_full_quality_audio(paths.source_full)
-            if self._checkpoint_staged_stage(manifest_path, artifacts, "source_audio_extracted"):
-                return
+            source_cues: list[TranscriptCue] | None = None
+            target_cues: list[TranscriptCue] | None = None
+            audio_cues: list[ExportCue] | None = None
 
-            self._emit_progress("staged_export_progress_transcribing")
-            self._set_progress(18)
-            segments, info = self._transcribe_staged(paths.source_full)
-            segments = list(segments)
-            source_cues = self._source_cues_from_segments(segments, getattr(info, "language", None))
-            _write_srt_cues(paths.source_srt, source_cues)
-            paths.words_json.write_text(
-                json.dumps(_segments_words_payload(segments, info), ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            if not source_cues:
-                raise RuntimeError(self._tr("export_error_no_dialogue"))
-            if self._checkpoint_staged_stage(manifest_path, artifacts, "source_transcribed"):
-                return
-
-            self._emit_progress("staged_export_progress_translating")
-            self._set_progress(34)
-            target_cues = self._translate_source_cues(source_cues, getattr(info, "language", None))
-            _write_srt_cues(paths.target_srt, target_cues)
-            if self._checkpoint_staged_stage(manifest_path, artifacts, "target_subtitles_ready"):
-                return
-
-            self._emit_progress("staged_export_progress_filtering_source")
-            self._set_progress(48)
-            separation_backend = self._create_source_audio_stems(
-                paths.source_full,
-                paths.background,
-                paths.source_voice,
-            )
-            if self._checkpoint_staged_stage(
-                manifest_path,
-                artifacts,
-                "source_voice_filtered",
-                separation_backend=separation_backend,
+            if self._will_run_staged_stage("source_audio_extracted"):
+                self._emit_progress("staged_export_progress_extracting_audio")
+                self._set_progress(8)
+                self._extract_full_quality_audio(paths.source_full)
+                if self._checkpoint_staged_stage(manifest_path, artifacts, "source_audio_extracted"):
+                    return
+            elif self._will_run_staged_stage("source_transcribed") or self._will_run_staged_stage(
+                "source_voice_filtered"
             ):
-                return
+                self._require_staged_artifact(paths.source_full)
 
-            self._emit_progress("staged_export_progress_creating_voice")
-            self._set_progress(62)
-            audio_cues = self._build_target_voice_cues(paths.source_voice, source_cues, target_cues)
-            if self._checkpoint_staged_stage(
-                manifest_path,
-                artifacts,
-                "target_voice_segments_ready",
-                separation_backend=separation_backend,
-            ):
-                return
-
-            self._emit_progress("staged_export_progress_aligning_voice")
-            self._set_progress(78)
-            self._build_aligned_audio(audio_cues, paths.target_voice)
-            if self._checkpoint_staged_stage(
-                manifest_path,
-                artifacts,
-                "target_voice_aligned",
-                separation_backend=separation_backend,
-            ):
-                return
-
-            self._emit_progress("staged_export_progress_mixing_final")
-            self._set_progress(88)
-            self._run_ffmpeg(
-                _staged_background_voice_mix_args(
-                    paths.background,
-                    paths.target_voice,
-                    paths.final_mix,
-                    voice_volume_percent=self._config.dubbing_voice_volume,
+            source_language: str | None = None
+            if self._will_run_staged_stage("source_transcribed"):
+                self._emit_progress("staged_export_progress_transcribing")
+                self._set_progress(18)
+                segments, info = self._transcribe_staged(paths.source_full)
+                segments = list(segments)
+                source_language = _json_text(getattr(info, "language", None), default=None)
+                source_cues = self._source_cues_from_segments(segments, source_language)
+                _write_srt_cues(paths.source_srt, source_cues)
+                paths.words_json.write_text(
+                    json.dumps(_segments_words_payload(segments, info), ensure_ascii=False, indent=2),
+                    encoding="utf-8",
                 )
-            )
-            if self._checkpoint_staged_stage(
-                manifest_path,
-                artifacts,
-                "final_mix_ready",
-                separation_backend=separation_backend,
+                if not source_cues:
+                    raise RuntimeError(self._tr("export_error_no_dialogue"))
+                if self._checkpoint_staged_stage(manifest_path, artifacts, "source_transcribed"):
+                    return
+            elif (
+                self._will_run_staged_stage("target_subtitles_ready")
+                or self._will_run_staged_stage("target_voice_segments_ready")
+                or self._will_run_staged_stage("target_voice_aligned")
             ):
-                return
+                source_cues = self._load_staged_cues(paths.source_srt)
 
-            self._emit_progress("staged_export_progress_writing_mp4")
-            self._set_progress(94)
-            self._mux_video(paths.final_mix, output_path=paths.final_video, cancel_strategy="quit")
+            if self._will_run_staged_stage("target_subtitles_ready"):
+                assert source_cues is not None
+                self._emit_progress("staged_export_progress_translating")
+                self._set_progress(34)
+                target_cues = self._translate_source_cues(source_cues, source_language)
+                _write_srt_cues(paths.target_srt, target_cues)
+                if self._checkpoint_staged_stage(manifest_path, artifacts, "target_subtitles_ready"):
+                    return
+            elif (
+                self._will_run_staged_stage("target_voice_segments_ready")
+                or self._will_run_staged_stage("target_voice_aligned")
+            ):
+                target_cues = self._load_staged_cues(paths.target_srt)
 
-            self._write_staged_manifest(
-                manifest_path,
-                artifacts,
-                status="complete",
-                stage="dubbed_video_ready",
-                separation_backend=separation_backend,
-            )
-            self._set_progress(100)
-            self.export_finished.emit(str(self._output_dir))
+            if self._will_run_staged_stage("source_voice_filtered"):
+                self._emit_progress("staged_export_progress_filtering_source")
+                self._set_progress(48)
+                separation_backend = self._create_source_audio_stems(
+                    paths.source_full,
+                    paths.background,
+                    paths.source_voice,
+                )
+                if self._checkpoint_staged_stage(
+                    manifest_path,
+                    artifacts,
+                    "source_voice_filtered",
+                    separation_backend=separation_backend,
+                ):
+                    return
+            else:
+                if self._will_run_staged_stage("target_voice_segments_ready"):
+                    self._require_staged_artifact(paths.source_voice)
+                if self._will_run_staged_stage("final_mix_ready"):
+                    self._require_staged_artifact(paths.background)
+
+            if self._will_run_staged_stage("target_voice_segments_ready"):
+                assert source_cues is not None
+                assert target_cues is not None
+                self._emit_progress("staged_export_progress_creating_voice")
+                self._set_progress(62)
+                audio_cues = self._build_target_voice_cues(paths.source_voice, source_cues, target_cues)
+                if self._checkpoint_staged_stage(
+                    manifest_path,
+                    artifacts,
+                    "target_voice_segments_ready",
+                    separation_backend=separation_backend,
+                ):
+                    return
+            elif self._will_run_staged_stage("target_voice_aligned"):
+                if source_cues is None:
+                    source_cues = self._load_staged_cues(paths.source_srt)
+                if target_cues is None:
+                    target_cues = self._load_staged_cues(paths.target_srt)
+                audio_cues = self._load_target_voice_export_cues(source_cues, target_cues)
+
+            if self._will_run_staged_stage("target_voice_aligned"):
+                assert audio_cues is not None
+                self._emit_progress("staged_export_progress_aligning_voice")
+                self._set_progress(78)
+                self._build_aligned_audio(audio_cues, paths.target_voice)
+                if self._checkpoint_staged_stage(
+                    manifest_path,
+                    artifacts,
+                    "target_voice_aligned",
+                    separation_backend=separation_backend,
+                ):
+                    return
+            elif self._will_run_staged_stage("final_mix_ready"):
+                self._require_staged_artifact(paths.target_voice)
+
+            if self._will_run_staged_stage("final_mix_ready"):
+                self._emit_progress("staged_export_progress_mixing_final")
+                self._set_progress(88)
+                self._mix_staged_final_audio(paths)
+                if self._checkpoint_staged_stage(
+                    manifest_path,
+                    artifacts,
+                    "final_mix_ready",
+                    separation_backend=separation_backend,
+                ):
+                    return
+            elif self._will_run_staged_stage("dubbed_video_ready"):
+                self._ensure_staged_final_mix_for_mux(paths)
+
+            if self._will_run_staged_stage("dubbed_video_ready"):
+                self._emit_progress("staged_export_progress_writing_mp4")
+                self._set_progress(94)
+                self._mux_video(paths.final_mix, output_path=paths.final_video, cancel_strategy="quit")
+
+                self._write_staged_manifest(
+                    manifest_path,
+                    artifacts,
+                    status="complete",
+                    stage="dubbed_video_ready",
+                    separation_backend=separation_backend,
+                )
+                self._staged_manifest_stage = "dubbed_video_ready"
+                self._set_progress(100)
+                self.export_finished.emit(str(self._output_dir))
         except ProcessCancelled:
             if self._keep_partial_requested:
                 self._write_staged_terminal_status(manifest_path, artifacts, "partial", separation_backend)
@@ -805,11 +948,79 @@ class StagedDubbingExportWorker(DubbingExportWorker):
                 pop_hf_offline_environment(offline_env)
 
     def _prepare_staged_output_dir(self, final_video: Path, manifest_path: Path) -> None:
+        managed_files = self._paths.managed_files
+        if self._force_stage:
+            managed_files = self._managed_files_from_stage(self._start_stage)
+        elif self._start_stage != STAGED_EXPORT_STAGES[0]:
+            managed_files = (self._paths.manifest,)
         prepare_staged_output_dir(
             self._output_dir,
             managed_dirs=self._paths.managed_dirs,
-            managed_files=self._paths.managed_files,
+            managed_files=managed_files,
         )
+
+    def _managed_files_from_stage(self, stage: str) -> tuple[Path, ...]:
+        paths = self._paths
+        by_stage: dict[str, tuple[Path, ...]] = {
+            "source_audio_extracted": (
+                paths.source_full,
+                paths.source_srt,
+                paths.words_json,
+                paths.target_srt,
+                paths.source_voice,
+                paths.background,
+                paths.target_voice,
+                paths.final_mix,
+                paths.final_video,
+                paths.manifest,
+            ),
+            "source_transcribed": (
+                paths.source_srt,
+                paths.words_json,
+                paths.target_srt,
+                paths.target_voice,
+                paths.final_mix,
+                paths.final_video,
+                paths.manifest,
+            ),
+            "target_subtitles_ready": (
+                paths.target_srt,
+                paths.target_voice,
+                paths.final_mix,
+                paths.final_video,
+                paths.manifest,
+            ),
+            "source_voice_filtered": (
+                paths.source_voice,
+                paths.background,
+                paths.target_voice,
+                paths.final_mix,
+                paths.final_video,
+                paths.manifest,
+            ),
+            "target_voice_segments_ready": (
+                paths.target_voice,
+                paths.final_mix,
+                paths.final_video,
+                paths.manifest,
+            ),
+            "target_voice_aligned": (
+                paths.target_voice,
+                paths.final_mix,
+                paths.final_video,
+                paths.manifest,
+            ),
+            "final_mix_ready": (
+                paths.final_mix,
+                paths.final_video,
+                paths.manifest,
+            ),
+            "dubbed_video_ready": (
+                paths.final_video,
+                paths.manifest,
+            ),
+        }
+        return by_stage.get(stage, self._paths.managed_files)
 
     def _write_staged_manifest(
         self,
@@ -820,18 +1031,116 @@ class StagedDubbingExportWorker(DubbingExportWorker):
         stage: str,
         separation_backend: str = "",
     ) -> None:
-        write_staged_manifest(
-            manifest_path,
-            staged_manifest_payload(
-                video_path=self._video_path,
-                export_range=self._export_range,
-                artifacts=artifacts,
-                config=self._config,
-                status=status,
-                stage=stage,
-                separation_backend=separation_backend,
-            ),
+        payload = staged_manifest_payload(
+            video_path=self._video_path,
+            export_range=self._export_range,
+            artifacts=artifacts,
+            config=self._config,
+            status=status,
+            stage=stage,
+            separation_backend=separation_backend,
         )
+        payload["requested_stages"] = {
+            "start": self._start_stage,
+            "end": self._end_stage,
+            "force": self._force_stage,
+        }
+        if self._artifact_overrides:
+            payload["artifact_overrides"] = {
+                key: str(path)
+                for key, path in sorted(self._artifact_overrides.items())
+            }
+        if stage in _STAGED_STAGE_INDEX:
+            stage_index = _staged_stage_index(stage)
+            payload["completed_stages"] = list(STAGED_EXPORT_STAGES[: stage_index + 1])
+        write_staged_manifest(manifest_path, payload)
+
+    def _read_existing_staged_manifest(self) -> dict[str, object]:
+        try:
+            data = json.loads(self._paths.manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def _manifest_separation_backend(manifest: dict[str, object]) -> str:
+        source_filter = manifest.get("source_voice_filter")
+        if not isinstance(source_filter, dict):
+            return ""
+        return _json_text(source_filter.get("backend"), default="")
+
+    def _will_run_staged_stage(self, stage: str) -> bool:
+        index = _staged_stage_index(stage)
+        return _staged_stage_index(self._start_stage) <= index <= _staged_stage_index(self._end_stage)
+
+    def _load_staged_cues(self, path: Path) -> list[TranscriptCue]:
+        self._require_staged_artifact(path)
+        cues = _read_srt_cues(path)
+        if not cues:
+            raise RuntimeError(self._tr("export_error_no_dialogue"))
+        return cues
+
+    def _require_staged_artifact(self, path: Path) -> None:
+        if not path.exists() or (path.is_file() and path.stat().st_size <= 0):
+            raise RuntimeError(self._tr("staged_export_error_missing_artifact", path=str(path)))
+
+    def _mix_staged_final_audio(self, paths: StagedExportPaths) -> None:
+        self._require_staged_artifact(paths.background)
+        self._require_staged_artifact(paths.target_voice)
+        self._run_ffmpeg(
+            _staged_background_voice_mix_args(
+                paths.background,
+                paths.target_voice,
+                paths.final_mix,
+                voice_volume_percent=self._config.dubbing_voice_volume,
+            )
+        )
+
+    def _ensure_staged_final_mix_for_mux(self, paths: StagedExportPaths) -> None:
+        if self._staged_final_mix_needs_rebuild(paths):
+            self._emit_progress("staged_export_progress_mixing_final")
+            self._set_progress(88)
+            self._mix_staged_final_audio(paths)
+            return
+        self._require_staged_artifact(paths.final_mix)
+
+    def _staged_final_mix_needs_rebuild(self, paths: StagedExportPaths) -> bool:
+        if not paths.final_mix.exists() or paths.final_mix.stat().st_size <= 0:
+            return True
+        source_paths = (paths.background, paths.target_voice)
+        if not all(path.exists() and path.stat().st_size > 0 for path in source_paths):
+            return False
+        if self._start_stage == "dubbed_video_ready" and self._force_stage:
+            return True
+        final_mtime = paths.final_mix.stat().st_mtime
+        return any(path.stat().st_mtime > final_mtime for path in source_paths)
+
+    def _load_target_voice_export_cues(
+        self,
+        source_cues: list[TranscriptCue],
+        target_cues: list[TranscriptCue],
+    ) -> list[ExportCue]:
+        tts_suffix = voice_tts_suffix(self._config)
+        cues: list[ExportCue] = []
+        for index, (source_cue, target_cue) in enumerate(zip(source_cues, target_cues, strict=False)):
+            _, audio_path = target_voice_artifact_paths(self._tts_dir, index, tts_suffix)
+            self._require_staged_artifact(audio_path)
+            duration = _probe_duration_seconds(audio_path) or max(
+                0.25,
+                target_cue.end_seconds - target_cue.start_seconds,
+            )
+            cues.append(
+                ExportCue(
+                    start_seconds=target_cue.start_seconds,
+                    original=source_cue.text,
+                    translated=target_cue.text,
+                    audio_path=audio_path,
+                    duration_seconds=duration,
+                )
+            )
+        if not cues:
+            raise RuntimeError(self._tr("export_error_no_dialogue"))
+        return cues
 
     def _write_staged_terminal_status(
         self,
@@ -866,6 +1175,17 @@ class StagedDubbingExportWorker(DubbingExportWorker):
         ):
             return True
         self._staged_manifest_stage = stage
+        if stage == self._end_stage:
+            self._write_staged_manifest(
+                manifest_path,
+                artifacts,
+                status="complete",
+                stage=stage,
+                separation_backend=separation_backend,
+            )
+            self._set_progress(100)
+            self.export_finished.emit(str(self._output_dir))
+            return True
         return False
 
     def _stop_after_staged_checkpoint(

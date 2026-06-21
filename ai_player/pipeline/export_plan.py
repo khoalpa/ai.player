@@ -264,9 +264,10 @@ def staged_background_voice_mix_args(
     filter_complex = (
         f"[0:a]aformat=sample_rates={sample_rate}:channel_layouts={channel_layout}[bg];"
         f"[1:a]aformat=sample_rates={sample_rate}:channel_layouts={channel_layout},"
-        f"volume={voice_volume:.3f}[voice];"
-        "[bg][voice]sidechaincompress=threshold=0.02:ratio=6:attack=20:release=250[ducked];"
-        "[ducked][voice]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,"
+        f"volume={voice_volume:.3f},asplit=2[voice_sc][voice_mix];"
+        "[voice_sc]apad[voice_sidechain];"
+        "[bg][voice_sidechain]sidechaincompress=threshold=0.02:ratio=6:attack=20:release=250[ducked];"
+        "[ducked][voice_mix]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
         "alimiter=limit=0.98,loudnorm=I=-16:TP=-1.5:LRA=11[mix]"
     )
     return [

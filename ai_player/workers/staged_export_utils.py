@@ -163,7 +163,11 @@ def staged_artifacts(
 
 
 def manifest_relative_path(output_dir: Path, path: Path) -> str:
-    return Path(path).resolve().relative_to(output_dir.resolve()).as_posix()
+    resolved = Path(path).resolve()
+    try:
+        return resolved.relative_to(output_dir.resolve()).as_posix()
+    except (OSError, ValueError):
+        return str(resolved)
 
 
 def remove_managed_path(output_dir: Path, path: Path) -> None:

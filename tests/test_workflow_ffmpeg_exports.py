@@ -64,6 +64,33 @@ def test_export_range_time_parser_rejects_non_finite_values() -> None:
     assert player_window_export._format_time(float("inf")) == "00:00:00"
 
 
+def test_staged_export_stage_dialog_suggests_next_missing_step(qapp, tmp_path) -> None:
+    output_dir = tmp_path / "staged"
+    audio_dir = output_dir / "audio"
+    subtitle_dir = output_dir / "subtitles"
+    audio_dir.mkdir(parents=True)
+    subtitle_dir.mkdir()
+    (audio_dir / "source_full.wav").write_bytes(b"source")
+    (subtitle_dir / "source.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nhello\n",
+        encoding="utf-8",
+    )
+    (subtitle_dir / "source.words.json").write_text("{}", encoding="utf-8")
+
+    dialog = player_window_export._StagedExportStageDialog(lambda key: key, output_dir)
+
+    assert dialog._stage_list.count() == 8
+    assert dialog.start_stage() == "target_subtitles_ready"
+    assert dialog.end_stage() == "dubbed_video_ready"
+    assert dialog.force_stage() is True
+    assert dialog._file_table.rowCount() == 2
+
+    custom_target = output_dir / "custom-target.srt"
+    dialog._set_artifact_override("target_srt", custom_target)
+
+    assert dialog.artifact_overrides()["target_srt"] == str(custom_target)
+
+
 def test_transcript_source_time_helpers_tolerate_invalid_values() -> None:
     assert transcript_source.parse_timestamp("") is None
     huge_time = "9999999999999999999999999999999999999999999999999999999999999999:00"
@@ -174,6 +201,10 @@ def test_staged_background_voice_mix_ducks_background(tmp_path) -> None:
     filter_complex = args[args.index("-filter_complex") + 1]
     assert "sidechaincompress" in filter_complex
     assert "volume=0.850" in filter_complex
+    assert "asplit=2[voice_sc][voice_mix]" in filter_complex
+    assert "[voice_sc]apad[voice_sidechain]" in filter_complex
+    assert "[bg][voice_sidechain]sidechaincompress" in filter_complex
+    assert "[ducked][voice_mix]amix=inputs=2:duration=first" in filter_complex
     assert args[-1] == tmp_path / "final.wav"
 
 def test_mix_args_tolerate_invalid_numeric_options(tmp_path) -> None:
@@ -212,7 +243,7 @@ def test_mix_args_keep_channel_layout_and_output_channels_consistent(tmp_path) -
 
 
 def test_staged_export_worker_writes_artifact_manifest(monkeypatch, tmp_path) -> None:
-    config = AppConfig(audio_source="original", tts_provider="none", original_audio_voice_filter=False)
+    config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
     worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
     segment = SimpleNamespace(
         text=" hello ",
@@ -299,6 +330,200 @@ def test_staged_manifest_writes_strict_json_for_nonfinite_range(tmp_path) -> Non
     assert manifest["source_video"].endswith("video.mp4")
     assert manifest["range"]["end_seconds"] is None
     assert manifest["source_voice_filter"]["backend"] == "fast"
+
+
+def test_staged_worker_applies_artifact_overrides_to_paths_and_manifest(tmp_path) -> None:
+    config = AppConfig(audio_source="original")
+    source_video = tmp_path / "custom-source.mp4"
+    final_video = tmp_path / "custom-output.mp4"
+    target_srt = tmp_path / "custom-target.srt"
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4",
+        str(tmp_path / "staged"),
+        config,
+        artifact_overrides={
+            "source_video": str(source_video),
+            "final_video": str(final_video),
+            "target_srt": str(target_srt),
+        },
+    )
+
+    assert worker._video_path == str(source_video)
+    assert worker._paths.final_video == final_video
+    assert worker._paths.target_srt == target_srt
+
+    manifest_path = tmp_path / "manifest.json"
+    worker._write_staged_manifest(manifest_path, worker._paths.artifacts(), status="running", stage="initialized")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest["source_video"] == str(source_video)
+    assert manifest["artifacts"]["dubbed_video_mp4"] == str(final_video.resolve())
+    assert manifest["artifacts"]["target_srt"] == str(target_srt.resolve())
+    assert manifest["artifact_overrides"]["source_video"] == str(source_video)
+
+
+def test_staged_export_can_stop_after_target_subtitles(monkeypatch, tmp_path) -> None:
+    config = AppConfig(audio_source="original", tts_provider="none", original_audio_voice_filter=False)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4",
+        str(tmp_path),
+        config,
+        end_stage="target_subtitles_ready",
+    )
+    finished_paths: list[str] = []
+    worker.export_finished.connect(finished_paths.append)
+    segment = SimpleNamespace(text=" hello ", start=0.0, end=1.0, words=[])
+
+    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(
+        export_worker,
+        "get_shared_vietnamese_translator",
+        lambda _config: SimpleNamespace(translate_many=lambda texts, _language: [f"{text}-vi" for text in texts]),
+    )
+    worker._validate_whisper_model = lambda: None
+    worker._extract_full_quality_audio = lambda output_path: Path(output_path).write_bytes(b"source")
+    worker._transcribe_staged = lambda _source_audio: ([segment], SimpleNamespace(language="en"))
+    worker._create_source_audio_stems = lambda *_args: pytest.fail("should stop before source filtering")
+
+    worker.run()
+
+    assert finished_paths == [str(tmp_path)]
+    manifest_data = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest_data["status"] == "complete"
+    assert manifest_data["stage"] == "target_subtitles_ready"
+    assert manifest_data["requested_stages"] == {
+        "start": "source_audio_extracted",
+        "end": "target_subtitles_ready",
+        "force": True,
+    }
+    assert (tmp_path / "subtitles" / "target.srt").read_text(encoding="utf-8").count("hello-vi") == 1
+    assert not (tmp_path / "audio" / "source_voice.wav").exists()
+
+
+def test_staged_export_can_run_final_mix_only(monkeypatch, tmp_path) -> None:
+    config = AppConfig(audio_source="original", tts_provider="none", original_audio_voice_filter=False)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4",
+        str(tmp_path),
+        config,
+        start_stage="final_mix_ready",
+        end_stage="final_mix_ready",
+    )
+    paths = worker._paths
+    paths.background.parent.mkdir(parents=True, exist_ok=True)
+    paths.background.write_bytes(b"background")
+    paths.target_voice.write_bytes(b"target")
+    finished_paths: list[str] = []
+    worker.export_finished.connect(finished_paths.append)
+
+    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(
+        export_worker,
+        "get_shared_vietnamese_translator",
+        lambda _config: SimpleNamespace(translate_many=lambda _texts, _language: []),
+    )
+    worker._validate_whisper_model = lambda: pytest.fail("final mix should not need ASR")
+    worker._extract_full_quality_audio = lambda _path: pytest.fail("final mix should not extract source audio")
+    worker._transcribe_staged = lambda _path: pytest.fail("final mix should not transcribe")
+    worker._run_ffmpeg = lambda args, **_kwargs: Path(args[-1]).write_bytes(b"mix")
+
+    worker.run()
+
+    assert finished_paths == [str(tmp_path)]
+    assert paths.final_mix.read_bytes() == b"mix"
+    assert not paths.final_video.exists()
+    manifest_data = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    assert manifest_data["status"] == "complete"
+    assert manifest_data["stage"] == "final_mix_ready"
+
+
+def test_staged_export_rebuilds_final_mix_before_muxing_mp4(monkeypatch, tmp_path) -> None:
+    config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4",
+        str(tmp_path),
+        config,
+        start_stage="dubbed_video_ready",
+        end_stage="dubbed_video_ready",
+    )
+    paths = worker._paths
+    paths.background.parent.mkdir(parents=True, exist_ok=True)
+    paths.background.write_bytes(b"background")
+    paths.target_voice.write_bytes(b"target")
+    paths.final_mix.write_bytes(b"old mix without target")
+    finished_paths: list[str] = []
+    worker.export_finished.connect(finished_paths.append)
+
+    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(
+        export_worker,
+        "get_shared_vietnamese_translator",
+        lambda _config: SimpleNamespace(translate_many=lambda _texts, _language: []),
+    )
+    worker._run_ffmpeg = lambda args, **_kwargs: Path(args[-1]).write_bytes(b"rebuilt mix with target")
+
+    def fake_mux(audio_path, output_path=None, **_kwargs):
+        assert Path(audio_path) == paths.final_mix
+        assert paths.final_mix.read_bytes() == b"rebuilt mix with target"
+        Path(output_path).write_bytes(b"mp4")
+
+    worker._mux_video = fake_mux
+
+    worker.run()
+
+    assert finished_paths == [str(tmp_path)]
+    assert paths.final_mix.read_bytes() == b"rebuilt mix with target"
+    assert paths.final_video.read_bytes() == b"mp4"
+    manifest_data = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    assert manifest_data["status"] == "complete"
+    assert manifest_data["stage"] == "dubbed_video_ready"
+
+
+def test_staged_export_fails_when_target_voice_generation_has_tts_disabled(monkeypatch, tmp_path) -> None:
+    config = AppConfig(audio_source="original", tts_provider="none", original_audio_voice_filter=False)
+    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    failures: list[str] = []
+    worker.failed.connect(failures.append)
+
+    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(
+        export_worker,
+        "get_shared_vietnamese_translator",
+        lambda _config: SimpleNamespace(translate_many=lambda _texts, _language: []),
+    )
+    worker._extract_full_quality_audio = lambda _path: pytest.fail("TTS guard should run before export work")
+
+    worker.run()
+
+    assert failures
+    assert "tắt tạo giọng đích" in failures[0]
+    assert not (tmp_path / "manifest.json").exists()
+
+
+def test_staged_export_fails_when_final_mix_voice_volume_is_muted(monkeypatch, tmp_path) -> None:
+    config = AppConfig(
+        audio_source="original",
+        tts_provider="edge",
+        original_audio_voice_filter=False,
+        dubbing_voice_volume=0,
+    )
+    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    failures: list[str] = []
+    worker.failed.connect(failures.append)
+
+    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(
+        export_worker,
+        "get_shared_vietnamese_translator",
+        lambda _config: SimpleNamespace(translate_many=lambda _texts, _language: []),
+    )
+    worker._extract_full_quality_audio = lambda _path: pytest.fail("volume guard should run before export work")
+
+    worker.run()
+
+    assert failures
+    assert "0%" in failures[0]
+    assert not (tmp_path / "manifest.json").exists()
 
 
 def test_staged_words_payload_serializes_backend_scalar_values() -> None:
@@ -394,7 +619,7 @@ def test_text_batch_alignment_falls_back_for_non_text_items() -> None:
 
 
 def test_staged_export_keep_partial_stops_at_checkpoint(monkeypatch, tmp_path) -> None:
-    config = AppConfig(audio_source="original", tts_provider="none", original_audio_voice_filter=False)
+    config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
     worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
     partial_paths: list[str] = []
     worker.partial_finished.connect(partial_paths.append)
@@ -425,7 +650,7 @@ def test_staged_export_keep_partial_stops_at_checkpoint(monkeypatch, tmp_path) -
 
 
 def test_staged_export_cancel_during_process_marks_manifest_partial(monkeypatch, tmp_path) -> None:
-    config = AppConfig(audio_source="original", tts_provider="none", original_audio_voice_filter=False)
+    config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
     worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
     partial_paths: list[str] = []
     worker.partial_finished.connect(partial_paths.append)
@@ -453,7 +678,7 @@ def test_staged_export_cancel_during_process_marks_manifest_partial(monkeypatch,
 
 
 def test_staged_export_cancel_marks_manifest_cancelled(monkeypatch, tmp_path) -> None:
-    config = AppConfig(audio_source="original", tts_provider="none", original_audio_voice_filter=False)
+    config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
     worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
     partial_paths: list[str] = []
     worker.partial_finished.connect(partial_paths.append)
@@ -482,7 +707,7 @@ def test_staged_export_cancel_marks_manifest_cancelled(monkeypatch, tmp_path) ->
 
 
 def test_staged_export_cancel_during_process_marks_manifest_cancelled(monkeypatch, tmp_path) -> None:
-    config = AppConfig(audio_source="original", tts_provider="none", original_audio_voice_filter=False)
+    config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
     worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
     partial_paths: list[str] = []
     worker.partial_finished.connect(partial_paths.append)
@@ -510,7 +735,7 @@ def test_staged_export_cancel_during_process_marks_manifest_cancelled(monkeypatc
 
 
 def test_staged_export_cancel_runtime_error_marks_manifest_cancelled(monkeypatch, tmp_path) -> None:
-    config = AppConfig(audio_source="original", tts_provider="none", original_audio_voice_filter=False)
+    config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
     worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
     failures: list[str] = []
     worker.failed.connect(failures.append)
@@ -538,7 +763,7 @@ def test_staged_export_cancel_runtime_error_marks_manifest_cancelled(monkeypatch
 
 
 def test_staged_export_keep_partial_runtime_error_marks_manifest_partial(monkeypatch, tmp_path) -> None:
-    config = AppConfig(audio_source="original", tts_provider="none", original_audio_voice_filter=False)
+    config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
     worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
     partial_paths: list[str] = []
     worker.partial_finished.connect(partial_paths.append)

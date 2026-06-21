@@ -614,6 +614,50 @@ def test_aligned_timeline_inputs_returns_none_when_aborted(tmp_path) -> None:
     assert inputs is None
 
 
+def test_chunked_timeline_mix_limits_command_size_and_preserves_offsets(tmp_path) -> None:
+    commands: list[tuple[list[tuple[Path, float]], Path]] = []
+
+    def fake_mix_args(inputs: list[tuple[Path, float]], output_path: Path) -> list[object]:
+        commands.append((list(inputs), output_path))
+        args: list[object] = []
+        for path, _start in inputs:
+            args.extend(["-i", path])
+        args.append(output_path)
+        return args
+
+    def fake_run(args: list[object]) -> None:
+        Path(args[-1]).write_bytes(b"mix")
+
+    timeline_inputs = [(tmp_path / f"cue-{index:04d}.wav", float(index * 2)) for index in range(7)]
+
+    aligned_audio.mix_timeline_inputs_chunked(
+        timeline_inputs,
+        tmp_path / "target.wav",
+        temp_dir=tmp_path,
+        run_ffmpeg=fake_run,
+        timeline_mix_args=fake_mix_args,
+        chunk_size=3,
+    )
+
+    assert [len(inputs) for inputs, _target in commands] == [3, 3, 1, 3]
+    assert commands[0][0] == [
+        (tmp_path / "cue-0000.wav", 0.0),
+        (tmp_path / "cue-0001.wav", 2.0),
+        (tmp_path / "cue-0002.wav", 4.0),
+    ]
+    assert commands[1][0] == [
+        (tmp_path / "cue-0003.wav", 0.0),
+        (tmp_path / "cue-0004.wav", 2.0),
+        (tmp_path / "cue-0005.wav", 4.0),
+    ]
+    assert commands[-1][0] == [
+        (tmp_path / "timeline-mix-0000.wav", 0.0),
+        (tmp_path / "timeline-mix-0001.wav", 6.0),
+        (tmp_path / "timeline-mix-0002.wav", 12.0),
+    ]
+    assert (tmp_path / "target.wav").read_bytes() == b"mix"
+
+
 def test_document_export_voice_helper_sanitizes_invalid_cue_timing(tmp_path) -> None:
     silences: list[tuple[float, Path]] = []
 

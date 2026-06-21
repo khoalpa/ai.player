@@ -21,7 +21,7 @@ from ai_player.services.ffmpeg import ProcessCancelled, run_ffmpeg_cancelable
 from ai_player.services.transcript_cleanup import TranscriptCleaner
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
 from ai_player.services.tts import create_tts_provider
-from ai_player.workers.aligned_audio import aligned_timeline_inputs
+from ai_player.workers.aligned_audio import aligned_timeline_inputs, mix_timeline_inputs_chunked
 from ai_player.workers.document_export_voice import build_document_export_cue, build_prepared_document_export_cues
 from ai_player.workers.export_media import (
     document_video_args,
@@ -254,9 +254,12 @@ class DocumentReviewExportWorker(QThread):
             self._make_silence(1.0, output_path)
             return
 
-        self._run_ffmpeg(
-            _timeline_mix_args(timeline_inputs, output_path, sample_rate=48000),
-            respect_stop=not self._keep_partial_requested,
+        mix_timeline_inputs_chunked(
+            timeline_inputs,
+            output_path,
+            temp_dir=self._temp_dir,
+            run_ffmpeg=lambda args: self._run_ffmpeg(args, respect_stop=not self._keep_partial_requested),
+            timeline_mix_args=lambda inputs, target: _timeline_mix_args(inputs, target, sample_rate=48000),
         )
 
     def _build_document_video(

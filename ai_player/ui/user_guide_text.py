@@ -229,8 +229,10 @@ GUIDE_TEXT = {
         "finding_default": "Cấu hình hiện tại không có điểm rủi ro lớn.",
         "preset_notes": {
             "low_latency": "Xem nhanh với độ trễ thấp, ưu tiên phản hồi nhanh bằng Edge TTS.",
+            "subtitles": "Chỉ tạo/đọc phụ đề, không tạo giọng lồng tiếng.",
             "offline_lite": "Không cần Internet, nhẹ hơn cho CPU/máy yếu.",
             "balanced": "Cân bằng tốc độ và chất lượng.",
+            "online_lite": "Dùng Whisper và NLLB local cho nghe/dịch, giữ OCR/cleanup online khi đã cấu hình.",
             "quality": "Ưu tiên chất lượng GPU và xuất bản chất lượng cao.",
         },
         "source_notes": {
@@ -736,8 +738,10 @@ GUIDE_TEXT = {
         "finding_default": "The current configuration has no major risk.",
         "preset_notes": {
             "low_latency": "Quick preview with low latency, prioritizing fast response through Edge TTS.",
+            "subtitles": "Creates/reads subtitles only, without generated dubbing voice.",
             "offline_lite": "No Internet required, lighter for CPU/low-end machines.",
             "balanced": "Balances speed and quality.",
+            "online_lite": "Uses local Whisper and NLLB for speech/translation, with online OCR/cleanup when configured.",
             "quality": "Prioritizes GPU quality and high-quality publishing.",
         },
         "source_notes": {

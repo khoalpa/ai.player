@@ -50,7 +50,6 @@ from ai_player.services.tts_voices import (
     AMAZON_POLLY_VOICES,
     AZURE_TTS_VOICES,
     EDGE_VOICES,
-    ELEVENLABS_TTS_VOICES,
     GOOGLE_TTS_VOICES,
     STANDARD_VIENEU_VOICES,
     TURBO_VIENEU_VOICES,
@@ -86,8 +85,7 @@ _EDGE_TTS_LOCK = threading.Lock()
 _VIENEU_REMOTE_CODEC_REPO = "neuphonic/neucodec-onnx-decoder-int8"
 AZURE_TTS_DEFAULT_REGION = "eastus"
 GOOGLE_TTS_API_BASE = "https://texttospeech.googleapis.com/v1/text:synthesize"
-ELEVENLABS_TTS_API_BASE = "https://api.elevenlabs.io/v1"
-ONLINE_TTS_PROVIDERS = {"azure_tts", "google_tts", "amazon_polly", "elevenlabs_tts"}
+ONLINE_TTS_PROVIDERS = {"azure_tts", "google_tts", "amazon_polly"}
 
 
 def available_tts_providers() -> list[VoiceOption]:
@@ -156,8 +154,6 @@ def available_voices(provider: str, config: AppConfig | None = None) -> list[Voi
         return GOOGLE_TTS_VOICES
     if normalized_provider == "amazon_polly":
         return AMAZON_POLLY_VOICES
-    if normalized_provider == "elevenlabs_tts":
-        return ELEVENLABS_TTS_VOICES
     return EDGE_VOICES
 
 
@@ -215,7 +211,7 @@ def _compatible_online_voice_id(provider: str, voice_id: object) -> str:
     available_ids = {voice.id for voice in voices}
     if raw in available_ids:
         return raw
-    if raw and normalized_provider in {"amazon_polly", "elevenlabs_tts"}:
+    if raw and normalized_provider == "amazon_polly":
         return raw
     if raw.startswith(("vi-VN-", "en-US-", "en-GB-")) and normalized_provider in {"azure_tts", "google_tts"}:
         return raw
@@ -231,7 +227,6 @@ def _preferred_online_voice_id(provider: str, gender: str) -> str:
         "azure_tts": {"female": "vi-VN-HoaiMyNeural", "male": "vi-VN-NamMinhNeural"},
         "google_tts": {"female": "vi-VN-Neural2-A", "male": "vi-VN-Neural2-D"},
         "amazon_polly": {"female": "Joanna", "male": "Matthew"},
-        "elevenlabs_tts": {"female": "21m00Tcm4TlvDq8ikWAM", "male": "JBFqnCBsd6RMkjVDRZzb"},
     }
     return preferred.get(normalized_provider, preferred["azure_tts"]).get(gender, preferred["azure_tts"]["female"])
 
@@ -259,8 +254,6 @@ def normalize_tts_provider(value: object) -> str:
         return "google_tts"
     if raw in {"amazon", "amazonpolly", "polly", "awspolly"}:
         return "amazon_polly"
-    if raw in {"elevenlabs", "elevenlabstts", "eleven", "elevenlabsapi"}:
-        return "elevenlabs_tts"
     if raw in {"none", "off", "notts", "no_tts", "khongtts", "khong_tts"}:
         return "none"
     return "vieneu"
@@ -593,8 +586,6 @@ class OnlineTTSProvider(BaseTTSProvider):
             return self._request_google(text, voice_id)
         if self._provider == "amazon_polly":
             return self._request_amazon_polly(text, voice_id)
-        if self._provider == "elevenlabs_tts":
-            return self._request_elevenlabs(text, voice_id)
         raise TTSError(f"Unsupported online TTS provider: {self._provider}")
 
     def _request_azure(self, text: str, voice_id: str) -> bytes:
@@ -675,24 +666,6 @@ class OnlineTTSProvider(BaseTTSProvider):
         response = requests.post(url, data=body, headers=headers, timeout=_tts_timeout(self._config))
         _raise_for_tts_response(response, "Amazon Polly")
         return response.content
-
-    def _request_elevenlabs(self, text: str, voice_id: str) -> bytes:
-        api_key = _required_tts_api_key(self._config, "ElevenLabs TTS")
-        api_base = _tts_api_base(self._config) or ELEVENLABS_TTS_API_BASE
-        url = _join_api_base(api_base, f"/text-to-speech/{quote(voice_id, safe='')}?output_format=mp3_44100_128")
-        payload = {
-            "text": text,
-            "model_id": _tts_model(self._config, default="eleven_multilingual_v2"),
-        }
-        response = requests.post(
-            url,
-            json=payload,
-            headers={"xi-api-key": api_key, "Accept": "audio/mpeg"},
-            timeout=_tts_timeout(self._config),
-        )
-        _raise_for_tts_response(response, "ElevenLabs TTS")
-        return response.content
-
 
 class VieNeuTTSProvider(BaseTTSProvider):
     def __init__(self, config: AppConfig) -> None:
@@ -1633,10 +1606,25 @@ def _raise_for_tts_response(response: requests.Response, provider_name: str) -> 
     detail = ""
     try:
         data = response.json()
+        friendly = _friendly_tts_error(provider_name, data)
+        if friendly:
+            raise TTSError(f"{provider_name} request failed with HTTP {response.status_code}: {friendly}")
         detail = json.dumps(data, ensure_ascii=False)[:500]
+    except TTSError:
+        raise
     except Exception:
         detail = str(getattr(response, "text", "") or "")[:500]
     raise TTSError(f"{provider_name} request failed with HTTP {response.status_code}: {detail}")
+
+
+def _friendly_tts_error(provider_name: str, data: object) -> str:
+    if not isinstance(data, dict):
+        return ""
+    detail = data.get("detail")
+    if not isinstance(detail, dict):
+        return ""
+    message = str(detail.get("message") or data.get("message") or "").strip()
+    return message
 
 
 def _write_tts_audio(output_path: Path, audio: bytes) -> None:

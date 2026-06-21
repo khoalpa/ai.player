@@ -275,6 +275,10 @@ def test_default_realtime_preset_disables_expensive_reference_features() -> None
     assert presets["balanced"]["dubbing_auto_voice_gender"] is False
     assert presets["balanced"]["original_audio_voice_filter"] is False
     assert presets["balanced"]["translation_num_beams"] == 1
+    assert presets["online_lite"]["asr_provider"] == "faster_whisper"
+    assert presets["online_lite"]["translator_provider"] == "nllb_ct2"
+    assert presets["online_lite"]["transcript_cleanup_provider"] == "groq"
+    assert presets["online_lite"]["local_translation_offline"] is True
     assert presets["quality"]["dubbing_auto_match_audio"] is True
     assert presets["quality"]["dubbing_auto_voice_gender"] is True
     assert presets["quality"]["original_audio_voice_filter"] is True
@@ -295,8 +299,9 @@ def test_vieneu_defaults_use_southern_voice() -> None:
 def test_performance_preset_comparison_orders_latency_and_quality() -> None:
     rows = {row.preset: row for row in compare_presets("en")}
 
-    assert set(rows) == {"low_latency", "subtitles", "offline_lite", "balanced", "quality"}
+    assert set(rows) == {"low_latency", "subtitles", "offline_lite", "balanced", "online_lite", "quality"}
     assert rows["subtitles"].latency_score < rows["low_latency"].latency_score
+    assert rows["online_lite"].latency_score < rows["balanced"].latency_score
     assert rows["balanced"].quality_score > rows["low_latency"].quality_score
     assert rows["low_latency"].latency_score < rows["balanced"].latency_score
     assert rows["quality"].quality_score > rows["balanced"].quality_score

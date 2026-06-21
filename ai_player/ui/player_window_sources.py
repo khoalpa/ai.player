@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ai_player.pipeline.transcript_source import load_transcript_entries as _load_transcript_entries
 from ai_player.services.document_reader import (
     create_text_document_transcript,
     document_filter,
@@ -76,6 +77,34 @@ TELEGRAM_BLACKLIST_BUTTON_WIDTH = 88
 TELEGRAM_BLACKLIST_BUTTON_HEIGHT = 30
 TELEGRAM_BLACKLIST_BUTTON_MARGIN = 10
 TELEGRAM_TRANSLATION_COLOR = "#0f766e"
+VIDEO_SUBTITLE_DIR_NAMES = ("subtitles", "subtitle", "subs")
+VIDEO_SUBTITLE_LANGUAGE_SUFFIXES = ("vi", "en", "ja", "jp", "ko", "zh", "zh-Hans", "zh-Hant")
+
+
+def _video_subtitle_candidates(video_path: str | Path) -> list[Path]:
+    video = Path(video_path)
+    if not video.name:
+        return []
+    candidates: list[Path] = [video.with_suffix(".srt")]
+    candidates.extend(video.with_name(f"{video.stem}.{suffix}.srt") for suffix in VIDEO_SUBTITLE_LANGUAGE_SUFFIXES)
+    for dirname in VIDEO_SUBTITLE_DIR_NAMES:
+        subtitle_dir = video.parent / dirname
+        candidates.append(subtitle_dir / f"{video.stem}.srt")
+        candidates.extend(subtitle_dir / f"{video.stem}.{suffix}.srt" for suffix in VIDEO_SUBTITLE_LANGUAGE_SUFFIXES)
+
+    seen: set[Path] = set()
+    existing: list[Path] = []
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        if resolved in seen or candidate.suffix.lower() != ".srt":
+            continue
+        seen.add(resolved)
+        if candidate.exists() and candidate.is_file():
+            existing.append(candidate)
+    return existing
 
 
 class PlayerSourceMixin:
@@ -92,19 +121,99 @@ class PlayerSourceMixin:
             self._load_document(path)
             return
 
-        self._clear_active_telegram_channel_video()
-        self._stop_dubbing()
-        self._reset_document_state_for_video()
-        self._video_path = path
-        self._auto_select_video_aspect_ratio()
-        self._load_current_video_for_playback()
-        self._show_video_output()
-        self._source_label.setText(path)
-        self._save_settings()
-        self.statusBar().showMessage(self._tr("status_opened_path").format(path=path))
-        if self._dubbing_auto_enabled:
-            self._dub_button.setChecked(True)
-            self._start_dubbing()
+        self._open_local_video_path(path, prompt_for_subtitle=True)
+
+    def _open_video_with_subtitle(self, *_args) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            self._tr("choose_video_title"),
+            str(Path.home()),
+            self._tr("video_file_filter"),
+        )
+        if not path:
+            return
+        if is_supported_document_path(path):
+            self._load_document(path)
+            return
+        subtitle_path = self._choose_video_subtitle_file(Path(path).parent)
+        self._open_local_video_path(path, prompt_for_subtitle=False, subtitle_path=subtitle_path)
+
+    def _prompt_video_subtitle(self, video_path: Path) -> Path | None:
+        candidates = _video_subtitle_candidates(video_path)
+        if not candidates:
+            return None
+        return self._confirm_video_subtitle_path(video_path, candidates)
+
+    def _confirm_video_subtitle_path(self, video_path: Path, candidates: list[Path]) -> Path | None:
+        subtitle_path = candidates[0]
+        box = QMessageBox(self)
+        box.setWindowTitle(self._tr("video_subtitle_found_title"))
+        box.setText(
+            self._tr("video_subtitle_found_message").format(
+                video=video_path.name,
+                subtitle=str(subtitle_path),
+            )
+        )
+        use_button = box.addButton(self._tr("video_subtitle_use_found"), QMessageBox.AcceptRole)
+        choose_button = box.addButton(self._tr("video_subtitle_choose_other"), QMessageBox.ActionRole)
+        box.addButton(self._tr("video_subtitle_skip"), QMessageBox.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked == use_button:
+            return subtitle_path
+        if clicked == choose_button:
+            return self._choose_video_subtitle_file(video_path.parent)
+        return None
+
+    def _choose_video_subtitle_file(self, directory: Path | None = None) -> Path | None:
+        start_dir = str(directory or Path.home())
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            self._tr("choose_video_subtitle_title"),
+            start_dir,
+            self._tr("srt_file_filter"),
+        )
+        return Path(path) if path else None
+
+    def _apply_video_subtitle_path(self, path: str | Path, *, save: bool = True) -> bool:
+        subtitle_path = Path(path)
+        if subtitle_path.suffix.lower() != ".srt" or not subtitle_path.exists() or not subtitle_path.is_file():
+            QMessageBox.warning(
+                self,
+                self._tr("video_subtitle_invalid_title"),
+                self._tr("video_subtitle_invalid_message").format(path=subtitle_path),
+            )
+            return False
+        try:
+            entries = _load_transcript_entries(
+                str(subtitle_path),
+                max(1, int(self._config.segment_seconds)),
+                self._config.gui_language,
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                self._tr("video_subtitle_invalid_title"),
+                self._tr("video_subtitle_invalid_detail").format(detail=_repair_mojibake(str(exc))),
+            )
+            return False
+        if not entries:
+            QMessageBox.warning(
+                self,
+                self._tr("video_subtitle_invalid_title"),
+                self._tr("video_subtitle_empty_message").format(path=subtitle_path),
+            )
+            return False
+        self._transcript_path_edit.setText(str(subtitle_path))
+        self._invalidate_subtitle_entries()
+        self._set_combo_data(self._audio_source_combo, "transcript")
+        self._sync_audio_source_controls()
+        if save:
+            self._queue_save_settings()
+        self.statusBar().showMessage(
+            self._tr("status_video_subtitle_attached").format(path=subtitle_path, count=len(entries))
+        )
+        return True
 
     def _open_document(self, *_args) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -1560,9 +1669,23 @@ class PlayerSourceMixin:
         self._telegram_channel_state.mark_opened(self._current_telegram_channel_item)
         self._refresh_telegram_channel_item_statuses()
         self._close_cache_dialog()
-        self._open_local_video_path(path)
+        self._open_local_video_path(
+            path,
+            clear_telegram_channel=False,
+            play_pending_navigation=True,
+        )
 
-    def _open_local_video_path(self, path: str) -> None:
+    def _open_local_video_path(
+        self,
+        path: str,
+        *,
+        prompt_for_subtitle: bool = False,
+        subtitle_path: str | Path | None = None,
+        clear_telegram_channel: bool = True,
+        play_pending_navigation: bool = False,
+    ) -> None:
+        if clear_telegram_channel:
+            self._clear_active_telegram_channel_video()
         self._stop_dubbing()
         self._reset_document_state_for_video()
         self._video_path = path
@@ -1571,12 +1694,20 @@ class PlayerSourceMixin:
         self._show_video_output()
         self._sync_telegram_browser_button()
         self._source_label.setText(path)
+        subtitle_attached = False
+        selected_subtitle = Path(subtitle_path) if subtitle_path else None
+        if selected_subtitle is None and prompt_for_subtitle:
+            selected_subtitle = self._prompt_video_subtitle(Path(path))
+        if selected_subtitle is not None:
+            subtitle_attached = self._apply_video_subtitle_path(selected_subtitle, save=False)
         self._save_settings()
-        self.statusBar().showMessage(self._tr("status_opened_path").format(path=path))
+        if not subtitle_attached:
+            self.statusBar().showMessage(self._tr("status_opened_path").format(path=path))
         if self._dubbing_auto_enabled:
             self._dub_button.setChecked(True)
             self._start_dubbing()
-        self._play_pending_telegram_navigation(source_path=path, require_runtime_match=True)
+        if play_pending_navigation:
+            self._play_pending_telegram_navigation(source_path=path, require_runtime_match=True)
 
     def _play_pending_telegram_navigation(
         self,

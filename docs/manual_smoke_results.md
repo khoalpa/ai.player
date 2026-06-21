@@ -2,6 +2,60 @@
 
 Use this file to keep a short, build-specific record before sharing a Windows build.
 
+## 2026-06-21 Online Provider Config And Portable Rebuild
+
+- Source baseline: current working tree after online provider/API credential
+  settings were split into user-local configuration.
+- Online provider config: provider choices, API bases/regions/models/timeouts,
+  and encrypted API key payloads now save to
+  `data\config\online_providers.local.json`; legacy `secrets.json`,
+  `settings.json`, and `runtime.local.json` provider values remain readable.
+- Credential hygiene: plaintext API keys remain excluded from `settings.json`
+  and `runtime.local.json`; saved key payloads are protected through the existing
+  Windows DPAPI secret store.
+- Lint: `.\.venv\Scripts\python.exe -m ruff check .` passed.
+- Dependency consistency: `.\.venv\Scripts\python.exe -m pip check` passed.
+- Unit/integration tests: `.\.venv\Scripts\python.exe -m pytest` passed, 733 tests.
+- Release smoke coverage: `.\.venv\Scripts\python.exe -m pytest tests\test_release_smoke.py`
+  passed, 4 tests.
+- Runtime Doctor: `.\.venv\Scripts\python.exe .\scripts\runtime_doctor.py --ci`
+  passed with required package, FFmpeg/ffplay, Tesseract, LibreOffice, local
+  model folders, and tessdata checks available.
+- Accepted advisory review: `.\scripts\audit_dependencies.ps1 -ReviewAcceptedVulnerabilities`
+  reports only `CVE-2025-69872` for transitive `diskcache` via
+  `llama-cpp-python`; see `docs\dependency_audit.md`.
+- Portable build: `.\scripts\build_portable.ps1` passed and created
+  `dist\portable\AI Player Lite`.
+- Portable launch smoke: `dist\portable\AI Player Lite\AI Player\AI Player.exe`
+  stayed running for 8 seconds and was stopped after verification.
+- Code signing check: `.\scripts\build_portable.ps1 -ListCodeSigningCerts`
+  found no code-signing certificates in `CurrentUser\My` or `LocalMachine\My`;
+  this portable artifact is unsigned.
+- Note: PyInstaller reported optional missing libraries for TensorRT/TBB and
+  optional hook imports; the build completed and launch smoke passed.
+
+## 2026-06-21 Release Hygiene Verification
+
+- Source baseline: current working tree after release hygiene cleanup, lint fixes,
+  and dependency constraint refresh.
+- Credential hygiene: untracked provider/API-key PDFs were moved out of the
+  source root into `data\tmp\private-credentials`; root `.gitignore` now ignores
+  matching local credential PDF exports.
+- Release dependency install: `.\.venv\Scripts\python.exe -m pip install -c constraints\windows-release-py310.txt -e ".[dev,packaging,offline-ai,gpu,audio-separation,audit]"` passed.
+- Dependency consistency: `.\.venv\Scripts\python.exe -m pip check` passed.
+- Lint: `.\.venv\Scripts\python.exe -m ruff check .` passed.
+- Unit/integration tests: `.\.venv\Scripts\python.exe -m pytest` passed, 732 tests.
+- Runtime Doctor: `.\.venv\Scripts\python.exe .\scripts\runtime_doctor.py --ci`
+  passed with required package, FFmpeg/ffplay, Tesseract, LibreOffice, local
+  model folders, and tessdata checks available.
+- Accepted advisory review: `.\scripts\audit_dependencies.ps1 -ReviewAcceptedVulnerabilities`
+  reports only `CVE-2025-69872` for transitive `diskcache` via
+  `llama-cpp-python`; see `docs\dependency_audit.md`.
+- Portable launch smoke: `dist\portable\AI Player Lite\AI Player\AI Player.exe`
+  stayed running for 8 seconds and was stopped after verification.
+- Note: this pass did not rebuild the portable artifact; it smoke-launched the
+  existing artifact after source/runtime hygiene checks.
+
 ## 2026-06-03 URL Flow Refactor Verification
 
 - Source baseline: current working tree after URL retry/fallback helper

@@ -7,10 +7,12 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
     QSlider,
     QStyle,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -133,6 +135,24 @@ class PlayerUiMixin:
         label.setMinimumWidth(54)
         label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         return label
+
+    @staticmethod
+    def _api_key_status_label() -> QLabel:
+        label = QLabel("")
+        label.setObjectName("apiKeyStatusLabel")
+        label.setWordWrap(True)
+        label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        return label
+
+    @staticmethod
+    def _api_key_control(edit: QLineEdit, status_label: QLabel) -> QWidget:
+        control = QWidget()
+        layout = QVBoxLayout(control)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
+        layout.addWidget(edit)
+        layout.addWidget(status_label)
+        return control
 
     @staticmethod
     def _slider_row(slider: QSlider, value_label: QLabel) -> QWidget:

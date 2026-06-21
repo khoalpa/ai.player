@@ -13,3 +13,9 @@ data/tmp/
 data/config/
 models/
 ai_player/models/
+
+# Local credential exports.
+/API key*.pdf
+/API Keys*.pdf
+/AssemblyAI*.pdf
+/Tài khoản*.pdf

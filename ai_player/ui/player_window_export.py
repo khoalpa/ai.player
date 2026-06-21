@@ -1,18 +1,31 @@
 from __future__ import annotations
 
+import json
 import math
+from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QHBoxLayout,
+    QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMenu,
     QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QTextEdit,
     QVBoxLayout,
 )
 
@@ -21,11 +34,14 @@ from ai_player.ui.export_progress_dialog import ExportProgressDialog
 from ai_player.ui.player_window_utils import repair_mojibake as _repair_mojibake
 from ai_player.ui.player_window_utils import safe_native_dubbing_config as _safe_native_dubbing_config
 from ai_player.workers.export_worker import (
+    STAGED_EXPORT_STAGE_LABEL_KEYS,
+    STAGED_EXPORT_STAGES,
     DocumentReviewExportWorker,
     DubbingExportWorker,
     ExportRange,
     StagedDubbingExportWorker,
 )
+from ai_player.workers.staged_export_utils import StagedExportPaths
 
 
 class PlayerExportMixin:
@@ -141,6 +157,9 @@ class PlayerExportMixin:
         export_range = self._choose_export_range()
         if export_range is None:
             return
+        stage_dialog = _StagedExportStageDialog(self._tr, Path(output_dir), self)
+        if stage_dialog.exec() != QDialog.Accepted:
+            return
 
         self._pause_active_source()
         self._stop_dubbing()
@@ -151,6 +170,10 @@ class PlayerExportMixin:
             output_dir,
             export_config,
             export_range,
+            stage_dialog.start_stage(),
+            stage_dialog.end_stage(),
+            stage_dialog.force_stage(),
+            stage_dialog.artifact_overrides(),
             self,
         )
         self._start_export_worker(worker)
@@ -278,6 +301,525 @@ class PlayerExportMixin:
         if dialog.exec() != QDialog.Accepted:
             return None
         return dialog.export_range()
+
+
+class _StagedExportStageDialog(QDialog):
+    _ARTIFACT_LABEL_KEYS = {
+        "source_video": "staged_export_artifact_source_video",
+        "source_full": "staged_export_artifact_source_full",
+        "source_srt": "staged_export_artifact_source_srt",
+        "words_json": "staged_export_artifact_words_json",
+        "target_srt": "staged_export_artifact_target_srt",
+        "source_voice": "staged_export_artifact_source_voice",
+        "background": "staged_export_artifact_background",
+        "tts_dir": "staged_export_artifact_tts_dir",
+        "target_voice": "staged_export_artifact_target_voice",
+        "final_mix": "staged_export_artifact_final_mix",
+        "final_video": "staged_export_artifact_final_video",
+    }
+    _ARTIFACT_FILTERS = {
+        "source_video": "MP4 video (*.mp4);;All files (*.*)",
+        "source_full": "WAV audio (*.wav);;All files (*.*)",
+        "source_srt": "Subtitle files (*.srt);;All files (*.*)",
+        "words_json": "JSON files (*.json);;All files (*.*)",
+        "target_srt": "Subtitle files (*.srt);;All files (*.*)",
+        "source_voice": "WAV audio (*.wav);;All files (*.*)",
+        "background": "WAV audio (*.wav);;All files (*.*)",
+        "target_voice": "WAV audio (*.wav);;All files (*.*)",
+        "final_mix": "WAV audio (*.wav);;All files (*.*)",
+        "final_video": "MP4 video (*.mp4);;All files (*.*)",
+    }
+    _OVERRIDABLE_ARTIFACTS = {
+        "source_full",
+        "source_srt",
+        "words_json",
+        "target_srt",
+        "source_voice",
+        "background",
+        "tts_dir",
+        "target_voice",
+        "final_mix",
+        "final_video",
+    }
+    _STAGE_OUTPUTS = {
+        "source_audio_extracted": ("source_full",),
+        "source_transcribed": ("source_srt", "words_json"),
+        "target_subtitles_ready": ("target_srt",),
+        "source_voice_filtered": ("source_voice", "background"),
+        "target_voice_segments_ready": ("tts_dir",),
+        "target_voice_aligned": ("target_voice",),
+        "final_mix_ready": ("final_mix",),
+        "dubbed_video_ready": ("final_video",),
+    }
+    _STAGE_REQUIREMENTS = {
+        "source_audio_extracted": (),
+        "source_transcribed": ("source_full",),
+        "target_subtitles_ready": ("source_srt",),
+        "source_voice_filtered": ("source_full",),
+        "target_voice_segments_ready": ("target_srt", "source_voice"),
+        "target_voice_aligned": ("tts_dir",),
+        "final_mix_ready": ("background", "target_voice"),
+        "dubbed_video_ready": ("source_video", "final_mix"),
+    }
+
+    def __init__(self, tr, output_dir: Path, parent=None) -> None:
+        super().__init__(parent)
+        self._tr = tr
+        self._output_dir = output_dir
+        self._paths = StagedExportPaths.from_output_dir(output_dir)
+        self._manifest = self._read_manifest()
+        self._artifact_overrides = self._read_artifact_overrides()
+        self._paths = self._paths_with_overrides()
+        self.setWindowTitle(self._tr("staged_export_stage_dialog_title"))
+        self.resize(760, 540)
+
+        layout = QVBoxLayout(self)
+        intro = QLabel(self._tr("staged_export_stage_dialog_intro"), self)
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel(self._tr("staged_export_preset"), self))
+        self._preset_combo = QComboBox(self)
+        self._add_presets()
+        preset_row.addWidget(self._preset_combo, 1)
+        self._refresh_button = QPushButton(self._tr("staged_export_check_artifacts"), self)
+        self._open_folder_button = QPushButton(self._tr("staged_export_open_folder"), self)
+        self._manifest_button = QPushButton(self._tr("staged_export_view_manifest"), self)
+        preset_row.addWidget(self._refresh_button)
+        preset_row.addWidget(self._open_folder_button)
+        preset_row.addWidget(self._manifest_button)
+        layout.addLayout(preset_row)
+
+        body = QHBoxLayout()
+        self._stage_list = QListWidget(self)
+        self._stage_list.setMinimumWidth(300)
+        body.addWidget(self._stage_list, 1)
+
+        right = QVBoxLayout()
+        form = QFormLayout()
+        self._start_combo = QComboBox(self)
+        self._end_combo = QComboBox(self)
+        for stage in STAGED_EXPORT_STAGES:
+            label = self._stage_label(stage)
+            self._start_combo.addItem(label, stage)
+            self._end_combo.addItem(label, stage)
+        form.addRow(self._tr("staged_export_start_stage"), self._start_combo)
+        form.addRow(self._tr("staged_export_end_stage"), self._end_combo)
+        right.addLayout(form)
+
+        self._force_check = QCheckBox(self._tr("staged_export_force_stage"), self)
+        self._force_check.setChecked(True)
+        self._force_hint = QLabel(self._tr("staged_export_force_stage_hint"), self)
+        self._force_hint.setWordWrap(True)
+        right.addWidget(self._force_check)
+        right.addWidget(self._force_hint)
+
+        self._tabs = QTabWidget(self)
+        self._file_table = QTableWidget(0, 6, self)
+        self._file_table.setHorizontalHeaderLabels(
+            [
+                self._tr("staged_export_file_role"),
+                self._tr("staged_export_file_type"),
+                self._tr("staged_export_file_path"),
+                self._tr("staged_export_file_status"),
+                self._tr("staged_export_file_choose"),
+                self._tr("staged_export_file_open"),
+            ]
+        )
+        self._file_table.verticalHeader().setVisible(False)
+        self._file_table.setWordWrap(False)
+        self._file_table.setColumnWidth(0, 120)
+        self._file_table.setColumnWidth(1, 170)
+        self._file_table.setColumnWidth(2, 360)
+        self._file_table.setColumnWidth(3, 130)
+        self._tabs.addTab(self._file_table, self._tr("staged_export_tab_files"))
+
+        self._detail = QTextEdit(self)
+        self._detail.setReadOnly(True)
+        self._tabs.addTab(self._detail, self._tr("staged_export_tab_detail"))
+
+        self._manifest_view = QTextEdit(self)
+        self._manifest_view.setReadOnly(True)
+        self._tabs.addTab(self._manifest_view, self._tr("staged_export_tab_manifest"))
+        right.addWidget(self._tabs, 1)
+        body.addLayout(right, 2)
+        layout.addLayout(body, 1)
+
+        self._buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        run_button = self._buttons.button(QDialogButtonBox.Ok)
+        cancel_button = self._buttons.button(QDialogButtonBox.Cancel)
+        if run_button is not None:
+            run_button.setText(self._tr("staged_export_run"))
+        if cancel_button is not None:
+            cancel_button.setText(self._tr("cancel"))
+        self._buttons.accepted.connect(self._accept_if_valid)
+        self._buttons.rejected.connect(self.reject)
+        layout.addWidget(self._buttons)
+
+        self._preset_combo.currentIndexChanged.connect(self._apply_selected_preset)
+        self._start_combo.currentIndexChanged.connect(self._sync_from_combos)
+        self._end_combo.currentIndexChanged.connect(self._sync_from_combos)
+        self._stage_list.currentRowChanged.connect(self._update_detail_for_row)
+        self._refresh_button.clicked.connect(self._refresh_artifacts)
+        self._open_folder_button.clicked.connect(self._open_output_folder)
+        self._manifest_button.clicked.connect(self._show_manifest)
+
+        self._refresh_stage_list()
+        self._preset_combo.setCurrentIndex(0)
+        self._apply_selected_preset()
+
+    def start_stage(self) -> str:
+        return str(self._start_combo.currentData())
+
+    def end_stage(self) -> str:
+        return str(self._end_combo.currentData())
+
+    def force_stage(self) -> bool:
+        return self._force_check.isChecked()
+
+    def artifact_overrides(self) -> dict[str, str]:
+        return {key: str(path) for key, path in self._artifact_overrides.items()}
+
+    def _add_presets(self) -> None:
+        suggested_start, suggested_end, suggested_force = self._suggested_range()
+        presets = [
+            (
+                self._tr("staged_export_preset_continue"),
+                suggested_start,
+                suggested_end,
+                suggested_force,
+            ),
+            (
+                self._tr("staged_export_preset_all"),
+                STAGED_EXPORT_STAGES[0],
+                STAGED_EXPORT_STAGES[-1],
+                True,
+            ),
+            (
+                self._tr("staged_export_preset_subtitles"),
+                STAGED_EXPORT_STAGES[0],
+                "target_subtitles_ready",
+                True,
+            ),
+            (
+                self._tr("staged_export_preset_voice"),
+                "target_voice_segments_ready",
+                "target_voice_aligned",
+                True,
+            ),
+            (
+                self._tr("staged_export_preset_mix_mp4"),
+                "final_mix_ready",
+                "dubbed_video_ready",
+                True,
+            ),
+            (
+                self._tr("staged_export_preset_mp4"),
+                "dubbed_video_ready",
+                "dubbed_video_ready",
+                True,
+            ),
+        ]
+        for label, start, end, force in presets:
+            self._preset_combo.addItem(label, (start, end, force))
+
+    def _suggested_range(self) -> tuple[str, str, bool]:
+        for stage in STAGED_EXPORT_STAGES:
+            status = self._stage_status(stage)
+            if status in {"missing", "stale", "blocked", "partial"}:
+                return stage, STAGED_EXPORT_STAGES[-1], True
+        return "dubbed_video_ready", "dubbed_video_ready", True
+
+    def _apply_selected_preset(self) -> None:
+        data = self._preset_combo.currentData()
+        if not isinstance(data, tuple) or len(data) != 3:
+            return
+        start, end, force = data
+        self._set_stage_range(str(start), str(end))
+        self._force_check.setChecked(bool(force))
+
+    def _set_stage_range(self, start_stage: str, end_stage: str) -> None:
+        self._start_combo.setCurrentIndex(max(0, STAGED_EXPORT_STAGES.index(start_stage)))
+        self._end_combo.setCurrentIndex(max(0, STAGED_EXPORT_STAGES.index(end_stage)))
+        self._sync_stage_selection()
+
+    def _sync_from_combos(self) -> None:
+        self._sync_stage_selection()
+
+    def _sync_stage_selection(self) -> None:
+        start_index = self._start_combo.currentIndex()
+        end_index = self._end_combo.currentIndex()
+        for row in range(self._stage_list.count()):
+            item = self._stage_list.item(row)
+            stage = str(item.data(32))
+            stage_index = STAGED_EXPORT_STAGES.index(stage)
+            selected = start_index <= stage_index <= end_index
+            prefix = "> " if selected else "  "
+            item.setText(prefix + self._stage_item_text(stage))
+        if 0 <= start_index < self._stage_list.count():
+            self._stage_list.setCurrentRow(start_index)
+
+    def _refresh_artifacts(self) -> None:
+        self._paths = StagedExportPaths.from_output_dir(self._output_dir)
+        self._manifest = self._read_manifest()
+        self._artifact_overrides = self._read_artifact_overrides()
+        self._paths = self._paths_with_overrides()
+        self._refresh_stage_list()
+        self._sync_stage_selection()
+
+    def _refresh_stage_list(self) -> None:
+        self._stage_list.clear()
+        for stage in STAGED_EXPORT_STAGES:
+            item = QListWidgetItem(self._stage_item_text(stage))
+            item.setData(32, stage)
+            item.setToolTip(self._stage_detail_text(stage))
+            self._stage_list.addItem(item)
+
+    def _stage_item_text(self, stage: str) -> str:
+        index = STAGED_EXPORT_STAGES.index(stage) + 1
+        return f"{index}. {self._stage_label(stage)} - {self._status_label(self._stage_status(stage))}"
+
+    def _stage_label(self, stage: str) -> str:
+        label_key = STAGED_EXPORT_STAGE_LABEL_KEYS.get(stage, stage)
+        return self._tr(label_key)
+
+    def _stage_status(self, stage: str) -> str:
+        manifest_stage = str(self._manifest.get("stage") or "")
+        manifest_status = str(self._manifest.get("status") or "")
+        if stage == manifest_stage and manifest_status in {"cancelled", "partial", "running"}:
+            return "partial"
+        requirements = self._paths_for_names(self._STAGE_REQUIREMENTS.get(stage, ()))
+        outputs = self._paths_for_names(self._STAGE_OUTPUTS.get(stage, ()))
+        if any(not self._artifact_ready(path) for path in requirements):
+            return "blocked"
+        if not outputs or any(not self._artifact_ready(path) for path in outputs):
+            return "missing"
+        if requirements and outputs:
+            latest_input = max((path.stat().st_mtime for path in requirements if path.exists()), default=0.0)
+            oldest_output = min((path.stat().st_mtime for path in outputs if path.exists()), default=0.0)
+            if latest_input > oldest_output:
+                return "stale"
+        return "ready"
+
+    def _status_label(self, status: str) -> str:
+        return self._tr(f"staged_export_status_{status}")
+
+    def _paths_for_names(self, names: tuple[str, ...]) -> list[Path]:
+        return [self._artifact_path(name) for name in names]
+
+    def _artifact_path(self, name: str) -> Path:
+        override = self._artifact_overrides.get(name)
+        if override is not None:
+            return override
+        if name == "source_video":
+            return Path(str(self._manifest.get("source_video") or ""))
+        return Path(getattr(self._paths, name))
+
+    def _paths_with_overrides(self) -> StagedExportPaths:
+        path_overrides = {
+            key: path
+            for key, path in self._artifact_overrides.items()
+            if key != "source_video"
+        }
+        if not path_overrides:
+            return self._paths
+        return replace(self._paths, **path_overrides)
+
+    def _artifact_ready(self, path: Path) -> bool:
+        if path.is_dir():
+            return any(child.name.endswith("-aligned.wav") for child in path.glob("*-aligned.wav"))
+        return path.exists() and path.stat().st_size > 0
+
+    def _update_detail_for_row(self, row: int) -> None:
+        if row < 0:
+            return
+        item = self._stage_list.item(row)
+        if item is None:
+            return
+        stage = str(item.data(32))
+        self._detail.setPlainText(self._stage_detail_text(stage))
+        self._refresh_file_table(stage)
+        self._refresh_manifest_view()
+
+    def _refresh_file_table(self, stage: str) -> None:
+        rows = self._file_rows(stage)
+        self._file_table.setRowCount(len(rows))
+        for row, (role, artifact_name) in enumerate(rows):
+            path = self._artifact_path(artifact_name)
+            self._set_table_item(row, 0, role)
+            self._set_table_item(row, 1, self._artifact_label(artifact_name))
+            self._set_table_item(row, 2, str(path))
+            self._set_table_item(row, 3, self._artifact_status_text(path))
+
+            choose_button = QPushButton(self._tr("staged_export_file_choose"), self)
+            choose_button.setEnabled(artifact_name in self._OVERRIDABLE_ARTIFACTS or artifact_name == "source_video")
+            choose_button.clicked.connect(
+                lambda _checked=False, name=artifact_name, file_role=role: self._choose_artifact(name, file_role)
+            )
+            self._file_table.setCellWidget(row, 4, choose_button)
+
+            open_button = QPushButton(self._tr("staged_export_file_open"), self)
+            open_button.setEnabled(bool(str(path)) and path.exists())
+            open_button.clicked.connect(lambda _checked=False, selected=path: self._open_artifact(selected))
+            self._file_table.setCellWidget(row, 5, open_button)
+
+    def _set_table_item(self, row: int, column: int, text: str) -> None:
+        item = QTableWidgetItem(text)
+        item.setToolTip(text)
+        self._file_table.setItem(row, column, item)
+
+    def _file_rows(self, stage: str) -> list[tuple[str, str]]:
+        rows: list[tuple[str, str]] = []
+        for name in self._STAGE_REQUIREMENTS.get(stage, ()):
+            rows.append((self._tr("staged_export_file_input"), name))
+        for name in self._STAGE_OUTPUTS.get(stage, ()):
+            rows.append((self._tr("staged_export_file_output"), name))
+        return rows
+
+    def _artifact_label(self, name: str) -> str:
+        return self._tr(self._ARTIFACT_LABEL_KEYS.get(name, name))
+
+    def _artifact_status_text(self, path: Path) -> str:
+        if self._artifact_ready(path):
+            summary = self._artifact_summary(path)
+            if summary:
+                return f"{self._tr('staged_export_artifact_exists')} - {summary}"
+            return self._tr("staged_export_artifact_exists")
+        return self._tr("staged_export_artifact_missing")
+
+    def _artifact_summary(self, path: Path) -> str:
+        try:
+            if path.is_dir():
+                count = sum(1 for child in path.glob("*-aligned.wav"))
+                return f"{count} aligned WAV"
+            size = path.stat().st_size
+        except OSError:
+            return ""
+        if size >= 1024 * 1024:
+            return f"{size / (1024 * 1024):.1f} MB"
+        if size >= 1024:
+            return f"{size / 1024:.1f} KB"
+        return f"{size} B"
+
+    def _choose_artifact(self, artifact_name: str, role: str) -> None:
+        current = self._artifact_path(artifact_name)
+        if artifact_name == "tts_dir":
+            selected = QFileDialog.getExistingDirectory(
+                self,
+                self._artifact_label(artifact_name),
+                str(current if current.exists() else self._output_dir),
+            )
+            if not selected:
+                return
+            self._set_artifact_override(artifact_name, Path(selected))
+            return
+
+        if role == self._tr("staged_export_file_output"):
+            selected, _ = QFileDialog.getSaveFileName(
+                self,
+                self._artifact_label(artifact_name),
+                str(current),
+                self._ARTIFACT_FILTERS.get(artifact_name, "All files (*.*)"),
+            )
+        else:
+            selected, _ = QFileDialog.getOpenFileName(
+                self,
+                self._artifact_label(artifact_name),
+                str(current.parent if current.parent.exists() else self._output_dir),
+                self._ARTIFACT_FILTERS.get(artifact_name, "All files (*.*)"),
+            )
+        if selected:
+            self._set_artifact_override(artifact_name, Path(selected))
+
+    def _set_artifact_override(self, artifact_name: str, path: Path) -> None:
+        self._artifact_overrides[artifact_name] = path
+        self._paths = StagedExportPaths.from_output_dir(self._output_dir)
+        self._paths = self._paths_with_overrides()
+        self._refresh_stage_list()
+        self._sync_stage_selection()
+
+    def _open_artifact(self, path: Path) -> None:
+        target = path if path.exists() else path.parent
+        if target:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
+
+    def _stage_detail_text(self, stage: str) -> str:
+        lines = [
+            self._stage_label(stage),
+            f"{self._tr('staged_export_detail_status')}: {self._status_label(self._stage_status(stage))}",
+            "",
+            self._tr("staged_export_detail_requires"),
+            *self._artifact_lines(self._paths_for_names(self._STAGE_REQUIREMENTS.get(stage, ()))),
+            "",
+            self._tr("staged_export_detail_outputs"),
+            *self._artifact_lines(self._paths_for_names(self._STAGE_OUTPUTS.get(stage, ()))),
+        ]
+        if self._manifest:
+            lines.extend(
+                [
+                    "",
+                    self._tr("staged_export_detail_manifest"),
+                    f"{self._tr('staged_export_detail_manifest_status')}: {self._manifest.get('status', '')}",
+                    f"{self._tr('staged_export_detail_manifest_stage')}: {self._manifest.get('stage', '')}",
+                ]
+            )
+        return "\n".join(lines)
+
+    def _artifact_lines(self, paths: list[Path]) -> list[str]:
+        if not paths:
+            return [f"- {self._tr('staged_export_detail_none')}"]
+        lines: list[str] = []
+        for path in paths:
+            state = self._tr("staged_export_artifact_exists") if self._artifact_ready(path) else self._tr(
+                "staged_export_artifact_missing"
+            )
+            lines.append(f"- {state}: {path}")
+        return lines
+
+    def _show_manifest(self) -> None:
+        self._refresh_manifest_view()
+        self._tabs.setCurrentWidget(self._manifest_view)
+
+    def _refresh_manifest_view(self) -> None:
+        if not self._paths.manifest.exists():
+            self._manifest_view.setPlainText(self._tr("staged_export_manifest_missing"))
+            return
+        try:
+            self._manifest_view.setPlainText(self._paths.manifest.read_text(encoding="utf-8"))
+        except OSError as exc:
+            self._manifest_view.setPlainText(str(exc))
+
+    def _open_output_folder(self) -> None:
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._output_dir)))
+
+    def _read_manifest(self) -> dict[str, object]:
+        try:
+            data = json.loads(self._paths.manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _read_artifact_overrides(self) -> dict[str, Path]:
+        raw = self._manifest.get("artifact_overrides")
+        if not isinstance(raw, dict):
+            return {}
+        overrides: dict[str, Path] = {}
+        for key, value in raw.items():
+            if key in self._OVERRIDABLE_ARTIFACTS or key == "source_video":
+                text = str(value or "").strip()
+                if text:
+                    overrides[key] = Path(text)
+        return overrides
+
+    def _accept_if_valid(self) -> None:
+        start_index = self._start_combo.currentIndex()
+        end_index = self._end_combo.currentIndex()
+        if start_index > end_index:
+            QMessageBox.warning(self, self.windowTitle(), self._tr("staged_export_stage_invalid"))
+            return
+        self.accept()
 
 
 class _ExportRangeDialog(QDialog):

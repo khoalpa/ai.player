@@ -4,7 +4,7 @@ import re
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, QUrl
-from PySide6.QtGui import QColor, QKeySequence, QPainter, QPalette, QShortcut, QTextDocument
+from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QPalette, QShortcut, QTextDocument
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -685,6 +685,11 @@ class PlayerLayoutMixin:
         )
         self._open_file_button.setObjectName("sourceButton")
         self._open_file_button.clicked.connect(self._open_video)
+        self._set_control_tooltip(self._open_file_button, "open_video_tooltip")
+        self._open_video_with_subtitle_action = QAction(self._tr("open_video_with_subtitle"), self)
+        self._open_video_with_subtitle_action.triggered.connect(self._open_video_with_subtitle)
+        self._open_file_button.addAction(self._open_video_with_subtitle_action)
+        self._open_file_button.setContextMenuPolicy(Qt.ActionsContextMenu)
         self._open_url_button = self._make_button(
             "open_url",
             self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
@@ -1294,6 +1299,7 @@ class PlayerLayoutMixin:
         self._asr_api_key_edit = QLineEdit(self._config.asr_api_key)
         self._asr_api_key_edit.setPlaceholderText(self._tr("asr_api_key_placeholder"))
         self._asr_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._asr_api_key_status = self._api_key_status_label()
 
         self._ocr_provider_combo = QComboBox()
         self._compact_combo(self._ocr_provider_combo)
@@ -1315,6 +1321,7 @@ class PlayerLayoutMixin:
         self._ocr_api_key_edit = QLineEdit(self._config.ocr_api_key)
         self._ocr_api_key_edit.setPlaceholderText(self._tr("ocr_api_key_placeholder"))
         self._ocr_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._ocr_api_key_status = self._api_key_status_label()
         self._ocr_api_region_edit = QLineEdit(self._config.ocr_api_region)
         self._ocr_api_region_edit.setPlaceholderText(self._tr("ocr_api_region_placeholder"))
 
@@ -1348,6 +1355,7 @@ class PlayerLayoutMixin:
         self._translator_api_key_edit = QLineEdit(self._config.translator_api_key)
         self._translator_api_key_edit.setPlaceholderText(self._tr("translator_api_key_placeholder"))
         self._translator_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._translator_api_key_status = self._api_key_status_label()
         self._translator_api_region_edit = QLineEdit(self._config.translator_api_region)
         self._translator_api_region_edit.setPlaceholderText(self._tr("translator_api_region_placeholder"))
         self._preserve_terms_check = QCheckBox(self._tr("keep_terms"))
@@ -1416,9 +1424,11 @@ class PlayerLayoutMixin:
         self._tts_api_key_edit = QLineEdit(self._config.tts_api_key)
         self._tts_api_key_edit.setPlaceholderText(self._tr("tts_api_key_placeholder"))
         self._tts_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._tts_api_key_status = self._api_key_status_label()
         self._tts_api_secret_edit = QLineEdit(self._config.tts_api_secret)
         self._tts_api_secret_edit.setPlaceholderText(self._tr("tts_api_secret_placeholder"))
         self._tts_api_secret_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._tts_api_secret_status = self._api_key_status_label()
         self._tts_api_region_edit = QLineEdit(self._config.tts_api_region)
         self._tts_api_region_edit.setPlaceholderText(self._tr("tts_api_region_placeholder"))
         self._tts_model_edit = QLineEdit(self._config.tts_model)
@@ -1477,6 +1487,7 @@ class PlayerLayoutMixin:
         self._speaker_gender_api_key_edit = QLineEdit(self._config.speaker_gender_api_key)
         self._speaker_gender_api_key_edit.setPlaceholderText(self._tr("speaker_gender_api_key_placeholder"))
         self._speaker_gender_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._speaker_gender_api_key_status = self._api_key_status_label()
         self._speaker_gender_timeout_slider, self._speaker_gender_timeout_value = self._labeled_slider(
             minimum=3,
             maximum=120,
@@ -1639,6 +1650,7 @@ class PlayerLayoutMixin:
         self._transcript_cleanup_api_key_edit = QLineEdit(self._config.transcript_cleanup_api_key)
         self._transcript_cleanup_api_key_edit.setPlaceholderText(self._tr("cleanup_api_key_placeholder"))
         self._transcript_cleanup_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._transcript_cleanup_api_key_status = self._api_key_status_label()
         self._cleanup_timeout_slider, self._cleanup_timeout_value = self._labeled_slider(
             minimum=1,
             maximum=120,
@@ -1863,7 +1875,7 @@ class PlayerLayoutMixin:
         asr_grid.addWidget(self._field_label("asr_api_base"), 2, 0)
         asr_grid.addWidget(self._asr_api_base_edit, 2, 1)
         asr_grid.addWidget(self._field_label("asr_api_key"), 3, 0)
-        asr_grid.addWidget(self._asr_api_key_edit, 3, 1)
+        asr_grid.addWidget(self._api_key_control(self._asr_api_key_edit, self._asr_api_key_status), 3, 1)
         asr_grid.addWidget(self._field_label("whisper_device"), 4, 0)
         asr_grid.addWidget(self._whisper_device_combo, 4, 1)
         asr_grid.addWidget(self._field_label("whisper_compute"), 5, 0)
@@ -1883,7 +1895,7 @@ class PlayerLayoutMixin:
         ocr_grid.addWidget(self._field_label("ocr_api_base"), 2, 0)
         ocr_grid.addWidget(self._ocr_api_base_edit, 2, 1)
         ocr_grid.addWidget(self._field_label("ocr_api_key"), 3, 0)
-        ocr_grid.addWidget(self._ocr_api_key_edit, 3, 1)
+        ocr_grid.addWidget(self._api_key_control(self._ocr_api_key_edit, self._ocr_api_key_status), 3, 1)
         ocr_grid.addWidget(self._field_label("ocr_api_region"), 4, 0)
         ocr_grid.addWidget(self._ocr_api_region_edit, 4, 1)
         ocr_grid.addWidget(self._field_label("ocr_timeout"), 5, 0)
@@ -1916,7 +1928,9 @@ class PlayerLayoutMixin:
         translation_grid.addWidget(self._field_label("translator_api_base"), 3, 0)
         translation_grid.addWidget(self._translator_api_base_edit, 3, 1)
         translation_grid.addWidget(self._field_label("translator_api_key"), 4, 0)
-        translation_grid.addWidget(self._translator_api_key_edit, 4, 1)
+        translation_grid.addWidget(
+            self._api_key_control(self._translator_api_key_edit, self._translator_api_key_status), 4, 1
+        )
         translation_grid.addWidget(self._field_label("translator_api_region"), 5, 0)
         translation_grid.addWidget(self._translator_api_region_edit, 5, 1)
         translation_grid.addWidget(self._field_label("translation_max_tokens"), 6, 0)
@@ -1968,9 +1982,11 @@ class PlayerLayoutMixin:
         tts_advanced_grid.addWidget(self._field_label("tts_api_base"), 5, 0)
         tts_advanced_grid.addWidget(self._tts_api_base_edit, 5, 1)
         tts_advanced_grid.addWidget(self._field_label("tts_api_key"), 6, 0)
-        tts_advanced_grid.addWidget(self._tts_api_key_edit, 6, 1)
+        tts_advanced_grid.addWidget(self._api_key_control(self._tts_api_key_edit, self._tts_api_key_status), 6, 1)
         tts_advanced_grid.addWidget(self._field_label("tts_api_secret"), 7, 0)
-        tts_advanced_grid.addWidget(self._tts_api_secret_edit, 7, 1)
+        tts_advanced_grid.addWidget(
+            self._api_key_control(self._tts_api_secret_edit, self._tts_api_secret_status), 7, 1
+        )
         tts_advanced_grid.addWidget(self._field_label("tts_api_region"), 8, 0)
         tts_advanced_grid.addWidget(self._tts_api_region_edit, 8, 1)
         tts_advanced_grid.addWidget(self._field_label("tts_model"), 9, 0)
@@ -1988,7 +2004,14 @@ class PlayerLayoutMixin:
         cleanup_grid.addWidget(self._field_label("cleanup_api_base"), 3, 0)
         cleanup_grid.addWidget(self._transcript_cleanup_api_base_edit, 3, 1)
         cleanup_grid.addWidget(self._field_label("cleanup_api_key"), 4, 0)
-        cleanup_grid.addWidget(self._transcript_cleanup_api_key_edit, 4, 1)
+        cleanup_grid.addWidget(
+            self._api_key_control(
+                self._transcript_cleanup_api_key_edit,
+                self._transcript_cleanup_api_key_status,
+            ),
+            4,
+            1,
+        )
         cleanup_grid.addWidget(self._field_label("cleanup_timeout"), 5, 0)
         cleanup_grid.addWidget(self._slider_row(self._cleanup_timeout_slider, self._cleanup_timeout_value), 5, 1)
 
@@ -2002,7 +2025,9 @@ class PlayerLayoutMixin:
         voice_ai_grid.addWidget(self._field_label("speaker_gender_api_base"), 2, 0)
         voice_ai_grid.addWidget(self._speaker_gender_api_base_edit, 2, 1)
         voice_ai_grid.addWidget(self._field_label("speaker_gender_api_key"), 3, 0)
-        voice_ai_grid.addWidget(self._speaker_gender_api_key_edit, 3, 1)
+        voice_ai_grid.addWidget(
+            self._api_key_control(self._speaker_gender_api_key_edit, self._speaker_gender_api_key_status), 3, 1
+        )
         voice_ai_grid.addWidget(self._field_label("speaker_gender_timeout"), 4, 0)
         voice_ai_grid.addWidget(
             self._slider_row(self._speaker_gender_timeout_slider, self._speaker_gender_timeout_value),

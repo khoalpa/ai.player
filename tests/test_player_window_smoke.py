@@ -33,7 +33,7 @@ from ai_player.ui.player_window_media import (
     _document_ms_value,
     _document_seconds_value,
 )
-from ai_player.ui.player_window_sources import _TelegramVideoChoiceDialog, _VideoUrlDialog
+from ai_player.ui.player_window_sources import _TelegramVideoChoiceDialog, _video_subtitle_candidates, _VideoUrlDialog
 from ai_player.workers.player_window_workers import TelegramContentTranslationWorker
 
 
@@ -236,6 +236,54 @@ def test_source_button_click_through_local_video_path(qapp, monkeypatch) -> None
         assert window._video_path == str(video_path)
         assert window._source_label.text() == str(video_path)
         assert window._selected_audio_source() == "original"
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_video_subtitle_candidates_prefers_same_stem_srt(tmp_path) -> None:
+    video_path = tmp_path / "lesson.mp4"
+    same_stem = tmp_path / "lesson.srt"
+    language_srt = tmp_path / "lesson.vi.srt"
+    nested_srt = tmp_path / "subtitles" / "lesson.srt"
+    video_path.write_bytes(b"")
+    same_stem.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
+    language_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nXin chao\n", encoding="utf-8")
+    nested_srt.parent.mkdir()
+    nested_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nNested\n", encoding="utf-8")
+
+    candidates = _video_subtitle_candidates(video_path)
+
+    assert candidates[:3] == [same_stem, language_srt, nested_srt]
+
+
+def test_source_button_attaches_matching_video_srt(qapp, tmp_path, monkeypatch) -> None:
+    window = PlayerWindow()
+    try:
+        video_path = tmp_path / "lesson.mp4"
+        subtitle_path = tmp_path / "lesson.srt"
+        video_path.write_bytes(b"")
+        subtitle_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
+        loaded_paths: list[str | None] = []
+
+        monkeypatch.setattr(
+            "ai_player.ui.player_window_sources.QFileDialog.getOpenFileName",
+            lambda *_args, **_kwargs: (str(video_path), ""),
+        )
+        monkeypatch.setattr(window, "_auto_select_video_aspect_ratio", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(window, "_load_current_video_for_playback", lambda: loaded_paths.append(window._video_path))
+        monkeypatch.setattr(window, "_show_video_output", lambda: None)
+        monkeypatch.setattr(window, "_save_settings", lambda: None)
+        monkeypatch.setattr(window, "_stop_dubbing", lambda: None)
+        monkeypatch.setattr(window, "_confirm_video_subtitle_path", lambda _video, candidates: candidates[0])
+
+        QTest.mouseClick(window._open_file_button, Qt.MouseButton.LeftButton)
+
+        assert loaded_paths == [str(video_path)]
+        assert window._video_path == str(video_path)
+        assert window._transcript_path_edit.text() == str(subtitle_path)
+        assert window._selected_audio_source() == "transcript"
+        assert window._transcript_path_edit.isEnabled()
         window._settings_save_timer.stop()
     finally:
         window.close()
@@ -1880,6 +1928,89 @@ def test_player_window_exposes_advanced_config_controls(qapp) -> None:
         assert window._vieneu_core_combo.findData("remote") == -1
         assert not window._vieneu_api_base_edit.isEnabled()
         assert window._vieneu_offline_check.isEnabled()
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_applies_online_lite_preset_controls(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window._transcript_cleanup_api_base_edit.setText("https://api.groq.com/openai/v1")
+        window._translator_api_base_edit.setText("https://old.example/v1")
+        window._asr_api_base_edit.setText("https://old-asr.example")
+
+        window._set_combo_data(window._performance_preset_combo, "online_lite")
+        window._apply_selected_performance_preset()
+        config = window._current_runtime_config()
+
+        assert config.asr_provider == "faster_whisper"
+        assert config.translator_provider == "nllb_ct2"
+        assert config.ocr_provider == "ocr_space"
+        assert config.transcript_cleanup_mode == "light"
+        assert config.transcript_cleanup_provider == "groq"
+        assert config.transcript_cleanup_model == "llama-3.1-8b-instant"
+        assert config.asr_api_base == ""
+        assert config.translator_api_base == ""
+        assert config.transcript_cleanup_api_base == ""
+
+        window._set_combo_data(window._asr_provider_combo, "assemblyai")
+        window._asr_api_key_edit.clear()
+        window._sync_api_key_statuses()
+        window._save_settings()
+        assert window._config.asr_provider == "assemblyai"
+        assert window._asr_provider_combo.currentData() == "assemblyai"
+        assert window._asr_api_key_edit.isEnabled()
+        assert window._asr_api_key_status.property("api_status_key") == "api_key_status_missing"
+        window._asr_api_key_edit.setText("assembly-key")
+        window._sync_api_key_statuses()
+        assert window._asr_api_key_status.property("api_status_key") == "api_key_status_saved"
+
+        window._set_combo_data(window._ocr_provider_combo, "ocr_space")
+        window._ocr_api_key_edit.clear()
+        window._sync_api_key_statuses()
+        assert window._ocr_api_key_status.property("api_status_key") == "api_key_status_demo"
+        window._ocr_api_key_edit.setText("ocr-key")
+        window._sync_api_key_statuses()
+        assert window._ocr_api_key_status.property("api_status_key") == "api_key_status_saved"
+
+        window._set_combo_data(window._translator_combo, "google_translate")
+        window._translator_api_key_edit.clear()
+        window._sync_api_key_statuses()
+        window._save_settings()
+        assert window._config.translator_provider == "google_translate"
+        assert window._translator_combo.currentData() == "google_translate"
+        assert window._translator_api_key_edit.isEnabled()
+        assert window._translator_api_key_status.property("api_status_key") == "api_key_status_missing"
+        window._translator_api_key_edit.setText("google-key")
+        window._sync_api_key_statuses()
+        assert window._translator_api_key_status.property("api_status_key") == "api_key_status_saved"
+
+        window._tts_api_key_edit.clear()
+        window._set_combo_data(window._tts_provider_combo, "azure_tts")
+        window._sync_api_key_statuses()
+        assert window._tts_api_key_status.property("api_status_key") == "api_key_status_missing"
+        window._tts_api_key_edit.setText("azure-key")
+        window._sync_api_key_statuses()
+        assert window._tts_api_key_status.property("api_status_key") == "api_key_status_saved"
+
+        window._set_combo_data(window._tts_provider_combo, "amazon_polly")
+        window._tts_api_secret_edit.clear()
+        window._sync_api_key_statuses()
+        assert window._tts_api_secret_status.property("api_status_key") == "api_secret_status_missing"
+
+        window._auto_voice_gender_check.setChecked(True)
+        window._set_combo_data(window._auto_voice_gender_mode_combo, "ai")
+        window._set_combo_data(window._speaker_gender_provider_combo, "huggingface_gender")
+        window._speaker_gender_api_key_edit.clear()
+        window._sync_api_key_statuses()
+        assert window._speaker_gender_api_key_status.property("api_status_key") == "api_key_status_missing"
+
+        window._set_combo_data(window._transcript_cleanup_mode_combo, "light")
+        window._set_combo_data(window._transcript_cleanup_provider_combo, "groq")
+        window._transcript_cleanup_api_key_edit.clear()
+        window._sync_api_key_statuses()
+        assert window._transcript_cleanup_api_key_status.property("api_status_key") == "api_key_status_missing"
         window._settings_save_timer.stop()
     finally:
         window.close()

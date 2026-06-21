@@ -21,6 +21,7 @@ from ai_player.core.secret_store import SecretStoreError, protect_text, reveal_t
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 TELEGRAM_BLACKLIST_FILENAME = "telegram_blacklist.json"
 SECRETS_FILENAME = "secrets.json"
+ONLINE_USER_CONFIG_FILENAME = "online_providers.local.json"
 RUNTIME_LOCAL_FILENAME = "runtime.local.json"
 RECENT_SOURCES_FILENAME = "recent_sources.json"
 TELEGRAM_STATE_FILENAME = "telegram_state.json"
@@ -67,6 +68,32 @@ TELEGRAM_STATE_SETTINGS = {
     "telegram_side_panel_visible",
     "telegram_side_panel_sizes",
 }
+ONLINE_USER_CONFIG_SETTINGS = {
+    "asr_api_base",
+    "asr_provider",
+    "asr_timeout_seconds",
+    "ocr_api_base",
+    "ocr_api_region",
+    "ocr_provider",
+    "ocr_timeout_seconds",
+    "speaker_gender_api_base",
+    "speaker_gender_model",
+    "speaker_gender_provider",
+    "speaker_gender_timeout_seconds",
+    "transcript_cleanup_api_base",
+    "transcript_cleanup_model",
+    "transcript_cleanup_provider",
+    "transcript_cleanup_timeout_seconds",
+    "translator_api_base",
+    "translator_api_region",
+    "translator_provider",
+    "translator_timeout_seconds",
+    "tts_api_base",
+    "tts_api_region",
+    "tts_model",
+    "tts_provider",
+    "tts_timeout_seconds",
+}
 RUNTIME_LOCAL_SETTINGS = {
     "capture_backend",
     "capture_microphone_device",
@@ -74,29 +101,11 @@ RUNTIME_LOCAL_SETTINGS = {
     "local_translation_device",
     "local_translation_model",
     "local_translation_offline",
-    "ocr_api_base",
-    "ocr_api_region",
     "ocr_model",
-    "ocr_timeout_seconds",
     "runtime_warmup_enabled",
     "runtime_warmup_translation",
     "runtime_warmup_tts",
     "runtime_warmup_whisper",
-    "speaker_gender_api_base",
-    "speaker_gender_provider",
-    "speaker_gender_timeout_seconds",
-    "speaker_gender_model",
-    "asr_api_base",
-    "asr_timeout_seconds",
-    "transcript_cleanup_api_base",
-    "transcript_cleanup_model",
-    "translator_api_base",
-    "translator_api_region",
-    "translator_timeout_seconds",
-    "tts_api_base",
-    "tts_api_region",
-    "tts_model",
-    "tts_timeout_seconds",
     "vieneu_tts_api_base",
     "vieneu_tts_backend",
     "vieneu_tts_core",
@@ -114,9 +123,11 @@ RUNTIME_LOCAL_SETTINGS = {
     "whisper_model",
     "whisper_offline",
 }
+RUNTIME_LOCAL_LEGACY_SETTINGS = RUNTIME_LOCAL_SETTINGS | ONLINE_USER_CONFIG_SETTINGS
 SPLIT_SETTINGS = (
     SECRET_SETTINGS
     | set(SECRET_PAYLOAD_KEYS.values())
+    | ONLINE_USER_CONFIG_SETTINGS
     | TELEGRAM_BLACKLIST_SETTINGS
     | RECENT_SOURCE_SETTINGS
     | TELEGRAM_STATE_SETTINGS
@@ -134,6 +145,10 @@ def telegram_blacklist_file_path():
 
 def secrets_file_path():
     return _config_file_path(SECRETS_FILENAME)
+
+
+def online_user_config_file_path():
+    return _config_file_path(ONLINE_USER_CONFIG_FILENAME)
 
 
 def runtime_local_file_path():
@@ -154,6 +169,7 @@ def load_app_config(base: AppConfig | None = None) -> AppConfig:
     legacy_blacklist = _telegram_blacklist_from_settings(data)
     secret_values = _load_secret_settings(data)
     data.update(_read_runtime_local())
+    data.update(_read_online_user_config())
     data.update(_read_recent_sources())
     data.update(_read_telegram_state())
     transient_settings = set(SESSION_ONLY_DEFAULTS) | SECRET_SETTINGS | set(SECRET_PAYLOAD_KEYS.values())
@@ -176,6 +192,7 @@ def load_app_config(base: AppConfig | None = None) -> AppConfig:
     for name, secret_value in secret_values.items():
         if not getattr(updated, name, "") and secret_value:
             updated = replace(updated, **{name: secret_value})
+    updated = _migrate_online_lite_without_keys(updated)
     return _with_telegram_blacklist(updated, legacy_blacklist)
 
 
@@ -258,11 +275,29 @@ def _migrate_default_vieneu_voices(data: dict[str, Any]) -> None:
             data[key] = new_voice
 
 
+def _migrate_online_lite_without_keys(config: AppConfig) -> AppConfig:
+    if config.performance_preset != "online_lite":
+        return config
+    asr_provider = str(config.asr_provider or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if asr_provider in {"assemblyai", "assembly_ai", "speechmatics"} and not str(config.asr_api_key or "").strip():
+        config = replace(config, asr_provider="faster_whisper", whisper_offline=True)
+    translator_provider = str(config.translator_provider or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if translator_provider in {"azure_translator", "google_translate", "deepl"}:
+        if not str(config.translator_api_key or "").strip():
+            config = replace(
+                config,
+                translator_provider="nllb_ct2",
+                local_translation_model=LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH,
+                local_translation_offline=True,
+            )
+    return config
+
+
 def save_app_config(config: AppConfig) -> None:
     config = _without_removed_vieneu_remote_config(config)
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     save_telegram_blacklist(config.telegram_blacklisted_item_keys, config.telegram_blacklisted_content_keys)
-    save_secret_settings(config)
+    save_online_user_config(config)
     save_runtime_local(config)
     save_recent_sources(config.video_url_recent_urls)
     save_telegram_state(config)
@@ -286,9 +321,14 @@ def save_telegram_blacklist(item_keys, content_keys) -> None:
 
 
 def save_secret_settings(config: AppConfig) -> None:
+    save_online_user_config(config)
+
+
+def save_online_user_config(config: AppConfig) -> None:
     payload = {"version": 1}
+    payload.update(_config_values(_without_removed_vieneu_remote_config(config), ONLINE_USER_CONFIG_SETTINGS))
     payload.update(_dump_secret_settings(config))
-    _write_json_object(secrets_file_path(), payload)
+    _write_json_object(online_user_config_file_path(), payload)
 
 
 def save_runtime_local(config: AppConfig) -> None:
@@ -370,7 +410,11 @@ def _telegram_blacklist_from_settings(data: dict[str, Any]) -> tuple[tuple[str, 
 
 
 def _read_runtime_local() -> dict[str, Any]:
-    return _read_split_settings(runtime_local_file_path(), RUNTIME_LOCAL_SETTINGS)
+    return _read_split_settings(runtime_local_file_path(), RUNTIME_LOCAL_LEGACY_SETTINGS)
+
+
+def _read_online_user_config() -> dict[str, Any]:
+    return _read_split_settings(online_user_config_file_path(), ONLINE_USER_CONFIG_SETTINGS)
 
 
 def _read_recent_sources() -> dict[str, Any]:
@@ -400,14 +444,20 @@ def _read_settings() -> dict[str, Any]:
 
 
 def _load_secret_settings(data: dict[str, Any]) -> dict[str, str]:
-    secret_data = _read_json_object(secrets_file_path())
-    payload_data = data if secret_data is None else secret_data
+    online_data = _read_json_object(online_user_config_file_path())
+    legacy_secret_data = _read_json_object(secrets_file_path())
+    payload_sources = [source for source in (online_data, legacy_secret_data, data) if source]
     values: dict[str, str] = {}
     for name, payload_key in SECRET_PAYLOAD_KEYS.items():
-        try:
-            values[name] = reveal_text(payload_data.get(payload_key))
-        except SecretStoreError as exc:
-            LOGGER.warning("Could not reveal saved secret setting %s: %s", name, exc)
+        for payload_data in payload_sources:
+            try:
+                value = reveal_text(payload_data.get(payload_key))
+            except SecretStoreError as exc:
+                LOGGER.warning("Could not reveal saved secret setting %s: %s", name, exc)
+                value = ""
+            if value:
+                values[name] = value
+                break
     return values
 
 
