@@ -303,3 +303,30 @@ def test_worker_lifecycle_state_tracks_worker_references_and_flags() -> None:
     assert state.telegram_translation_worker is worker
     assert state.pending_telegram_url == "https://t.me/demo"
     assert state.document_worker is worker
+
+
+def test_worker_lifecycle_state_controls_export_worker() -> None:
+    calls = []
+    worker = SimpleNamespace(stop=lambda keep_partial=False: calls.append(keep_partial))
+    other_worker = object()
+    state = WorkerLifecycleState()
+
+    state.begin_export(worker)
+
+    assert state.export_worker is worker
+    assert state.request_export_stop() is True
+    assert state.request_export_stop(keep_partial=True) is True
+    assert calls == [False, True]
+    assert state.finish_export(other_worker, terminal=False) is False
+    assert state.export_worker is worker
+    assert state.finish_export(worker, terminal=False) is True
+    assert state.export_worker is None
+    assert state.request_export_stop() is False
+
+
+def test_worker_lifecycle_state_keeps_terminal_export_from_cancelled_path() -> None:
+    worker = object()
+    state = WorkerLifecycleState(export_worker=worker)
+
+    assert state.finish_export(worker, terminal=True) is False
+    assert state.export_worker is None

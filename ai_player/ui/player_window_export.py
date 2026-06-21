@@ -219,7 +219,7 @@ class PlayerExportMixin:
         self.statusBar().showMessage(self._tr("status_document_export_running"))
 
     def _start_export_worker(self, worker) -> None:
-        self._export_worker = worker
+        self._worker_lifecycle_state.begin_export(worker)
         self._export_terminal = False
         worker.progress_changed.connect(self._export_progress_changed)
         worker.progress_percent.connect(self._export_progress_percent_changed)
@@ -249,19 +249,15 @@ class PlayerExportMixin:
             self._export_dialog.update_progress(value)
 
     def _cancel_export(self) -> None:
-        worker = self._export_worker
-        if worker is None:
+        if not self._worker_lifecycle_state.request_export_stop():
             return
-        worker.stop()
         self.statusBar().showMessage(self._tr("status_cancel_export"))
         if self._export_dialog is not None:
             self._export_dialog.update_status(self._tr("status_cancel_export_requested"))
 
     def _keep_partial_export(self) -> None:
-        worker = self._export_worker
-        if worker is None:
+        if not self._worker_lifecycle_state.request_export_stop(keep_partial=True):
             return
-        worker.stop(keep_partial=True)
         self.statusBar().showMessage(self._tr("status_keep_partial_export_requested"))
 
     def _export_finished(self, output_path: str) -> None:
@@ -286,13 +282,12 @@ class PlayerExportMixin:
         self.statusBar().showMessage(self._tr("status_export_stopped"))
 
     def _export_worker_finished(self, worker) -> None:
-        if self._export_worker is worker and not self._export_terminal:
+        cancelled = self._worker_lifecycle_state.finish_export(worker, terminal=self._export_terminal)
+        if cancelled:
             self._export_button.setEnabled(True)
             self.statusBar().showMessage(self._tr("status_cancel_export"))
             if self._export_dialog is not None:
                 self._export_dialog.mark_cancelled(self._tr("status_cancel_export"))
-        if self._export_worker is worker:
-            self._export_worker = None
         worker.deleteLater()
 
     def _choose_export_range(self) -> ExportRange | None:

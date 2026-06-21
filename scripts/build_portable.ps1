@@ -120,6 +120,34 @@ function Set-BuildAuthenticodeSignature {
     }
 }
 
+function Get-BuildSignableFiles {
+    param([string]$Root)
+
+    Get-ChildItem -LiteralPath $Root -Recurse -File |
+        Where-Object { $_.Extension -in @(".exe", ".dll", ".pyd") } |
+        Sort-Object FullName
+}
+
+function Set-BuildAuthenticodeSignatures {
+    param(
+        [string]$Root,
+        [System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate,
+        [string]$TimestampUrl
+    )
+
+    $SignableFiles = @(Get-BuildSignableFiles -Root $Root)
+    if (-not $Certificate) {
+        Write-Warning "No code-signing certificate was provided. $($SignableFiles.Count) PE files in the portable bundle will remain unsigned."
+        Write-Warning "Enterprise Application Control policies can block unsigned builds. Rerun with -RequireSignature and a certificate for release artifacts."
+        return
+    }
+
+    foreach ($File in $SignableFiles) {
+        Set-BuildAuthenticodeSignature -Path $File.FullName -Certificate $Certificate -TimestampUrl $TimestampUrl
+    }
+    Write-Output "Signed $($SignableFiles.Count) PE files under $Root."
+}
+
 function Assert-ValidAuthenticodeSignature {
     param([string]$Path)
 
@@ -127,6 +155,16 @@ function Assert-ValidAuthenticodeSignature {
     if ($Signature.Status -ne "Valid") {
         throw "Invalid or missing signature on $Path. Status: $($Signature.Status). $($Signature.StatusMessage)"
     }
+}
+
+function Assert-ValidAuthenticodeSignatures {
+    param([string]$Root)
+
+    $SignableFiles = @(Get-BuildSignableFiles -Root $Root)
+    foreach ($File in $SignableFiles) {
+        Assert-ValidAuthenticodeSignature -Path $File.FullName
+    }
+    Write-Output "Verified signatures for $($SignableFiles.Count) PE files under $Root."
 }
 
 if ($ListCodeSigningCerts) {
@@ -173,7 +211,10 @@ if (-not (Test-Path $AppDist)) {
 }
 
 $AppExe = Join-Path $AppDist "AI Player.exe"
-Set-BuildAuthenticodeSignature -Path $AppExe -Certificate $CodeSigningCertificate -TimestampUrl $TimestampServer
+if (-not (Test-Path $AppExe)) {
+    throw "PyInstaller did not create expected app executable: $AppExe"
+}
+Set-BuildAuthenticodeSignatures -Root $AppDist -Certificate $CodeSigningCertificate -TimestampUrl $TimestampServer
 
 Copy-Item -LiteralPath $AppDist -Destination $PortableRoot -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "README.md") -Destination $PortableRoot -Force
@@ -184,7 +225,10 @@ if (Test-Path (Join-Path $ProjectRoot "samples")) {
 
 $PortableExe = Join-Path $PortableRoot "AI Player\AI Player.exe"
 if ($RequireSignature) {
-    Assert-ValidAuthenticodeSignature -Path $PortableExe
+    if (-not (Test-Path $PortableExe)) {
+        throw "Portable executable is missing: $PortableExe"
+    }
+    Assert-ValidAuthenticodeSignatures -Root (Join-Path $PortableRoot "AI Player")
 }
 
 $InternalRoot = Join-Path $PortableRoot "AI Player\_internal"

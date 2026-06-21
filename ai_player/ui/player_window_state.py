@@ -263,3 +263,22 @@ class WorkerLifecycleState:
     telegram_translation_worker: object | None = None
     pending_telegram_url: str = ""
     document_worker: object | None = None
+
+    def begin_export(self, worker: object) -> None:
+        self.export_worker = worker
+
+    def request_export_stop(self, *, keep_partial: bool = False) -> bool:
+        worker = self.export_worker
+        if worker is None:
+            return False
+        stop = getattr(worker, "stop", None)
+        if not callable(stop):
+            return False
+        stop(keep_partial=keep_partial)
+        return True
+
+    def finish_export(self, worker: object, *, terminal: bool) -> bool:
+        if self.export_worker is not worker:
+            return False
+        self.export_worker = None
+        return not terminal

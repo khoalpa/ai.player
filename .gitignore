@@ -13,6 +13,7 @@ data/tmp/
 data/config/
 models/
 ai_player/models/
+ai-player-staged-dubbing/
 
 # Local credential exports.
 /API key*.pdf

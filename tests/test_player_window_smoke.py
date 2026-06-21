@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import QDialog, QFrame, QPushButton, QScrollArea, QSizePo
 from ai_player.core.config import LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH, LOCAL_TRANSLATION_MODEL_PATH, AppConfig
 from ai_player.services import document_reader
 from ai_player.services.document_reader import DocumentPage
+from ai_player.services.ffmpeg import probe_duration_seconds, run_ffmpeg
 from ai_player.services.telegram_channel import TelegramChannelVideo
 from ai_player.services.youtube_channel import YouTubeChannelItem
 from ai_player.ui.player_window import PlayerWindow
@@ -34,6 +36,8 @@ from ai_player.ui.player_window_media import (
     _document_seconds_value,
 )
 from ai_player.ui.player_window_sources import _TelegramVideoChoiceDialog, _video_subtitle_candidates, _VideoUrlDialog
+from ai_player.workers import export_worker
+from ai_player.workers.export_worker import ExportRange
 from ai_player.workers.player_window_workers import TelegramContentTranslationWorker
 
 
@@ -41,6 +45,38 @@ from ai_player.workers.player_window_workers import TelegramContentTranslationWo
 def disable_smoke_test_background_startups(monkeypatch) -> None:
     monkeypatch.setattr(PlayerWindow, "_start_runtime_warmup", lambda self: None)
     monkeypatch.setattr(PlayerWindow, "_start_telegram_worker", lambda self, *args, **kwargs: None)
+
+
+class _SmokeTTSProvider:
+    def synthesize(self, _text: str, output_path: Path, voice: str | None = None) -> None:
+        run_ffmpeg(
+            [
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=0.8",
+                "-ar",
+                44100,
+                "-ac",
+                2,
+                "-c:a",
+                "pcm_s16le",
+                "-y",
+                Path(output_path),
+            ]
+        )
+
+    def close(self) -> None:
+        pass
+
+
+def _wait_until(predicate, timeout_ms: int = 30000) -> None:
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        QTest.qWait(50)
+    raise AssertionError("Timed out waiting for GUI smoke condition")
 
 
 def test_player_window_constructs_offscreen(qapp) -> None:
@@ -236,6 +272,148 @@ def test_source_button_click_through_local_video_path(qapp, monkeypatch) -> None
         assert window._video_path == str(video_path)
         assert window._source_label.text() == str(video_path)
         assert window._selected_audio_source() == "original"
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_runs_transcript_audio_export_end_to_end(qapp, tmp_path, monkeypatch) -> None:
+    sample_video = Path("samples/demo-video.mp4").resolve()
+    if not sample_video.exists():
+        pytest.skip("sample video is not available")
+
+    transcript_path = tmp_path / "ui-export.srt"
+    transcript_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello from the UI export smoke.\n\n",
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "ui-export.wav"
+    window = PlayerWindow()
+    try:
+        window._video_path = str(sample_video)
+        window._config = AppConfig(
+            audio_source="transcript",
+            transcript_path=str(transcript_path),
+            translator_provider="none",
+            local_translation_offline=False,
+            tts_provider="vieneu",
+            vieneu_tts_offline=False,
+            export_video_quality="compact",
+        )
+        window._set_combo_data(window._audio_source_combo, "transcript")
+        window._transcript_path_edit.setText(str(transcript_path))
+
+        monkeypatch.setattr(
+            "ai_player.ui.player_window_export.QFileDialog.getSaveFileName",
+            lambda *_args, **_kwargs: (str(output_path), ""),
+        )
+        monkeypatch.setattr(window, "_choose_export_range", lambda: ExportRange(0.0, 1.3))
+        monkeypatch.setattr(window, "_pause_active_source", lambda: None)
+        monkeypatch.setattr(window, "_stop_dubbing", lambda: None)
+        monkeypatch.setattr(window, "_save_settings", lambda: None)
+        monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: _SmokeTTSProvider())
+        monkeypatch.setattr(export_worker, "_export_worker_count", lambda: 1)
+
+        window._export_dubbed_media("audio")
+
+        _wait_until(lambda: window._export_worker is None and output_path.exists())
+        assert output_path.exists()
+        assert probe_duration_seconds(output_path) >= 0.5
+        assert window._export_button.isEnabled()
+        window._settings_save_timer.stop()
+    finally:
+        if window._export_worker is not None:
+            window._export_worker.stop()
+            window._export_worker.wait(5000)
+        window.close()
+
+
+def test_player_window_starts_video_export_worker_from_ui(qapp, tmp_path, monkeypatch) -> None:
+    sample_video = Path("samples/demo-video.mp4").resolve()
+    output_path = tmp_path / "ui-export.mp4"
+    transcript_path = tmp_path / "ui-export.srt"
+    transcript_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello from the UI video export smoke.\n\n",
+        encoding="utf-8",
+    )
+    started = []
+    deleted = []
+
+    class _Signal:
+        def __init__(self) -> None:
+            self._callbacks = []
+
+        def connect(self, callback) -> None:
+            self._callbacks.append(callback)
+
+        def emit(self, *args) -> None:
+            for callback in list(self._callbacks):
+                callback(*args)
+
+    class _FakeExportWorker:
+        def __init__(self, video_path, path, export_kind, config, export_range, parent=None) -> None:
+            self.video_path = video_path
+            self.path = path
+            self.export_kind = export_kind
+            self.config = config
+            self.export_range = export_range
+            self.parent = parent
+            self.progress_changed = _Signal()
+            self.progress_percent = _Signal()
+            self.export_finished = _Signal()
+            self.partial_finished = _Signal()
+            self.failed = _Signal()
+            self.finished = _Signal()
+
+        def start(self) -> None:
+            started.append(self)
+            Path(self.path).write_bytes(b"fake mp4")
+            self.export_finished.emit(self.path)
+            self.finished.emit()
+
+        def stop(self, keep_partial: bool = False) -> None:
+            pass
+
+        def deleteLater(self) -> None:
+            deleted.append(self)
+
+    window = PlayerWindow()
+    try:
+        window._video_path = str(sample_video)
+        window._config = AppConfig(
+            audio_source="transcript",
+            transcript_path=str(transcript_path),
+            translator_provider="none",
+            local_translation_offline=False,
+            tts_provider="vieneu",
+            vieneu_tts_offline=False,
+            export_video_quality="compact",
+        )
+        window._set_combo_data(window._audio_source_combo, "transcript")
+        window._transcript_path_edit.setText(str(transcript_path))
+
+        monkeypatch.setattr(
+            "ai_player.ui.player_window_export.QFileDialog.getSaveFileName",
+            lambda *_args, **_kwargs: (str(output_path), ""),
+        )
+        monkeypatch.setattr("ai_player.ui.player_window_export.DubbingExportWorker", _FakeExportWorker)
+        monkeypatch.setattr(window, "_choose_export_range", lambda: ExportRange(0.0, 1.3))
+        monkeypatch.setattr(window, "_pause_active_source", lambda: None)
+        monkeypatch.setattr(window, "_stop_dubbing", lambda: None)
+        monkeypatch.setattr(window, "_save_settings", lambda: None)
+
+        window._export_dubbed_media("video")
+
+        assert len(started) == 1
+        assert started[0].video_path == str(sample_video)
+        assert started[0].path == str(output_path)
+        assert started[0].export_kind == "video"
+        assert started[0].export_range.start_seconds == 0.0
+        assert started[0].export_range.end_seconds == 1.3
+        assert output_path.exists()
+        assert window._export_worker is None
+        assert deleted == started
+        assert window._export_button.isEnabled()
         window._settings_save_timer.stop()
     finally:
         window.close()
