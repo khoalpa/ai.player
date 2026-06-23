@@ -225,6 +225,19 @@ def test_save_app_config_splits_online_provider_user_config(tmp_path, monkeypatc
     assert online_data["tts_provider"] == "amazon_polly"
     assert online_data["speaker_gender_provider"] == "huggingface_gender"
     assert online_data["asr_api_key_secret"] == {"scheme": "test", "value": "protected:asr-secret"}
+    assert online_data["asr_api_key_secrets"]["assemblyai"] == {"scheme": "test", "value": "protected:asr-secret"}
+    assert online_data["ocr_api_key_secrets"]["azure_vision"] == {"scheme": "test", "value": "protected:ocr-secret"}
+    assert online_data["translator_api_key_secrets"]["deepl"] == {"scheme": "test", "value": "protected:deepl-secret"}
+    assert online_data["transcript_cleanup_api_key_secrets"]["groq"] == {
+        "scheme": "test",
+        "value": "protected:cleanup-secret",
+    }
+    assert online_data["tts_api_key_secrets"]["amazon_polly"] == {"scheme": "test", "value": "protected:aws-access"}
+    assert online_data["tts_api_secret_secrets"]["amazon_polly"] == {"scheme": "test", "value": "protected:aws-secret"}
+    assert online_data["speaker_gender_api_key_secrets"]["huggingface_gender"] == {
+        "scheme": "test",
+        "value": "protected:hf-secret",
+    }
     assert online_data["tts_api_secret_secret"] == {"scheme": "test", "value": "protected:aws-secret"}
     assert not settings_store.secrets_file_path().exists()
 
@@ -241,6 +254,203 @@ def test_save_app_config_splits_online_provider_user_config(tmp_path, monkeypatc
     assert config.tts_api_secret == "aws-secret"
     assert config.speaker_gender_provider == "huggingface_gender"
     assert config.speaker_gender_api_key == "hf-secret"
+
+
+def test_asr_api_keys_are_saved_per_provider(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(
+        settings_store,
+        "protect_text",
+        lambda value: {"scheme": "test", "value": f"protected:{value}"},
+    )
+    monkeypatch.setattr(
+        settings_store,
+        "reveal_text",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
+        if isinstance(payload, dict)
+        else "",
+    )
+
+    settings_store.save_app_config(AppConfig(asr_provider="assemblyai", asr_api_key="assembly-key"))
+    settings_store.save_app_config(AppConfig(asr_provider="speechmatics", asr_api_key="speech-key"))
+
+    online_path = settings_store.online_user_config_file_path()
+    online_data = json.loads(online_path.read_text(encoding="utf-8"))
+
+    assert online_data["asr_api_key_secrets"] == {
+        "assemblyai": {"scheme": "test", "value": "protected:assembly-key"},
+        "speechmatics": {"scheme": "test", "value": "protected:speech-key"},
+    }
+    assert settings_store.load_app_config(AppConfig(asr_api_key="")).asr_api_key == "speech-key"
+
+    online_data["asr_provider"] = "assemblyai"
+    online_path.write_text(json.dumps(online_data), encoding="utf-8")
+
+    assert settings_store.load_app_config(AppConfig(asr_api_key="")).asr_api_key == "assembly-key"
+
+
+def test_asr_provider_map_prevents_wrong_legacy_key_fallback(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(
+        settings_store,
+        "reveal_text",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
+        if isinstance(payload, dict)
+        else "",
+    )
+    payload = {
+        "version": 1,
+        "asr_provider": "speechmatics",
+        "asr_api_key_secret": {"scheme": "test", "value": "protected:legacy-assembly-key"},
+        "asr_api_key_secrets": {
+            "assemblyai": {"scheme": "test", "value": "protected:assembly-key"},
+        },
+    }
+    settings_store.online_user_config_file_path().parent.mkdir(parents=True, exist_ok=True)
+    settings_store.online_user_config_file_path().write_text(json.dumps(payload), encoding="utf-8")
+
+    config = settings_store.load_app_config(AppConfig(asr_api_key=""))
+
+    assert config.asr_provider == "speechmatics"
+    assert config.asr_api_key == ""
+
+
+def test_auto_asr_key_uses_inferred_provider_bucket(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(
+        settings_store,
+        "protect_text",
+        lambda value: {"scheme": "test", "value": f"protected:{value}"},
+    )
+    monkeypatch.setattr(
+        settings_store,
+        "reveal_text",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
+        if isinstance(payload, dict)
+        else "",
+    )
+
+    settings_store.save_app_config(
+        AppConfig(
+            asr_provider="auto",
+            asr_api_base="https://asr.api.speechmatics.com/v2",
+            asr_api_key="speech-key",
+        )
+    )
+    online_data = json.loads(settings_store.online_user_config_file_path().read_text(encoding="utf-8"))
+
+    assert "auto" not in online_data["asr_api_key_secrets"]
+    assert online_data["asr_api_key_secrets"]["speechmatics"] == {
+        "scheme": "test",
+        "value": "protected:speech-key",
+    }
+    assert settings_store.load_app_config(AppConfig(asr_api_key="")).asr_api_key == "speech-key"
+
+
+def test_provider_api_keys_are_saved_per_provider_for_online_groups(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(
+        settings_store,
+        "protect_text",
+        lambda value: {"scheme": "test", "value": f"protected:{value}"},
+    )
+    monkeypatch.setattr(
+        settings_store,
+        "reveal_text",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
+        if isinstance(payload, dict)
+        else "",
+    )
+
+    settings_store.save_app_config(AppConfig(translator_provider="google_translate", translator_api_key="google-key"))
+    settings_store.save_app_config(AppConfig(translator_provider="deepl", translator_api_key="deepl-key"))
+    settings_store.save_app_config(AppConfig(tts_provider="azure_tts", tts_api_key="azure-key"))
+    settings_store.save_app_config(
+        AppConfig(tts_provider="amazon_polly", tts_api_key="aws-access", tts_api_secret="aws-secret")
+    )
+    settings_store.save_app_config(AppConfig(ocr_provider="azure_vision", ocr_api_key="azure-ocr-key"))
+    settings_store.save_app_config(AppConfig(ocr_provider="google_vision", ocr_api_key="google-ocr-key"))
+    settings_store.save_app_config(
+        AppConfig(transcript_cleanup_provider="groq", transcript_cleanup_api_key="groq-key")
+    )
+    settings_store.save_app_config(
+        AppConfig(transcript_cleanup_provider="gemini", transcript_cleanup_api_key="gemini-key")
+    )
+
+    online_path = settings_store.online_user_config_file_path()
+    online_data = json.loads(online_path.read_text(encoding="utf-8"))
+
+    assert online_data["translator_api_key_secrets"] == {
+        "google_translate": {"scheme": "test", "value": "protected:google-key"},
+        "deepl": {"scheme": "test", "value": "protected:deepl-key"},
+    }
+    assert online_data["tts_api_key_secrets"] == {
+        "azure_tts": {"scheme": "test", "value": "protected:azure-key"},
+        "amazon_polly": {"scheme": "test", "value": "protected:aws-access"},
+    }
+    assert online_data["tts_api_secret_secrets"] == {
+        "amazon_polly": {"scheme": "test", "value": "protected:aws-secret"},
+    }
+    assert online_data["ocr_api_key_secrets"] == {
+        "azure_vision": {"scheme": "test", "value": "protected:azure-ocr-key"},
+        "google_vision": {"scheme": "test", "value": "protected:google-ocr-key"},
+    }
+    assert online_data["transcript_cleanup_api_key_secrets"] == {
+        "groq": {"scheme": "test", "value": "protected:groq-key"},
+        "gemini": {"scheme": "test", "value": "protected:gemini-key"},
+    }
+
+    online_data["translator_provider"] = "google_translate"
+    online_data["tts_provider"] = "azure_tts"
+    online_data["ocr_provider"] = "azure_vision"
+    online_data["transcript_cleanup_provider"] = "groq"
+    online_path.write_text(json.dumps(online_data), encoding="utf-8")
+    config = settings_store.load_app_config(
+        AppConfig(
+            translator_api_key="",
+            tts_api_key="",
+            tts_api_secret="",
+            ocr_api_key="",
+            transcript_cleanup_api_key="",
+        )
+    )
+
+    assert config.translator_api_key == "google-key"
+    assert config.tts_api_key == "azure-key"
+    assert config.tts_api_secret == ""
+    assert config.ocr_api_key == "azure-ocr-key"
+    assert config.transcript_cleanup_api_key == "groq-key"
+
+
+def test_provider_secret_map_prevents_wrong_legacy_key_fallback(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(
+        settings_store,
+        "reveal_text",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
+        if isinstance(payload, dict)
+        else "",
+    )
+    payload = {
+        "version": 1,
+        "translator_provider": "deepl",
+        "translator_api_key_secret": {"scheme": "test", "value": "protected:legacy-google-key"},
+        "translator_api_key_secrets": {
+            "google_translate": {"scheme": "test", "value": "protected:google-key"},
+        },
+    }
+    settings_store.online_user_config_file_path().parent.mkdir(parents=True, exist_ok=True)
+    settings_store.online_user_config_file_path().write_text(json.dumps(payload), encoding="utf-8")
+
+    config = settings_store.load_app_config(AppConfig(translator_api_key=""))
+
+    assert config.translator_provider == "deepl"
+    assert config.translator_api_key == ""
 
 
 def test_load_app_config_keeps_env_secret_over_saved_secret(tmp_path, monkeypatch) -> None:

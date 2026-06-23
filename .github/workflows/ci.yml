@@ -84,7 +84,41 @@ jobs:
       - name: Install packaging dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[packaging]"
+          python -m pip install -e ".[dev,packaging]"
+
+      - name: Release worktree gate
+        shell: pwsh
+        run: .\scripts\check_release_worktree.ps1 -FailOnModified
 
       - name: PyInstaller smoke build
-        run: python -m PyInstaller --noconfirm --clean --distpath data/tmp/ci-dist --workpath data/tmp/ci-build "AI Player.spec"
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force data/tmp/package-smoke | Out-Null
+          python -m PyInstaller --noconfirm --clean --distpath data/tmp/ci-dist --workpath data/tmp/ci-build "AI Player.spec" 2>&1 |
+            Tee-Object -FilePath data/tmp/package-smoke/pyinstaller.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Launch built app
+        shell: pwsh
+        run: |
+          .\scripts\smoke_launch_app.ps1 -AppPath "data\tmp\ci-dist\AI Player\AI Player.exe" -Seconds 8 2>&1 |
+            Tee-Object -FilePath data/tmp/package-smoke/launch.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Release smoke tests
+        shell: pwsh
+        run: |
+          python -m pytest tests/test_release_smoke.py 2>&1 |
+            Tee-Object -FilePath data/tmp/package-smoke/release-smoke.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload package smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-smoke-logs
+          if-no-files-found: warn
+          path: |
+            data/tmp/package-smoke/**
+            data/tmp/ci-build/**/*.txt
+            data/tmp/ci-build/**/*.log

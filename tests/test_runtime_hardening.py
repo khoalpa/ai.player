@@ -70,6 +70,7 @@ def test_warm_runtime_components_reports_progress_when_dependencies_are_stubbed(
     monkeypatch.setattr(runtime_warmup, "_warm_whisper", lambda _config: None)
 
     config = AppConfig(
+        gui_language="en",
         runtime_warmup_enabled=True,
         runtime_warmup_whisper=True,
         runtime_warmup_translation=False,
@@ -78,7 +79,8 @@ def test_warm_runtime_components_reports_progress_when_dependencies_are_stubbed(
     timings = runtime_warmup.warm_runtime_components(config, progress_callback=calls.append)
 
     assert "whisper_load_seconds" in timings
-    assert calls
+    assert calls[0] == "Preloading Whisper..."
+    assert calls[-1].startswith("Preloaded Whisper in ")
 
 
 def test_warm_runtime_components_warms_transcript_cleanup(monkeypatch) -> None:

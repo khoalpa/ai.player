@@ -8,6 +8,7 @@ from PySide6.QtCore import QThread, Signal
 
 from ai_player.core.app_logging import get_logger
 from ai_player.core.config import AppConfig
+from ai_player.core.redaction import redact_secrets
 from ai_player.services.document_reader import create_document_transcript
 from ai_player.services.ffmpeg import ffmpeg_executable, terminate_process
 from ai_player.services.media_cache import (
@@ -72,7 +73,7 @@ class RuntimeWarmupWorker(QThread):
         except Exception as exc:
             if not self._stop_requested and not self.isInterruptionRequested():
                 LOGGER.exception("Runtime warmup worker failed.")
-                self.failed.emit(str(exc))
+                self.failed.emit(redact_secrets(exc))
             return
         if not self._stop_requested and not self.isInterruptionRequested():
             self.finished_successfully.emit(timings)
@@ -98,7 +99,7 @@ class ProviderPreviewWorker(QThread):
         except Exception as exc:
             if not self._stop_requested and not self.isInterruptionRequested():
                 LOGGER.exception("Provider preview worker failed.")
-                self.failed.emit(str(exc))
+                self.failed.emit(redact_secrets(exc))
             return
         if not self._stop_requested and not self.isInterruptionRequested():
             self.ready.emit(result)
@@ -143,7 +144,7 @@ class VideoSourceWorker(QThread):
         except Exception as exc:
             if not self._stop_requested and not self.isInterruptionRequested():
                 LOGGER.exception("Video source worker failed.")
-                self.failed.emit(str(exc))
+                self.failed.emit(redact_secrets(exc))
 
 
 class DocumentTranscriptWorker(QThread):
@@ -180,7 +181,7 @@ class DocumentTranscriptWorker(QThread):
         except Exception as exc:
             if not self._stop_requested and not self.isInterruptionRequested():
                 LOGGER.exception("Document transcript worker failed.")
-                self.failed.emit(str(exc))
+                self.failed.emit(redact_secrets(exc))
             return
         if self._stop_requested or self.isInterruptionRequested():
             return
@@ -336,7 +337,7 @@ class TelegramChannelWorker(QThread):
         except Exception as exc:
             if not self._stop_requested and not self.isInterruptionRequested():
                 LOGGER.exception("Telegram channel worker failed.")
-                self.failed.emit(str(exc))
+                self.failed.emit(redact_secrets(exc))
 
 
 class TelegramContentTranslationWorker(QThread):
@@ -390,7 +391,7 @@ class TelegramContentTranslationWorker(QThread):
         except Exception as exc:
             if not self._stop_requested and not self.isInterruptionRequested():
                 LOGGER.exception("Telegram content translation worker failed.")
-                self.failed.emit(str(exc))
+                self.failed.emit(redact_secrets(exc))
 
 
 def _infer_telegram_content_language(texts: list[str]) -> str | None:
@@ -558,7 +559,7 @@ class PlaybackCompatibilityWorker(QThread):
             remove_playback_compat_output(self._output_path)
             if not self._stop_requested:
                 LOGGER.exception("Playback compatibility worker failed.")
-                self.failed.emit(self._source_path, str(exc))
+                self.failed.emit(self._source_path, redact_secrets(exc))
         finally:
             self._process = None
 
@@ -576,7 +577,7 @@ def _format_process_exception(exc: Exception, max_length: int = 500) -> str:
         else:
             message = prefix
     else:
-        message = str(exc).strip() or exc.__class__.__name__
+        message = redact_secrets(str(exc).strip() or exc.__class__.__name__)
         message = " ".join(message.split())
     if len(message) > max_length:
         return f"{message[: max_length - 3]}..."
@@ -589,7 +590,7 @@ def _compact_process_detail(detail: object, *, max_length: int = 500) -> str:
     lines = [line for line in lines if line]
     if not lines:
         return ""
-    message = " ".join(lines)
+    message = redact_secrets(" ".join(lines))
     if len(message) <= max_length:
         return message
     tail_budget = max(80, max_length - 20)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
@@ -17,6 +18,18 @@ def test_user_guide_text_has_no_repairable_mojibake() -> None:
         (path, value)
         for path, value in _walk_strings("GUIDE_TEXT", GUIDE_TEXT)
         if utils.repair_mojibake(value) != value
+    ]
+
+    assert changed == []
+
+
+def test_ai_player_python_strings_have_no_repairable_mojibake() -> None:
+    changed = [
+        (path.as_posix(), location, value)
+        for path in sorted(Path("ai_player").rglob("*.py"))
+        for location, value in _python_string_literals(path)
+        if not _is_mojibake_repair_helper_marker(path, location)
+        and utils.repair_mojibake(value) != value
     ]
 
     assert changed == []
@@ -106,3 +119,18 @@ def _walk_strings(path: str, value: object) -> list[tuple[str, str]]:
             for item in _walk_strings(f"{path}[{index}]", child)
         ]
     return []
+
+
+def _python_string_literals(path: Path) -> list[tuple[str, str]]:
+    tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+    strings: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            strings.append((f"{path}:{node.lineno}", node.value))
+    return strings
+
+
+def _is_mojibake_repair_helper_marker(path: Path, location: str) -> bool:
+    return path.as_posix() == "ai_player/ui/player_window_utils.py" and location.startswith(
+        "ai_player/ui/player_window_utils.py:28"
+    )

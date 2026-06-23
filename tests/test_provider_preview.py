@@ -108,6 +108,17 @@ def test_speechmatics_preview_reports_auth_error_without_html(monkeypatch) -> No
     assert "<html>" not in message
 
 
+def test_preview_response_redacts_url_query_secrets() -> None:
+    class FakeResponse:
+        text = "request failed: https://speechmatics.test/v2/jobs?key=preview-secret&status=bad"
+
+    message = provider_preview._preview_response_text(FakeResponse())
+
+    assert "preview-secret" not in message
+    assert "key=[redacted]" in message
+    assert "status=bad" in message
+
+
 def test_huggingface_speaker_gender_preview_checks_endpoint(monkeypatch) -> None:
     class FakeResponse:
         status_code = 200

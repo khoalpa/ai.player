@@ -9,7 +9,7 @@ from typing import Any
 from ai_player.core.config import AppConfig
 from ai_player.core.performance import measure_stage
 from ai_player.pipeline.export_plan import ExportCue, ExportRange
-from ai_player.services.tts import is_pathological_tts_duration, prepare_tts_text
+from ai_player.services.tts_base import is_pathological_tts_duration, prepare_tts_text
 from ai_player.workers.export_utils import _format_hhmmss, _probe_duration_seconds, _tts_disabled
 
 MakeSilence = Callable[[float, Path], object]

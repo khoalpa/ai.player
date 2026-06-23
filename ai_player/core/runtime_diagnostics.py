@@ -14,6 +14,7 @@ from ai_player.core.config import (
     OCR_MODELS_PATH,
     PROJECT_ROOT,
 )
+from ai_player.core.redaction import redact_secrets
 from ai_player.services.ffmpeg import ffmpeg_executable, ffplay_executable
 
 
@@ -250,7 +251,7 @@ def _audio_capture_section() -> DiagnosticSection:
     except Exception as exc:
         return DiagnosticSection(
             "Audio capture",
-            (DiagnosticItem("soundcard device scan", "WARN", str(exc)),),
+            (DiagnosticItem("soundcard device scan", "WARN", redact_secrets(exc)),),
         )
     return DiagnosticSection(
         "Audio capture",

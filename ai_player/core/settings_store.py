@@ -53,6 +53,25 @@ SECRET_PAYLOAD_KEYS = {
     "speaker_gender_api_key": "speaker_gender_api_key_secret",
     "ocr_api_key": "ocr_api_key_secret",
 }
+ASR_API_KEY_SECRET_MAP_KEY = "asr_api_key_secrets"
+PROVIDER_SECRET_MAP_KEYS = {
+    "asr_api_key": ASR_API_KEY_SECRET_MAP_KEY,
+    "transcript_cleanup_api_key": "transcript_cleanup_api_key_secrets",
+    "translator_api_key": "translator_api_key_secrets",
+    "tts_api_key": "tts_api_key_secrets",
+    "tts_api_secret": "tts_api_secret_secrets",
+    "speaker_gender_api_key": "speaker_gender_api_key_secrets",
+    "ocr_api_key": "ocr_api_key_secrets",
+}
+PROVIDER_SETTING_KEYS = {
+    "asr_api_key": "asr_provider",
+    "transcript_cleanup_api_key": "transcript_cleanup_provider",
+    "translator_api_key": "translator_provider",
+    "tts_api_key": "tts_provider",
+    "tts_api_secret": "tts_provider",
+    "speaker_gender_api_key": "speaker_gender_provider",
+    "ocr_api_key": "ocr_provider",
+}
 TELEGRAM_BLACKLIST_SETTINGS = {
     "telegram_blacklisted_item_keys",
     "telegram_blacklisted_content_keys",
@@ -70,6 +89,8 @@ TELEGRAM_STATE_SETTINGS = {
 }
 ONLINE_USER_CONFIG_SETTINGS = {
     "asr_api_base",
+    "asr_fallback_to_whisper",
+    "asr_language_hints",
     "asr_provider",
     "asr_timeout_seconds",
     "ocr_api_base",
@@ -127,6 +148,7 @@ RUNTIME_LOCAL_LEGACY_SETTINGS = RUNTIME_LOCAL_SETTINGS | ONLINE_USER_CONFIG_SETT
 SPLIT_SETTINGS = (
     SECRET_SETTINGS
     | set(SECRET_PAYLOAD_KEYS.values())
+    | set(PROVIDER_SECRET_MAP_KEYS.values())
     | ONLINE_USER_CONFIG_SETTINGS
     | TELEGRAM_BLACKLIST_SETTINGS
     | RECENT_SOURCE_SETTINGS
@@ -324,6 +346,24 @@ def save_secret_settings(config: AppConfig) -> None:
     save_online_user_config(config)
 
 
+def save_asr_provider_api_keys(keys: dict[str, str]) -> None:
+    save_provider_api_secrets("asr_api_key", keys)
+
+
+def save_provider_api_secrets(secret_name: str, keys: dict[str, str]) -> None:
+    map_key = PROVIDER_SECRET_MAP_KEYS.get(secret_name)
+    if not map_key:
+        return
+    payload = _read_json_object(online_user_config_file_path()) or {"version": 1}
+    payload["version"] = 1
+    protected = _protect_provider_api_secrets(secret_name, keys)
+    if protected:
+        payload[map_key] = protected
+    else:
+        payload.pop(map_key, None)
+    _write_json_object(online_user_config_file_path(), payload)
+
+
 def save_online_user_config(config: AppConfig) -> None:
     payload = {"version": 1}
     payload.update(_config_values(_without_removed_vieneu_remote_config(config), ONLINE_USER_CONFIG_SETTINGS))
@@ -448,7 +488,20 @@ def _load_secret_settings(data: dict[str, Any]) -> dict[str, str]:
     legacy_secret_data = _read_json_object(secrets_file_path())
     payload_sources = [source for source in (online_data, legacy_secret_data, data) if source]
     values: dict[str, str] = {}
+    provider_secret_maps = {
+        name: _load_provider_api_secrets_from_sources(name, payload_sources) for name in PROVIDER_SECRET_MAP_KEYS
+    }
+    for name, provider_keys in provider_secret_maps.items():
+        if not provider_keys:
+            continue
+        provider = _selected_secret_provider(name, online_data, data)
+        if provider in provider_keys:
+            values[name] = provider_keys[provider]
     for name, payload_key in SECRET_PAYLOAD_KEYS.items():
+        if name in values:
+            continue
+        if provider_secret_maps.get(name):
+            continue
         for payload_data in payload_sources:
             try:
                 value = reveal_text(payload_data.get(payload_key))
@@ -471,7 +524,306 @@ def _dump_secret_settings(config: AppConfig) -> dict[str, object]:
             values[payload_key] = protect_text(value)
         except SecretStoreError as exc:
             LOGGER.warning("Could not save secret setting %s: %s", name, exc)
+    for name, map_key in PROVIDER_SECRET_MAP_KEYS.items():
+        provider = _secret_provider_from_config(config, name)
+        secret_value = str(getattr(config, name, "") or "")
+        secret_map = load_provider_api_secrets(name)
+        if secret_value and provider:
+            secret_map[provider] = secret_value
+        protected_map = _protect_provider_api_secrets(name, secret_map)
+        if protected_map:
+            values[map_key] = protected_map
     return values
+
+
+def load_asr_provider_api_keys() -> dict[str, str]:
+    return load_provider_api_secrets("asr_api_key")
+
+
+def load_provider_api_secrets(secret_name: str) -> dict[str, str]:
+    if secret_name not in PROVIDER_SECRET_MAP_KEYS:
+        return {}
+    online_data = _read_json_object(online_user_config_file_path())
+    legacy_secret_data = _read_json_object(secrets_file_path())
+    settings_data = _read_settings()
+    payload_sources = [source for source in (online_data, legacy_secret_data, settings_data) if source]
+    keys = _load_provider_api_secrets_from_sources(secret_name, payload_sources)
+    legacy_key = ""
+    payload_key = SECRET_PAYLOAD_KEYS.get(secret_name, "")
+    for payload_data in payload_sources:
+        try:
+            legacy_key = reveal_text(payload_data.get(payload_key))
+        except SecretStoreError as exc:
+            LOGGER.warning("Could not reveal saved secret setting %s: %s", secret_name, exc)
+            legacy_key = ""
+        if legacy_key:
+            break
+    provider = _selected_secret_provider(secret_name, online_data, settings_data)
+    if legacy_key and provider and provider not in keys:
+        keys[provider] = legacy_key
+    return keys
+
+
+def _load_asr_api_key_secrets(payload_sources: list[dict[str, Any]]) -> dict[str, str]:
+    return _load_provider_api_secrets_from_sources("asr_api_key", payload_sources)
+
+
+def _load_provider_api_secrets_from_sources(secret_name: str, payload_sources: list[dict[str, Any]]) -> dict[str, str]:
+    map_key = PROVIDER_SECRET_MAP_KEYS.get(secret_name)
+    if not map_key:
+        return {}
+    keys: dict[str, str] = {}
+    for payload_data in payload_sources:
+        raw_map = payload_data.get(map_key)
+        if not isinstance(raw_map, dict):
+            continue
+        for provider, protected_value in raw_map.items():
+            normalized = _normalize_secret_provider(secret_name, provider)
+            if not normalized or normalized in keys:
+                continue
+            try:
+                value = reveal_text(protected_value)
+            except SecretStoreError as exc:
+                LOGGER.warning("Could not reveal saved secret setting %s for %s: %s", secret_name, normalized, exc)
+                value = ""
+            if value:
+                keys[normalized] = value
+    return keys
+
+
+def _protect_asr_provider_api_keys(values: dict[str, str]) -> dict[str, object]:
+    return _protect_provider_api_secrets("asr_api_key", values)
+
+
+def _protect_provider_api_secrets(secret_name: str, values: dict[str, str]) -> dict[str, object]:
+    protected: dict[str, object] = {}
+    for provider, key in values.items():
+        normalized = _normalize_secret_provider(secret_name, provider)
+        value = str(key or "")
+        if not normalized or not value:
+            continue
+        try:
+            protected[normalized] = protect_text(value)
+        except SecretStoreError as exc:
+            LOGGER.warning("Could not save secret setting %s for %s: %s", secret_name, normalized, exc)
+    return protected
+
+
+def _normalize_asr_provider(value: object) -> str:
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "auto": "auto",
+        "automatic": "auto",
+        "assembly_ai": "assemblyai",
+        "assembly": "assemblyai",
+        "speech": "speechmatics",
+        "speechmatic": "speechmatics",
+        "whisper": "faster_whisper",
+        "fasterwhisper": "faster_whisper",
+    }
+    return aliases.get(text, text)
+
+
+def _normalize_ocr_provider(value: object) -> str:
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "": AppConfig().ocr_provider,
+        "auto": AppConfig().ocr_provider,
+        "ocrspace": "ocr_space",
+        "ocr_space_api": "ocr_space",
+        "azure": "azure_vision",
+        "azure_read": "azure_vision",
+        "azure_ocr": "azure_vision",
+        "microsoft_ocr": "azure_vision",
+        "google": "google_vision",
+        "google_ocr": "google_vision",
+        "cloud_vision": "google_vision",
+        "hf": "huggingface_trocr",
+        "huggingface": "huggingface_trocr",
+        "huggingface_ocr": "huggingface_trocr",
+        "trocr": "huggingface_trocr",
+    }
+    return aliases.get(text, text)
+
+
+def _normalize_translator_provider(value: object) -> str:
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "": AppConfig().translator_provider,
+        "none": "none",
+        "off": "none",
+        "passthrough": "none",
+        "no_translate": "none",
+        "azure": "azure_translator",
+        "azure_translate": "azure_translator",
+        "microsoft": "azure_translator",
+        "microsoft_translator": "azure_translator",
+        "google": "google_translate",
+        "google_translator": "google_translate",
+        "cloud_translate": "google_translate",
+        "deepl": "deepl",
+        "deep_l": "deepl",
+        "ctranslate2": "nllb_ct2",
+        "ct2": "nllb_ct2",
+        "nllb_ctranslate2": "nllb_ct2",
+        "local_nllb": "nllb",
+        "nllb_local": "nllb",
+    }
+    return aliases.get(text, text)
+
+
+def _normalize_tts_provider(value: object) -> str:
+    compact = str(value or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    aliases = {
+        "": AppConfig().tts_provider,
+        "vieneu": "vieneu",
+        "vieneutts": "vieneu",
+        "local": "vieneu",
+        "offline": "vieneu",
+        "edge": "edge",
+        "edgetts": "edge",
+        "azure": "azure_tts",
+        "azuretts": "azure_tts",
+        "microsofttts": "azure_tts",
+        "google": "google_tts",
+        "googletts": "google_tts",
+        "googlecloudtts": "google_tts",
+        "gcp": "google_tts",
+        "gcptts": "google_tts",
+        "amazon": "amazon_polly",
+        "amazonpolly": "amazon_polly",
+        "polly": "amazon_polly",
+        "awspolly": "amazon_polly",
+        "none": "none",
+        "off": "none",
+        "notts": "none",
+    }
+    return aliases.get(compact, str(value or "").strip().lower().replace("-", "_").replace(" ", "_"))
+
+
+def _normalize_cleanup_provider(value: object) -> str:
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "": AppConfig().transcript_cleanup_provider,
+        "openai_compatible": "openai",
+        "api": "openai",
+        "groqcloud": "groq",
+        "google_gemini": "gemini",
+        "google_ai": "gemini",
+        "ai_studio": "gemini",
+        "open_router": "openrouter",
+        "openrouter_free": "openrouter",
+        "hugging_face": "huggingface",
+        "hf": "huggingface",
+        "hf_inference": "huggingface",
+        "hf_router": "huggingface",
+        "headless": "local",
+        "headless_local": "local",
+        "local_headless": "local",
+        "transformers": "local",
+        "llamacpp": "local",
+        "llama_cpp": "local",
+    }
+    return aliases.get(text, text)
+
+
+def _normalize_speaker_gender_provider(value: object) -> str:
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "": AppConfig().speaker_gender_provider,
+        "default": AppConfig().speaker_gender_provider,
+        "offline": "local",
+        "model": "local",
+        "transformers": "local",
+        "hf": "huggingface_gender",
+        "huggingface": "huggingface_gender",
+        "huggingface_inference": "huggingface_gender",
+        "huggingface_gender": "huggingface_gender",
+    }
+    return aliases.get(text, text)
+
+
+def _normalize_secret_provider(secret_name: str, provider: object) -> str:
+    if secret_name == "asr_api_key":
+        return _normalize_asr_provider(provider)
+    if secret_name == "ocr_api_key":
+        return _normalize_ocr_provider(provider)
+    if secret_name == "translator_api_key":
+        return _normalize_translator_provider(provider)
+    if secret_name in {"tts_api_key", "tts_api_secret"}:
+        return _normalize_tts_provider(provider)
+    if secret_name == "transcript_cleanup_api_key":
+        return _normalize_cleanup_provider(provider)
+    if secret_name == "speaker_gender_api_key":
+        return _normalize_speaker_gender_provider(provider)
+    return str(provider or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _selected_secret_provider(
+    secret_name: str,
+    online_data: dict[str, Any] | None,
+    settings_data: dict[str, Any] | None,
+) -> str:
+    provider_key = PROVIDER_SETTING_KEYS.get(secret_name)
+    if not provider_key:
+        return ""
+    raw_provider = _payload_text(online_data, provider_key) or _payload_text(settings_data, provider_key)
+    if not raw_provider:
+        raw_provider = str(getattr(AppConfig(), provider_key, "") or "")
+    if secret_name == "asr_api_key":
+        return _selected_asr_secret_provider(raw_provider, online_data, settings_data)
+    return _normalize_secret_provider(secret_name, raw_provider)
+
+
+def _secret_provider_from_config(config: AppConfig, secret_name: str) -> str:
+    provider_key = PROVIDER_SETTING_KEYS.get(secret_name)
+    if not provider_key:
+        return ""
+    raw_provider = getattr(config, provider_key, "")
+    if secret_name == "asr_api_key":
+        return _selected_asr_secret_provider_from_config(config)
+    return _normalize_secret_provider(secret_name, raw_provider)
+
+
+def _selected_asr_secret_provider(
+    raw_provider: object,
+    online_data: dict[str, Any] | None,
+    settings_data: dict[str, Any] | None,
+) -> str:
+    provider = _normalize_asr_provider(raw_provider)
+    if provider != "auto":
+        return provider
+    api_base = (_payload_text(online_data, "asr_api_base") or _payload_text(settings_data, "asr_api_base")).lower()
+    if "assemblyai" in api_base:
+        return "assemblyai"
+    if "speechmatics" in api_base:
+        return "speechmatics"
+    hints = _payload_text(online_data, "asr_language_hints") or _payload_text(settings_data, "asr_language_hints")
+    source_language = _payload_text(settings_data, "source_language") or AppConfig().source_language
+    if hints or not source_language or source_language == "auto":
+        return "speechmatics"
+    return "assemblyai"
+
+
+def _selected_asr_secret_provider_from_config(config: AppConfig) -> str:
+    provider = _normalize_asr_provider(config.asr_provider)
+    if provider != "auto":
+        return provider
+    api_base = str(config.asr_api_base or "").strip().lower()
+    if "assemblyai" in api_base:
+        return "assemblyai"
+    if "speechmatics" in api_base:
+        return "speechmatics"
+    source_language = str(config.source_language or "").strip().lower()
+    if str(config.asr_language_hints or "").strip() or not source_language or source_language == "auto":
+        return "speechmatics"
+    return "assemblyai"
+
+
+def _payload_text(data: dict[str, Any] | None, key: str) -> str:
+    if not isinstance(data, dict):
+        return ""
+    return str(data.get(key) or "").strip()
 
 
 def _read_json_object(path) -> dict[str, Any] | None:

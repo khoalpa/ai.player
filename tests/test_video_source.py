@@ -365,6 +365,16 @@ def test_clean_download_error_removes_bare_ansi_codes() -> None:
     assert message == "[youtube] demo: unavailable"
 
 
+def test_clean_download_error_redacts_url_query_secrets() -> None:
+    message = video_source._clean_download_error(
+        "ERROR: download failed https://googleapis.test/media?key=download-secret&id=1"
+    )
+
+    assert "download-secret" not in message
+    assert "key=[redacted]" in message
+    assert "id=1" in message
+
+
 def test_downloaded_file_path_ignores_malformed_requested_downloads(tmp_path) -> None:
     downloaded = tmp_path / "demo.mp4"
     downloaded.write_text("video", encoding="utf-8")

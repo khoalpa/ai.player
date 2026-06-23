@@ -13,6 +13,7 @@ import requests
 from PIL import Image, ImageOps
 
 from ai_player.core.config import DEFAULT_OCR_PROVIDER, OCR_MODELS_PATH, AppConfig
+from ai_player.core.redaction import compact_redacted_text, redacted_json_text
 from ai_player.core.value_utils import clamped_float, finite_float, nonnegative_float
 from ai_player.services.ffmpeg import ffmpeg_executable
 
@@ -501,9 +502,9 @@ def _raise_for_ocr_response(response: requests.Response, provider_name: str) -> 
         return
     detail = ""
     try:
-        detail = str(response.json())[:500]
+        detail = redacted_json_text(response.json())
     except Exception:
-        detail = str(getattr(response, "text", "") or "")[:500]
+        detail = compact_redacted_text(getattr(response, "text", ""))
     raise RuntimeError(f"{provider_name} request failed with HTTP {response.status_code}: {detail}")
 
 

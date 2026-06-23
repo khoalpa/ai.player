@@ -8,6 +8,7 @@ The restored repository includes a minimal portable build script.
 
 The output is written to `dist\portable\AI Player Lite`. The Lite package does not bundle local model folders.
 When run from `Run AI Player.bat`, runtime data and optional `models\` / `tools\` folders are resolved relative to the `AI Player Lite` folder.
+Before building, the script runs `.\scripts\check_release_worktree.ps1 -FailOnModified` so release artifacts are not created from a dirty worktree. For local development-only builds, pass `-SkipReleaseWorktreeCheck`.
 
 On Windows machines that enforce enterprise code integrity policies, build with an Authenticode code-signing certificate:
 

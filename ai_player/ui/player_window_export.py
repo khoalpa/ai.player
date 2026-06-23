@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from ai_player.core.config import AppConfig
+from ai_player.core.redaction import redact_secrets
 from ai_player.ui.export_progress_dialog import ExportProgressDialog
 from ai_player.ui.player_window_utils import repair_mojibake as _repair_mojibake
 from ai_player.ui.player_window_utils import safe_native_dubbing_config as _safe_native_dubbing_config
@@ -792,7 +793,7 @@ class _StagedExportStageDialog(QDialog):
         try:
             self._manifest_view.setPlainText(self._paths.manifest.read_text(encoding="utf-8"))
         except OSError as exc:
-            self._manifest_view.setPlainText(str(exc))
+            self._manifest_view.setPlainText(redact_secrets(exc))
 
     def _open_output_folder(self) -> None:
         self._output_dir.mkdir(parents=True, exist_ok=True)

@@ -8,6 +8,7 @@ protect them.
 
 - App startup and UI wiring:
   - `tests/test_player_window_smoke.py`
+  - `tests/test_ui_clickthrough_smoke.py`
   - `tests/test_player_window_state.py`
   - `tests/test_player_window_utils.py`
 - Settings, language resources, and runtime configuration:
@@ -55,7 +56,9 @@ protect them.
 ## Current Gaps
 
 - GUI tests still focus on construction, event-loop smoke, and widget/config
-  wiring. Full click-through flows remain manual.
+  wiring. One automated source click-through smoke now covers opening a sample
+  video, selecting a transcript, changing preset, mock dubbing start/stop, and
+  opening a small document.
 - Real AI model quality is covered by smoke/manual tests, not deterministic unit
   assertions, because model output varies by hardware/runtime.
 - Packaging is smoke-built in CI, but portable app launch remains a manual smoke

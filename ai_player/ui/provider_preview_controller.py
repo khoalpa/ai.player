@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ai_player.core.redaction import compact_redacted_text
 from ai_player.workers.player_window_workers import ProviderPreviewWorker
 
 
@@ -17,6 +18,12 @@ class ProviderPreviewController:
             return
         self._kind = str(kind or "")
         self._set_running(True, self._kind)
+        set_retry = getattr(self._owner, "_set_task_center_retry", None)
+        if callable(set_retry):
+            set_retry(
+                self._owner._tr("task_center_retry_provider").format(kind=self._kind),
+                lambda kind=self._kind: self.start(kind),
+            )
         worker = ProviderPreviewWorker(self._kind, self._owner._current_runtime_config(), self._owner)
         self._worker = worker
         worker.ready.connect(self.ready)
@@ -101,5 +108,4 @@ class ProviderPreviewController:
 
     @staticmethod
     def _compact_detail(detail: object) -> str:
-        text = " ".join(str(detail or "").split())
-        return text[:500]
+        return compact_redacted_text(detail)

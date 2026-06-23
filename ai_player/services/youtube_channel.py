@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from ai_player.core.i18n import ui_text
+from ai_player.core.redaction import compact_redacted_text
 from ai_player.services.video_source import _url_host
 
 
@@ -618,5 +619,5 @@ def _safe_int(value: object) -> int:
 
 
 def _clean_error(value: object) -> str:
-    text = " ".join(str(value or "").split())
+    text = compact_redacted_text(value)
     return text or value.__class__.__name__

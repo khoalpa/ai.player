@@ -30,7 +30,7 @@ from ai_player.pipeline.transcript_source import (
 from ai_player.pipeline.transcript_source import (
     load_transcript_entries as _load_transcript_entries,
 )
-from ai_player.services.asr import is_online_asr_provider, transcribe_online_asr
+from ai_player.services.asr import should_use_online_asr, transcribe_asr
 from ai_player.services.audio_matcher import (
     audio_duration_seconds,
     extract_audio_range,
@@ -58,11 +58,8 @@ from ai_player.services.speaker_voice_selector import VoiceGenderSelector, selec
 from ai_player.services.subtitle_ocr import recognize_hard_subtitles
 from ai_player.services.transcript_cleanup import TranscriptCleaner, is_online_transcript_cleanup_provider
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
-from ai_player.services.tts import (
-    create_tts_provider,
-    is_pathological_tts_duration,
-    prepare_tts_text,
-)
+from ai_player.services.tts import create_tts_provider
+from ai_player.services.tts_base import is_pathological_tts_duration, prepare_tts_text
 from ai_player.services.video_source import is_telegram_web_progressive_url
 from ai_player.services.whisper_runtime import (
     SharedWhisperModel,
@@ -223,7 +220,10 @@ class DubbingWorker(QThread):
                 self._run_transcript_source()
                 return
 
-            if self._config.audio_source != "subtitle":
+            if self._config.audio_source != "subtitle" and not should_use_online_asr(
+                self._config,
+                language=self._selected_whisper_language(),
+            ):
                 self._emit_status("worker_loading_whisper")
                 self._validate_whisper_model()
                 self._model = self._load_whisper_model()
@@ -556,7 +556,7 @@ class DubbingWorker(QThread):
         return selected_source_language(self._config)
 
     def _validate_whisper_model(self) -> None:
-        if is_online_asr_provider(self._config.asr_provider):
+        if should_use_online_asr(self._config, language=self._selected_whisper_language()):
             return
         if not self._config.whisper_offline:
             return
@@ -593,19 +593,27 @@ class DubbingWorker(QThread):
         return self._model
 
     def _transcribe_with_fallback(self, wav_path: Path):
-        if is_online_asr_provider(self._config.asr_provider):
-            return transcribe_online_asr(self._config, wav_path, language=self._selected_whisper_language())
-        if self._model is None:
-            self._model = self._load_whisper_model()
-        kwargs = whisper_transcribe_kwargs(self._config, self._selected_whisper_language())
-        return transcribe_model_with_device_fallback(
-            self._model,
+        language = self._selected_whisper_language()
+
+        def transcribe_local():
+            if self._model is None:
+                self._model = self._load_whisper_model()
+            kwargs = whisper_transcribe_kwargs(self._config, language)
+            return transcribe_model_with_device_fallback(
+                self._model,
+                wav_path,
+                kwargs,
+                whisper_device=lambda: self._whisper_device,
+                whisper_compute_type=lambda: self._whisper_compute_type,
+                emit_status=lambda key: self._emit_status(key),
+                switch_whisper_to_cpu=lambda exc: self._switch_whisper_to_cpu(exc),
+            )
+
+        return transcribe_asr(
+            self._config,
             wav_path,
-            kwargs,
-            whisper_device=lambda: self._whisper_device,
-            whisper_compute_type=lambda: self._whisper_compute_type,
-            emit_status=lambda key: self._emit_status(key),
-            switch_whisper_to_cpu=lambda exc: self._switch_whisper_to_cpu(exc),
+            language=language,
+            local_transcriber=transcribe_local,
         )
 
     def _resume_if_buffer_ready(self, current_seconds: float) -> None:

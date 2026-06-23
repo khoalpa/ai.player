@@ -61,6 +61,7 @@ class _FakeOwner:
     def __init__(self) -> None:
         self._config = AppConfig(runtime_warmup_enabled=True)
         self._status_bar = _FakeStatusBar()
+        self.background_details = []
 
     def statusBar(self) -> _FakeStatusBar:
         return self._status_bar
@@ -71,12 +72,23 @@ class _FakeOwner:
             "warmup_loading_translation": "Preloading translator...",
             "warmup_loading_transcript_cleanup": "Preloading transcript cleanup...",
             "warmup_loading_tts": "Preloading TTS...",
+            "warmup_started_whisper": "Started preloading Whisper...",
+            "warmup_started_translation": "Started preloading translator...",
+            "warmup_started_transcript_cleanup": "Started preloading transcript cleanup...",
+            "warmup_started_tts": "Started preloading TTS...",
+            "warmup_loaded_whisper": "Preloaded Whisper in {seconds}s.",
+            "warmup_loaded_translation": "Preloaded translator in {seconds}s.",
+            "warmup_loaded_transcript_cleanup": "Preloaded transcript cleanup in {seconds}s.",
+            "warmup_loaded_tts": "Preloaded TTS in {seconds}s.",
             "status_runtime_warmup_ready": "Runtime is ready.",
             "status_runtime_warmup_failed": "Runtime preloading failed: {detail}",
         }.get(key, key)
 
     def _runtime_startup_status_message(self) -> str:
         return "Startup status"
+
+    def _set_background_task_detail(self, name: str, detail: object, *, log_detail: object | None = None) -> None:
+        self.background_details.append((name, detail, log_detail))
 
 
 def test_runtime_warmup_controller_starts_and_stops_worker(monkeypatch) -> None:
@@ -106,3 +118,22 @@ def test_runtime_warmup_controller_keeps_user_status() -> None:
     controller.failed("boom")
 
     assert owner.statusBar().currentMessage() == "User opened a file"
+
+
+def test_runtime_warmup_controller_logs_historical_events_separately() -> None:
+    owner = _FakeOwner()
+    controller = RuntimeWarmupController(owner)
+
+    controller.status_changed("Preloading Whisper...")
+    controller.status_changed("Preloaded Whisper in 0.2s.")
+
+    assert owner.background_details[0] == (
+        "Runtime preloading",
+        "Preloading Whisper...",
+        "Started preloading Whisper...",
+    )
+    assert owner.background_details[1] == (
+        "Runtime preloading",
+        "Preloaded Whisper in 0.2s.",
+        "Preloaded Whisper in 0.2s.",
+    )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from html import escape as html_escape
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -23,6 +22,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ai_player.core.redaction import redact_secrets
 from ai_player.pipeline.transcript_source import load_transcript_entries as _load_transcript_entries
 from ai_player.services.document_reader import (
     create_text_document_transcript,
@@ -44,11 +44,21 @@ from ai_player.services.youtube_channel import (
     is_youtube_browse_url,
 )
 from ai_player.ui.channel_browser import (
+    channel_item_detail_lines,
+    channel_item_height,
+    channel_item_html,
     channel_item_media_kind,
-    channel_item_search_text,
+    channel_item_summary_lines,
     current_channel_provider,
     filter_channel_items,
+    last_channel_filter_for_settings,
+    last_channel_post_id_for_settings,
+    last_channel_search_for_settings,
+    last_channel_url_for_settings,
     normalize_channel_filter,
+    oldest_telegram_post_id,
+    summary_excerpt,
+    target_channel_row,
     telegram_channel_key,
     telegram_post_id_from_url,
     youtube_video_id_from_url,
@@ -190,7 +200,7 @@ class PlayerSourceMixin:
             QMessageBox.warning(
                 self,
                 self._tr("video_subtitle_invalid_title"),
-                self._tr("video_subtitle_invalid_detail").format(detail=_repair_mojibake(str(exc))),
+                self._tr("video_subtitle_invalid_detail").format(detail=_repair_mojibake(redact_secrets(exc))),
             )
             return False
         if not entries:
@@ -255,7 +265,7 @@ class PlayerSourceMixin:
         try:
             total_duration_ms = sum(page.duration_seconds for page in transcript.pages) * 1000
         except Exception as exc:
-            QMessageBox.warning(self, self._tr("open_document_error_title"), str(exc))
+            QMessageBox.warning(self, self._tr("open_document_error_title"), redact_secrets(exc))
             self.statusBar().showMessage(self._tr("status_open_document_failed"))
             return
 
@@ -415,7 +425,7 @@ class PlayerSourceMixin:
                 label = self._telegram_channel_item_label(channel_item)
                 item = QListWidgetItem(label)
                 item.setToolTip(str(getattr(channel_item, "url", "") or "").strip())
-                item.setSizeHint(QSize(0, self._telegram_channel_item_height(label)))
+                item.setSizeHint(QSize(0, channel_item_height(label)))
                 item.setData(Qt.ItemDataRole.UserRole, index)
                 item.setData(TELEGRAM_ITEM_HTML_ROLE, self._telegram_channel_item_html(channel_item, summary=True))
                 button_key = (
@@ -427,7 +437,10 @@ class PlayerSourceMixin:
                 self._set_telegram_item_thumbnail(item, channel_item, index)
                 list_widget.addItem(item)
             if self._telegram_channel_items:
-                target_row = self._telegram_target_row()
+                target_row = target_channel_row(
+                    getattr(self, "_telegram_channel_items", []),
+                    getattr(self, "_pending_telegram_post_id", ""),
+                )
                 list_widget.setCurrentRow(target_row if target_row >= 0 else 0)
             self._telegram_channel_selection_changed(list_widget.currentItem(), None)
         finally:
@@ -449,117 +462,51 @@ class PlayerSourceMixin:
         return "\n".join(self._telegram_channel_item_summary_lines(channel_item))
 
     def _telegram_channel_item_summary_lines(self, channel_item) -> list[str]:
-        kind_label = self._telegram_media_kind_label(channel_item)
         post_id = str(getattr(channel_item, "post_id", "") or "").strip()
-        heading_parts = [kind_label]
-        if post_id:
-            heading_parts.append(self._tr("telegram_channel_item_post_id").format(post_id=post_id))
-        status_label = self._telegram_item_status_label(channel_item)
-        if status_label:
-            heading_parts.append(status_label)
-        lines = [" ".join(heading_parts)]
-
         source_text = telegram_channel_item_translation_text(channel_item)
-        if source_text:
-            lines.append(self._telegram_summary_excerpt(source_text))
         translated = self._telegram_channel_item_translation(channel_item)
-        if translated and translated != source_text:
-            lines.append(self._telegram_summary_excerpt(translated))
-
-        details = []
-        date = str(getattr(channel_item, "date", "") or "").strip()
-        if date:
-            details.append(date)
-        duration = str(getattr(channel_item, "duration", "") or "").strip()
-        if duration:
-            details.append(duration)
-        file_size = int(getattr(channel_item, "file_size", 0) or 0)
-        if file_size:
-            details.append(self._format_bytes(file_size))
-        file_name = str(getattr(channel_item, "file_name", "") or "").strip()
-        if file_name:
-            details.append(self._telegram_summary_excerpt(file_name, max_chars=70))
-        if details:
-            lines.append(" | ".join(details))
-        return lines
+        return channel_item_summary_lines(
+            channel_item,
+            kind_label=self._telegram_media_kind_label(channel_item),
+            post_id_label=self._tr("telegram_channel_item_post_id").format(post_id=post_id) if post_id else "",
+            status_label=self._telegram_item_status_label(channel_item),
+            source_text=source_text,
+            translated_text=translated,
+            format_bytes=self._format_bytes,
+        )
 
     def _telegram_channel_item_lines(self, channel_item) -> list[str]:
-        kind_label = self._telegram_media_kind_label(channel_item)
         post_id = str(getattr(channel_item, "post_id", "") or "").strip()
-        heading_parts = [kind_label]
-        if post_id:
-            heading_parts.append(self._tr("telegram_channel_item_post_id").format(post_id=post_id))
-        status_label = self._telegram_item_status_label(channel_item)
-        if status_label:
-            heading_parts.append(status_label)
-        lines = [" ".join(heading_parts)]
-
-        text = str(getattr(channel_item, "text", "") or "").strip()
-        title = str(getattr(channel_item, "title", "") or "").strip()
-        if text:
-            lines.append(text)
-        elif title:
-            lines.append(title)
-        translated = self._telegram_channel_item_translation(channel_item)
-        if translated and translated != telegram_channel_item_translation_text(channel_item):
-            lines.append(translated)
-
-        date = str(getattr(channel_item, "date", "") or "").strip()
-        if date:
-            lines.append(self._tr("telegram_channel_item_date").format(date=date))
-        duration = str(getattr(channel_item, "duration", "") or "").strip()
-        if duration:
-            lines.append(self._tr("telegram_channel_item_duration").format(duration=duration))
-        file_name = str(getattr(channel_item, "file_name", "") or "").strip()
-        if file_name:
-            lines.append(self._tr("telegram_channel_item_file_name").format(name=file_name))
-        file_size = int(getattr(channel_item, "file_size", 0) or 0)
-        if file_size:
-            lines.append(self._tr("telegram_channel_item_file_size").format(size=self._format_bytes(file_size)))
-        media_count = int(getattr(channel_item, "media_count", 0) or 0)
-        if media_count > 1:
-            lines.append(self._tr("telegram_channel_item_media_count").format(count=media_count))
-        url = str(getattr(channel_item, "url", "") or "").strip()
-        if url:
-            lines.append(self._tr("telegram_channel_item_link").format(url=url))
-        media_url = str(getattr(channel_item, "media_url", "") or "").strip()
-        if media_url:
-            lines.append(self._tr("telegram_channel_item_media_url").format(url=media_url))
-        return lines
+        source_text = telegram_channel_item_translation_text(channel_item)
+        return channel_item_detail_lines(
+            channel_item,
+            kind_label=self._telegram_media_kind_label(channel_item),
+            post_id_label=self._tr("telegram_channel_item_post_id").format(post_id=post_id) if post_id else "",
+            status_label=self._telegram_item_status_label(channel_item),
+            source_text=source_text,
+            translated_text=self._telegram_channel_item_translation(channel_item),
+            format_bytes=self._format_bytes,
+            format_line=lambda key, values: self._tr(key).format(**values),
+        )
 
     def _telegram_channel_item_html(self, channel_item, *, summary: bool = False) -> str:
         translated = self._telegram_channel_item_translation(channel_item)
         source_text = telegram_channel_item_translation_text(channel_item)
-        html_lines = []
         lines = (
             self._telegram_channel_item_summary_lines(channel_item)
             if summary
             else self._telegram_channel_item_lines(channel_item)
         )
-        translated_summary = self._telegram_summary_excerpt(translated) if translated else ""
-        for line in lines:
-            text = html_escape(str(line or ""))
-            if translated and translated != source_text and line in {translated, translated_summary}:
-                text = f'<span style="color:{TELEGRAM_TRANSLATION_COLOR};">{text}</span>'
-            html_lines.append(text)
-        return "<br>".join(html_lines)
-
-    @staticmethod
-    def _telegram_channel_item_height(label: str) -> int:
-        text = str(label or "")
-        chars_per_line = 96
-        line_count = 0
-        for line in text.splitlines() or [""]:
-            line_count += max(1, (len(line) + chars_per_line - 1) // chars_per_line)
-        text_height = line_count * 18
-        return max(104, text_height + 14)
+        return channel_item_html(
+            lines,
+            translated_text=translated,
+            source_text=source_text,
+            translation_color=TELEGRAM_TRANSLATION_COLOR,
+        )
 
     @staticmethod
     def _telegram_summary_excerpt(value: str, *, max_chars: int = 220) -> str:
-        text = " ".join(str(value or "").split())
-        if len(text) <= max_chars:
-            return text
-        return f"{text[: max_chars - 1].rstrip()}..."
+        return summary_excerpt(value, max_chars=max_chars)
 
     def _set_telegram_channel_items(self, items) -> None:
         self._telegram_channel_state.replace_items(items)
@@ -631,21 +578,6 @@ class PlayerSourceMixin:
             self.statusBar().showMessage(self._tr("status_telegram_blacklisted"))
         self._queue_save_settings()
         self._filter_telegram_channel_items()
-
-    def _telegram_item_search_text(self, channel_item) -> str:
-        return channel_item_search_text(
-            channel_item,
-            translation_for_item=self._telegram_channel_item_translation,
-        )
-
-    def _telegram_target_row(self) -> int:
-        target_post_id = str(getattr(self, "_pending_telegram_post_id", "") or "")
-        if not target_post_id:
-            return -1
-        for index, item in enumerate(getattr(self, "_telegram_channel_items", [])):
-            if str(getattr(item, "post_id", "") or "") == target_post_id:
-                return index
-        return -1
 
     @staticmethod
     def _telegram_post_id_from_url(url: str) -> str:
@@ -1236,12 +1168,7 @@ class PlayerSourceMixin:
         )
 
     def _oldest_telegram_post_id(self) -> str:
-        post_ids = []
-        for item in getattr(self, "_telegram_channel_all_items", []):
-            post_id = str(getattr(item, "post_id", "") or "")
-            if post_id.isdigit():
-                post_ids.append(int(post_id))
-        return str(min(post_ids)) if post_ids else ""
+        return oldest_telegram_post_id(getattr(self, "_telegram_channel_all_items", []))
 
     def _current_channel_provider(self) -> str:
         return current_channel_provider(
@@ -1264,27 +1191,32 @@ class PlayerSourceMixin:
         return normalize_channel_filter(self._telegram_channel_filter_combo.currentData())
 
     def _telegram_last_url_for_settings(self) -> str:
-        return str(getattr(self, "_pending_telegram_url", "") or self._config.telegram_last_url or "")
+        return last_channel_url_for_settings(
+            getattr(self, "_pending_telegram_url", ""),
+            self._config.telegram_last_url,
+        )
 
     def _telegram_last_post_id_for_settings(self) -> str:
-        if not getattr(self, "_pending_telegram_url", ""):
-            return str(self._config.telegram_last_post_id or "")
-        return str(
-            getattr(self, "_current_telegram_post_id", "")
-            or getattr(self, "_pending_telegram_post_id", "")
-            or self._config.telegram_last_post_id
-            or ""
+        return last_channel_post_id_for_settings(
+            getattr(self, "_pending_telegram_url", ""),
+            current_post_id=getattr(self, "_current_telegram_post_id", ""),
+            pending_post_id=getattr(self, "_pending_telegram_post_id", ""),
+            configured_post_id=self._config.telegram_last_post_id,
         )
 
     def _telegram_last_search_for_settings(self) -> str:
-        if not getattr(self, "_pending_telegram_url", ""):
-            return str(self._config.telegram_last_search or "")
-        return self._telegram_current_search()
+        return last_channel_search_for_settings(
+            getattr(self, "_pending_telegram_url", ""),
+            current_search=self._telegram_current_search(),
+            configured_search=self._config.telegram_last_search,
+        )
 
     def _telegram_last_filter_for_settings(self) -> str:
-        if not getattr(self, "_pending_telegram_url", ""):
-            return str(self._config.telegram_last_filter or "all")
-        return self._telegram_current_filter()
+        return last_channel_filter_for_settings(
+            getattr(self, "_pending_telegram_url", ""),
+            current_filter=self._telegram_current_filter(),
+            configured_filter=self._config.telegram_last_filter,
+        )
 
     def _telegram_side_panel_sizes_for_settings(self) -> tuple[int, ...]:
         sizes = list(getattr(self, "_telegram_side_panel_sizes", []) or [])
@@ -1559,7 +1491,7 @@ class PlayerSourceMixin:
                 self._config.gui_language,
             )
         except TelegramChannelError as exc:
-            QMessageBox.warning(self, self._tr("telegram_login_title"), _repair_mojibake(str(exc)))
+            QMessageBox.warning(self, self._tr("telegram_login_title"), _repair_mojibake(redact_secrets(exc)))
             return None
 
     def _video_url_resolved(self, source) -> None:
@@ -1852,7 +1784,7 @@ class PlayerSourceMixin:
             )
         except Exception as exc:
             self._dub_button.setChecked(False)
-            QMessageBox.information(self, self._tr("app_title"), str(exc))
+            QMessageBox.information(self, self._tr("app_title"), redact_secrets(exc))
             return False
 
         self._stop_dubbing()

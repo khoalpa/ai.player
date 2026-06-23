@@ -3,12 +3,18 @@ from __future__ import annotations
 import math
 from dataclasses import replace
 
-from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QLineEdit, QPushButton, QSlider, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QLineEdit, QMessageBox, QPushButton, QSlider, QWidget
 
 from ai_player.core.config import DEFAULT_PERFORMANCE_PRESET, AppConfig, read_preserved_source_terms_file
 from ai_player.core.runtime_catalog import available_language_options, available_translation_provider_options
-from ai_player.core.settings_store import save_app_config
-from ai_player.services.asr import is_online_asr_provider
+from ai_player.core.settings_store import (
+    load_asr_provider_api_keys,
+    load_provider_api_secrets,
+    save_app_config,
+    save_asr_provider_api_keys,
+    save_provider_api_secrets,
+)
+from ai_player.services.asr import is_auto_asr_provider, is_online_asr_provider, normalize_asr_provider
 from ai_player.services.audio_timeline import normalize_overlap_policy
 from ai_player.services.source_voice_filter import (
     normalize_source_voice_filter_mode,
@@ -20,18 +26,17 @@ from ai_player.services.speaker_voice_selector import (
     normalize_voice_gender_mode,
 )
 from ai_player.services.subtitle_ocr import is_online_ocr_provider, normalize_ocr_provider
+from ai_player.services.transcript_cleanup import is_online_transcript_cleanup_provider
 from ai_player.services.translation import (
     available_translation_models,
     is_ctranslate2_model_path,
     is_online_translation_provider,
+    normalize_translator_provider,
 )
-from ai_player.services.tts import (
-    available_vieneu_models,
-    available_voices,
-    is_online_tts_provider,
-    normalize_tts_provider,
-    voice_gender,
-)
+from ai_player.services.tts import available_voices
+from ai_player.services.tts_base import is_online_tts_provider, normalize_tts_provider
+from ai_player.services.tts_vieneu import available_vieneu_models
+from ai_player.services.tts_voices import voice_gender
 from ai_player.ui.player_window_utils import (
     PERFORMANCE_PRESETS,
     UI_TEXT,
@@ -48,7 +53,47 @@ from ai_player.ui.player_window_utils import (
 )
 
 
+def _normalize_transcript_cleanup_provider(value: object) -> str:
+    provider = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "openai_compatible": "openai",
+        "api": "openai",
+        "groqcloud": "groq",
+        "google_gemini": "gemini",
+        "google_ai": "gemini",
+        "ai_studio": "gemini",
+        "open_router": "openrouter",
+        "openrouter_free": "openrouter",
+        "hugging_face": "huggingface",
+        "hf": "huggingface",
+        "hf_inference": "huggingface",
+        "hf_router": "huggingface",
+        "headless": "local",
+        "headless_local": "local",
+        "local_headless": "local",
+        "transformers": "local",
+        "llamacpp": "local",
+        "llama_cpp": "local",
+    }
+    return aliases.get(provider, provider or "ollama")
+
+
 class PlayerSettingsMixin:
+    _ONLINE_PROVIDER_DETAIL_KEYS = {
+        "asr": "runtime_privacy_detail_asr",
+        "ocr": "runtime_privacy_detail_ocr",
+        "translation": "runtime_privacy_detail_translation",
+        "tts": "runtime_privacy_detail_tts",
+        "cleanup": "runtime_privacy_detail_cleanup",
+    }
+    _ONLINE_PROVIDER_FEATURE_KEYS = {
+        "asr": "online_provider_consent_feature_asr",
+        "ocr": "online_provider_consent_feature_ocr",
+        "translation": "online_provider_consent_feature_translation",
+        "tts": "online_provider_consent_feature_tts",
+        "cleanup": "online_provider_consent_feature_cleanup",
+    }
+
     def _refresh_tts_options(self, *_args) -> None:
         provider = self._selected_tts_provider()
         is_vieneu = provider == "vieneu"
@@ -232,6 +277,124 @@ class PlayerSettingsMixin:
             return self._asr_provider_combo.currentData() or self._config.asr_provider
         return self._config.asr_provider
 
+    def _asr_api_key_cache(self) -> dict[str, str]:
+        return self._provider_secret_cache("asr_api_key")
+
+    def _remember_asr_api_key_for_provider(self, provider: str) -> None:
+        self._remember_provider_secrets_for_kind("asr", provider)
+
+    def _restore_asr_api_key_for_provider(self, provider: str) -> None:
+        self._restore_provider_secrets_for_kind("asr", provider)
+
+    def _provider_secret_cache(self, secret_name: str) -> dict[str, str]:
+        if not hasattr(self, "_provider_api_secret_cache"):
+            self._provider_api_secret_cache = {}
+        if secret_name not in self._provider_api_secret_cache:
+            if secret_name == "asr_api_key":
+                keys = load_asr_provider_api_keys()
+            else:
+                keys = load_provider_api_secrets(secret_name)
+            provider = self._config_secret_provider(secret_name)
+            value = str(getattr(self._config, secret_name, "") or "")
+            if value and provider:
+                keys[provider] = value
+            self._provider_api_secret_cache[secret_name] = keys
+        return self._provider_api_secret_cache[secret_name]
+
+    def _secret_controls_for_kind(self, kind: str) -> tuple[tuple[str, str], ...]:
+        return {
+            "asr": (("_asr_api_key_edit", "asr_api_key"),),
+            "ocr": (("_ocr_api_key_edit", "ocr_api_key"),),
+            "translation": (("_translator_api_key_edit", "translator_api_key"),),
+            "tts": (
+                ("_tts_api_key_edit", "tts_api_key"),
+                ("_tts_api_secret_edit", "tts_api_secret"),
+            ),
+            "cleanup": (("_transcript_cleanup_api_key_edit", "transcript_cleanup_api_key"),),
+            "speaker_gender": (("_speaker_gender_api_key_edit", "speaker_gender_api_key"),),
+        }.get(kind, ())
+
+    def _remember_provider_secrets_for_kind(self, kind: str, provider: object | None = None) -> None:
+        provider_key = self._secret_provider_for_kind(kind, provider)
+        if not provider_key:
+            return
+        for widget_name, secret_name in self._secret_controls_for_kind(kind):
+            widget = getattr(self, widget_name, None)
+            if widget is None:
+                continue
+            key = widget.text().strip()
+            cache = self._provider_secret_cache(secret_name)
+            if key:
+                cache[provider_key] = key
+            else:
+                cache.pop(provider_key, None)
+
+    def _restore_provider_secrets_for_kind(self, kind: str, provider: object | None = None) -> None:
+        provider_key = self._secret_provider_for_kind(kind, provider)
+        for widget_name, secret_name in self._secret_controls_for_kind(kind):
+            widget = getattr(self, widget_name, None)
+            if widget is None:
+                continue
+            key = self._provider_secret_cache(secret_name).get(provider_key, "")
+            was_blocked = widget.blockSignals(True)
+            try:
+                widget.setText(key)
+            finally:
+                widget.blockSignals(was_blocked)
+        self._sync_api_key_statuses()
+
+    def _secret_provider_for_kind(self, kind: str, provider: object | None = None) -> str:
+        if kind == "asr":
+            return self._asr_secret_provider(provider if provider is not None else self._selected_asr_provider())
+        if kind == "ocr":
+            return normalize_ocr_provider(provider if provider is not None else self._selected_ocr_provider())
+        if kind == "translation":
+            selected = provider if provider is not None else self._translator_combo.currentData()
+            return normalize_translator_provider(selected)
+        if kind == "tts":
+            return normalize_tts_provider(provider if provider is not None else self._selected_tts_provider())
+        if kind == "cleanup":
+            return _normalize_transcript_cleanup_provider(
+                provider if provider is not None else self._selected_transcript_cleanup_provider()
+            )
+        if kind == "speaker_gender":
+            return normalize_speaker_gender_provider(
+                provider if provider is not None else self._selected_speaker_gender_provider()
+            )
+        return str(provider or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+    def _config_secret_provider(self, secret_name: str) -> str:
+        if secret_name == "asr_api_key":
+            return self._asr_secret_provider(self._config.asr_provider)
+        if secret_name == "ocr_api_key":
+            return normalize_ocr_provider(self._config.ocr_provider)
+        if secret_name == "translator_api_key":
+            return normalize_translator_provider(self._config.translator_provider)
+        if secret_name in {"tts_api_key", "tts_api_secret"}:
+            return normalize_tts_provider(self._config.tts_provider)
+        if secret_name == "transcript_cleanup_api_key":
+            return _normalize_transcript_cleanup_provider(self._config.transcript_cleanup_provider)
+        if secret_name == "speaker_gender_api_key":
+            return normalize_speaker_gender_provider(self._config.speaker_gender_provider)
+        return ""
+
+    def _asr_secret_provider(self, provider: object) -> str:
+        normalized = normalize_asr_provider(str(provider or ""))
+        if normalized != "auto":
+            return normalized
+        api_base = self._asr_api_base_edit.text().strip().lower() if hasattr(self, "_asr_api_base_edit") else ""
+        if "assemblyai" in api_base:
+            return "assemblyai"
+        if "speechmatics" in api_base:
+            return "speechmatics"
+        language_hints = (
+            self._asr_language_hints_edit.text().strip() if hasattr(self, "_asr_language_hints_edit") else ""
+        )
+        source_language = self._selected_source_language() if hasattr(self, "_source_language_combo") else "auto"
+        if language_hints or not source_language or source_language == "auto":
+            return "speechmatics"
+        return "assemblyai"
+
     def _selected_asr_model(self) -> str:
         if hasattr(self, "_asr_model_combo"):
             return self._combo_value(self._asr_model_combo) or self._config.whisper_model
@@ -240,7 +403,9 @@ class PlayerSettingsMixin:
     def _sync_asr_controls(self, *_args) -> None:
         if not hasattr(self, "_asr_provider_combo"):
             return
-        online = is_online_asr_provider(self._selected_asr_provider())
+        provider = self._selected_asr_provider()
+        online = is_online_asr_provider(provider)
+        auto = is_auto_asr_provider(provider)
         for widget_name in (
             "_asr_model_combo",
             "_whisper_device_combo",
@@ -252,11 +417,11 @@ class PlayerSettingsMixin:
         ):
             widget = getattr(self, widget_name, None)
             if widget is not None:
-                widget.setEnabled(not online)
-        for widget_name in ("_asr_api_base_edit", "_asr_api_key_edit"):
+                widget.setEnabled(not online or auto)
+        for widget_name in ("_asr_api_base_edit", "_asr_language_hints_edit", "_asr_api_key_edit"):
             widget = getattr(self, widget_name, None)
             if widget is not None:
-                widget.setEnabled(online)
+                widget.setEnabled(online or auto)
         self._sync_api_key_statuses()
 
     def _selected_ocr_provider(self) -> str:
@@ -671,6 +836,7 @@ class PlayerSettingsMixin:
             asr_provider=self._selected_asr_provider(),
             asr_api_base=self._asr_api_base_edit.text().strip(),
             asr_api_key=self._asr_api_key_edit.text().strip(),
+            asr_language_hints=self._asr_language_hints_edit.text().strip(),
             whisper_model=self._selected_asr_model(),
             performance_preset=self._selected_performance_preset(),
             export_video_quality=self._selected_export_video_quality(),
@@ -890,6 +1056,16 @@ class PlayerSettingsMixin:
         self.statusBar().showMessage(self._tr("status_preset_applied"))
 
     def _connect_settings_autosave(self) -> None:
+        self._online_provider_consent_values: set[tuple[str, str]] = set()
+        self._online_provider_previous_values = {
+            "asr": self._selected_asr_provider(),
+            "ocr": self._selected_ocr_provider(),
+            "translation": self._translator_combo.currentData() or "nllb",
+            "tts": self._selected_tts_provider(),
+            "cleanup": self._selected_transcript_cleanup_provider(),
+            "cleanup_mode": self._selected_transcript_cleanup_mode(),
+            "speaker_gender": self._selected_speaker_gender_provider(),
+        }
         combos = (
             self._ui_language_combo,
             self._performance_preset_combo,
@@ -957,8 +1133,27 @@ class PlayerSettingsMixin:
             checkbox.toggled.connect(self._queue_save_settings)
         self._auto_match_audio_check.toggled.connect(self._sync_auto_match_controls_enabled)
         self._asr_provider_combo.currentIndexChanged.connect(self._sync_asr_controls)
+        self._asr_provider_combo.currentIndexChanged.connect(
+            lambda *_args: self._online_provider_changed("asr", self._asr_provider_combo)
+        )
         self._ocr_provider_combo.currentIndexChanged.connect(self._sync_ocr_controls)
+        self._ocr_provider_combo.currentIndexChanged.connect(
+            lambda *_args: self._online_provider_changed("ocr", self._ocr_provider_combo)
+        )
         self._speaker_gender_provider_combo.currentIndexChanged.connect(self._sync_auto_voice_controls_enabled)
+        self._speaker_gender_provider_combo.currentIndexChanged.connect(
+            lambda *_args: self._provider_secret_changed("speaker_gender", self._speaker_gender_provider_combo)
+        )
+        self._translator_combo.currentIndexChanged.connect(
+            lambda *_args: self._online_provider_changed("translation", self._translator_combo)
+        )
+        self._tts_provider_combo.currentIndexChanged.connect(
+            lambda *_args: self._online_provider_changed("tts", self._tts_provider_combo)
+        )
+        self._transcript_cleanup_provider_combo.currentIndexChanged.connect(
+            lambda *_args: self._online_provider_changed("cleanup", self._transcript_cleanup_provider_combo)
+        )
+        self._transcript_cleanup_mode_combo.currentIndexChanged.connect(self._online_cleanup_mode_changed)
 
         sliders = (
             self._volume_slider,
@@ -994,6 +1189,7 @@ class PlayerSettingsMixin:
             slider.valueChanged.connect(self._queue_save_settings)
 
         self._asr_api_base_edit.textEdited.connect(self._queue_save_settings)
+        self._asr_language_hints_edit.textEdited.connect(self._queue_save_settings)
         self._asr_api_key_edit.textEdited.connect(self._queue_save_settings)
         self._asr_api_key_edit.textEdited.connect(self._sync_api_key_statuses)
         self._ocr_api_base_edit.textEdited.connect(self._queue_save_settings)
@@ -1030,6 +1226,123 @@ class PlayerSettingsMixin:
         self._vieneu_core_combo.currentIndexChanged.connect(self._vieneu_core_changed)
         self._vieneu_mode_combo.currentIndexChanged.connect(self._sync_vieneu_advanced_controls)
 
+    def _online_provider_changed(self, kind: str, combo: QComboBox) -> None:
+        value = str(combo.currentData() or "")
+        previous = str(getattr(self, "_online_provider_previous_values", {}).get(kind, value) or "")
+        self._remember_provider_secrets_for_kind(kind, previous)
+        if not self._online_provider_requires_consent(kind, value):
+            self._restore_provider_secrets_for_kind(kind, value)
+            self._remember_online_provider_value(kind, value)
+            return
+        if self._confirm_online_provider(kind, value):
+            self._restore_provider_secrets_for_kind(kind, value)
+            self._remember_online_provider_value(kind, value)
+            return
+        self._revert_online_provider_combo(kind, combo, previous)
+        self._restore_provider_secrets_for_kind(kind, previous)
+        self.statusBar().showMessage(self._tr("online_provider_consent_rejected"))
+
+    def _provider_secret_changed(self, kind: str, combo: QComboBox) -> None:
+        value = str(combo.currentData() or "")
+        previous = str(getattr(self, "_online_provider_previous_values", {}).get(kind, value) or "")
+        self._remember_provider_secrets_for_kind(kind, previous)
+        self._restore_provider_secrets_for_kind(kind, value)
+        self._remember_online_provider_value(kind, value)
+
+    def _online_cleanup_mode_changed(self, *_args) -> None:
+        value = self._selected_transcript_cleanup_mode()
+        previous = str(getattr(self, "_online_provider_previous_values", {}).get("cleanup_mode", value) or "")
+        provider = self._selected_transcript_cleanup_provider()
+        if value == "off" or not is_online_transcript_cleanup_provider(provider):
+            self._remember_online_provider_value("cleanup_mode", value)
+            return
+        if self._confirm_online_provider("cleanup", provider):
+            self._remember_online_provider_value("cleanup_mode", value)
+            return
+        self._revert_online_provider_combo("cleanup_mode", self._transcript_cleanup_mode_combo, previous)
+        self.statusBar().showMessage(self._tr("online_provider_consent_rejected"))
+
+    def _online_provider_requires_consent(self, kind: str, value: str) -> bool:
+        provider = str(value or "")
+        if kind == "asr":
+            online = is_online_asr_provider(provider) or is_auto_asr_provider(provider)
+        elif kind == "ocr":
+            online = is_online_ocr_provider(provider)
+        elif kind == "translation":
+            online = is_online_translation_provider(provider)
+        elif kind == "tts":
+            normalized = normalize_tts_provider(provider)
+            online = normalized == "edge" or is_online_tts_provider(normalized)
+            provider = normalized
+        elif kind == "cleanup":
+            online = (
+                self._selected_transcript_cleanup_mode() != "off"
+                and is_online_transcript_cleanup_provider(provider)
+            )
+        else:
+            online = False
+        if not online:
+            return False
+        return (kind, provider) not in getattr(self, "_online_provider_consent_values", set())
+
+    def _confirm_online_provider(self, kind: str, provider: str) -> bool:
+        provider = str(provider or "")
+        if not self.isVisible():
+            self._remember_online_provider_consent(kind, provider)
+            return True
+        feature = self._tr(self._ONLINE_PROVIDER_FEATURE_KEYS.get(kind, "online_provider_consent_feature_provider"))
+        detail = self._tr(self._ONLINE_PROVIDER_DETAIL_KEYS.get(kind, "runtime_privacy_offline"))
+        message = self._tr("online_provider_consent_message").format(
+            feature=feature,
+            provider=provider,
+            detail=detail,
+        )
+        accepted = (
+            QMessageBox.question(
+                self,
+                self._tr("online_provider_consent_title"),
+                message,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            == QMessageBox.StandardButton.Yes
+        )
+        if accepted:
+            self._remember_online_provider_consent(kind, provider)
+        return accepted
+
+    def _remember_online_provider_consent(self, kind: str, provider: str) -> None:
+        if not hasattr(self, "_online_provider_consent_values"):
+            self._online_provider_consent_values = set()
+        self._online_provider_consent_values.add((kind, str(provider or "")))
+
+    def _remember_online_provider_value(self, kind: str, value: str) -> None:
+        if not hasattr(self, "_online_provider_previous_values"):
+            self._online_provider_previous_values = {}
+        self._online_provider_previous_values[kind] = str(value or "")
+
+    def _revert_online_provider_combo(self, kind: str, combo: QComboBox, previous: str) -> None:
+        was_blocked = combo.blockSignals(True)
+        try:
+            self._set_combo_data(combo, previous)
+        finally:
+            combo.blockSignals(was_blocked)
+        self._remember_online_provider_value(kind, previous)
+        self._sync_online_provider_controls(kind)
+        self._queue_save_settings()
+
+    def _sync_online_provider_controls(self, kind: str) -> None:
+        if kind == "asr":
+            self._sync_asr_controls()
+        elif kind == "ocr":
+            self._sync_ocr_controls()
+        elif kind == "translation":
+            self._refresh_translation_models()
+        elif kind == "tts":
+            self._refresh_tts_options()
+        elif kind in {"cleanup", "cleanup_mode"}:
+            self._sync_transcript_cleanup_controls()
+
     def _queue_save_settings(self, *_args) -> None:
         self._settings_save_timer.start()
 
@@ -1055,12 +1368,29 @@ class PlayerSettingsMixin:
             else:
                 self._source_label.setText(self._tr("source_empty"))
         if hasattr(self, "_settings_tabs"):
-            self._settings_tabs.setTabText(0, self._tr("basic_tab"))
-            self._settings_tabs.setTabText(1, self._tr("models_tab"))
-            self._settings_tabs.setTabText(2, self._tr("offline_models_tab"))
-            self._settings_tabs.setTabText(3, self._tr("advanced_tab"))
-            self._settings_tabs.setTabText(4, self._tr("transcript_tab"))
-            self._settings_tabs.setTabText(5, self._tr("runtime_tab"))
+            self._settings_tabs.setTabText(0, self._tr("first_run_tab"))
+            self._settings_tabs.setTabText(1, self._tr("task_center_tab"))
+            self._settings_tabs.setTabText(2, self._tr("basic_tab"))
+            self._settings_tabs.setTabText(3, self._tr("models_tab"))
+            self._settings_tabs.setTabText(4, self._tr("offline_models_tab"))
+            self._settings_tabs.setTabText(5, self._tr("advanced_tab"))
+            self._settings_tabs.setTabText(6, self._tr("transcript_tab"))
+            self._settings_tabs.setTabText(7, self._tr("runtime_tab"))
+        if hasattr(self, "_task_center_table"):
+            self._task_center_table.setHorizontalHeaderLabels(
+                [
+                    self._tr("task_center_name"),
+                    self._tr("task_center_status"),
+                    self._tr("task_center_detail"),
+                ]
+            )
+        if hasattr(self, "_task_center_log_view"):
+            self._task_center_log_view.setPlaceholderText(self._tr("task_center_log_empty"))
+        if hasattr(self, "_refresh_global_task_status"):
+            self._refresh_global_task_status()
+        if hasattr(self, "_refresh_readiness_profile_text"):
+            self._refresh_readiness_profile_text()
+            self._refresh_readiness_status()
         if hasattr(self, "_offline_models_log"):
             self._offline_models_log.setPlaceholderText(self._tr("offline_models_log_placeholder"))
         if hasattr(self, "_document_view"):
@@ -1328,5 +1658,13 @@ class PlayerSettingsMixin:
                 return
 
     def _save_settings(self) -> None:
+        for kind in ("asr", "ocr", "translation", "tts", "cleanup", "speaker_gender"):
+            self._remember_provider_secrets_for_kind(kind)
+        if hasattr(self, "_provider_api_secret_cache"):
+            for secret_name, keys in self._provider_api_secret_cache.items():
+                if secret_name == "asr_api_key":
+                    save_asr_provider_api_keys(keys)
+                else:
+                    save_provider_api_secrets(secret_name, keys)
         self._config = self._current_runtime_config()
         save_app_config(self._config)

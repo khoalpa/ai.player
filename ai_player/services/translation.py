@@ -19,6 +19,7 @@ from ai_player.core.config import (
 from ai_player.core.gpu import configure_cuda_dll_paths, ctranslate2_cuda_available
 from ai_player.core.offline_env import pop_hf_offline_environment, push_hf_offline_environment
 from ai_player.core.optional_imports import block_unneeded_transformers_optional_imports
+from ai_player.core.redaction import compact_redacted_text
 from ai_player.core.value_utils import int_value as _core_int_value
 
 
@@ -659,17 +660,15 @@ def _response_error_message(response: requests.Response) -> str:
         if isinstance(error, dict):
             message = str(error.get("message") or "").strip()
             if message:
-                return message[:500]
+                return compact_redacted_text(message)
         message = str(data.get("message") or data.get("error") or "").strip()
         if message:
-            return message[:500]
+            return compact_redacted_text(message)
     return _compact_response_text(getattr(response, "text", ""))
 
 
 def _compact_response_text(value: object) -> str:
-    text = re.sub(r"<[^>]+>", " ", str(value or ""))
-    text = " ".join(text.split())
-    return text[:500]
+    return compact_redacted_text(value, strip_html=True)
 
 
 def _align_translation_results(source_texts: list[str], translated_texts: list[str]) -> list[str]:

@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from ai_player.core.i18n import ui_text
+from ai_player.core.redaction import compact_redacted_text
 
 
 class VideoSourceError(RuntimeError):
@@ -568,7 +569,7 @@ def _clean_download_error(value: object) -> str:
     lines = [" ".join(line.split()) for line in text.splitlines()]
     text = " ".join(line for line in lines if line)
     text = re.sub(r"\bERROR:\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s+", " ", text).strip()
+    text = compact_redacted_text(re.sub(r"\s+", " ", text).strip())
     return text or value.__class__.__name__
 
 

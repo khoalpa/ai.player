@@ -15,6 +15,7 @@ import requests
 
 from ai_player.core.config import AppConfig
 from ai_player.core.optional_imports import block_unneeded_transformers_optional_imports
+from ai_player.core.redaction import compact_redacted_text, redact_secrets, redacted_json_text
 
 
 class TranscriptCleanupError(RuntimeError):
@@ -165,7 +166,7 @@ class TranscriptCleaner:
         return clean_texts
 
     def _record_failure(self, exc: Exception) -> None:
-        self.last_error = str(exc)
+        self.last_error = redact_secrets(exc)
         if self._warned_failure:
             return
         self._warned_failure = True
@@ -263,7 +264,7 @@ def _call_ollama(prompt: str, config: AppConfig) -> str:
         },
         timeout=_timeout_seconds(config.transcript_cleanup_timeout_seconds),
     )
-    response.raise_for_status()
+    _raise_for_cleanup_response(response, "Ollama")
     data = _response_json_object(response, "Ollama")
     return str(data.get("response") or "")
 
@@ -283,7 +284,7 @@ def _call_openai_compatible(prompt: str, config: AppConfig, provider: str = "ope
         },
         timeout=_timeout_seconds(config.transcript_cleanup_timeout_seconds),
     )
-    response.raise_for_status()
+    _raise_for_cleanup_response(response, _cleanup_provider_label(provider))
     data = _response_json_object(response, _cleanup_provider_label(provider))
     return _chat_completion_content(data)
 
@@ -302,7 +303,7 @@ def _call_gemini(prompt: str, config: AppConfig) -> str:
         },
         timeout=_timeout_seconds(config.transcript_cleanup_timeout_seconds),
     )
-    response.raise_for_status()
+    _raise_for_cleanup_response(response, "Gemini cleanup")
     data = _response_json_object(response, "Gemini cleanup")
     return _gemini_content(data)
 
@@ -398,6 +399,16 @@ def _response_json_object(response, provider_name: str) -> dict[str, Any]:
     return data
 
 
+def _raise_for_cleanup_response(response, provider_name: str) -> None:
+    if getattr(response, "status_code", 200) < 400:
+        return
+    try:
+        detail = redacted_json_text(response.json())
+    except Exception:
+        detail = compact_redacted_text(getattr(response, "text", ""))
+    raise TranscriptCleanupError(f"{provider_name} request failed with HTTP {response.status_code}: {detail}")
+
+
 def _chat_completion_content(data: dict[str, Any]) -> str:
     try:
         choices = data["choices"]
@@ -411,6 +422,9 @@ def _chat_completion_content(data: dict[str, Any]) -> str:
     return str(content)
 
 
+_GEMINI_INVALID_RESPONSE_MESSAGE = "Gemini cleanup trả về dữ liệu không đúng định dạng."
+
+
 def _gemini_content(data: dict[str, Any]) -> str:
     try:
         candidates = data["candidates"]
@@ -418,12 +432,12 @@ def _gemini_content(data: dict[str, Any]) -> str:
         content = first_candidate.get("content") if isinstance(first_candidate, dict) else {}
         parts = content.get("parts") if isinstance(content, dict) else []
     except (IndexError, KeyError, TypeError) as exc:
-        raise TranscriptCleanupError("Gemini cleanup tráº£ vá» dá»¯ liá»‡u khÃ´ng Ä‘Ãºng Ä‘á»‹nh dáº¡ng.") from exc
+        raise TranscriptCleanupError(_GEMINI_INVALID_RESPONSE_MESSAGE) from exc
     if not isinstance(parts, list):
-        raise TranscriptCleanupError("Gemini cleanup tráº£ vá» dá»¯ liá»‡u khÃ´ng Ä‘Ãºng Ä‘á»‹nh dáº¡ng.")
+        raise TranscriptCleanupError(_GEMINI_INVALID_RESPONSE_MESSAGE)
     texts = [str(part.get("text") or "") for part in parts if isinstance(part, dict) and part.get("text")]
     if not texts:
-        raise TranscriptCleanupError("Gemini cleanup tráº£ vá» dá»¯ liá»‡u khÃ´ng Ä‘Ãºng Ä‘á»‹nh dáº¡ng.")
+        raise TranscriptCleanupError(_GEMINI_INVALID_RESPONSE_MESSAGE)
     return "".join(texts)
 
 

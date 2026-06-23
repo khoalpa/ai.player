@@ -6,7 +6,8 @@ param(
     [securestring]$CodeSigningPfxPassword,
     [string]$TimestampServer = "http://timestamp.digicert.com",
     [switch]$RequireSignature,
-    [switch]$ListCodeSigningCerts
+    [switch]$ListCodeSigningCerts,
+    [switch]$SkipReleaseWorktreeCheck
 )
 
 $ErrorActionPreference = "Stop"
@@ -177,6 +178,19 @@ if ($ListCodeSigningCerts) {
 
     $Certificates | Format-Table -AutoSize Store, Subject, Thumbprint, NotAfter
     exit 0
+}
+
+if (-not $SkipReleaseWorktreeCheck) {
+    $ReleaseWorktreeCheck = Join-Path $ProjectRoot "scripts\check_release_worktree.ps1"
+    if (-not (Test-Path -LiteralPath $ReleaseWorktreeCheck)) {
+        throw "Release worktree check script is missing: $ReleaseWorktreeCheck"
+    }
+    & $ReleaseWorktreeCheck -FailOnModified
+    if ($LASTEXITCODE -ne 0) {
+        throw "Release worktree check failed."
+    }
+} else {
+    Write-Warning "Skipping release worktree check. Use this only for local development builds, not shared release artifacts."
 }
 
 $CodeSigningCertificate = Get-CodeSigningCertificate `

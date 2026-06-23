@@ -126,6 +126,26 @@ def test_online_translation_error_uses_provider_message(monkeypatch) -> None:
     assert "errors" not in message
 
 
+def test_online_translation_error_redacts_response_text_secret(monkeypatch) -> None:
+    def fake_request(_method, _url, **_kwargs):
+        return FakeResponse(
+            "failed https://translation.googleapis.com/language/translate/v2?key=bad-key",
+            status_code=400,
+        )
+
+    monkeypatch.setattr(translation.requests, "request", fake_request)
+    translator = translation.OnlineTranslator(
+        AppConfig(translator_provider="google_translate", translator_api_key="bad-key")
+    )
+
+    with pytest.raises(translation.TranslationError) as error:
+        translator.translate_many(["Hello"], "en")
+
+    message = str(error.value)
+    assert "bad-key" not in message
+    assert "key=[redacted]" in message
+
+
 def test_deepl_translate_posts_batch(monkeypatch) -> None:
     calls = []
 

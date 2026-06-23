@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import math
 
+from ai_player.core.redaction import redact_secrets
 from ai_player.core.value_utils import clean_message as _clean_message
 from ai_player.core.value_utils import int_value as _core_int_value
 from ai_player.core.value_utils import positive_int as _core_positive_int
-from ai_player.services.tts import normalize_tts_provider
+from ai_player.services.tts_base import normalize_tts_provider
 
 
 def clean_message(value: object) -> str:
-    return _clean_message(value)
+    return redact_secrets(_clean_message(value))
 
 
 def clean_worker_text(value: object) -> str:

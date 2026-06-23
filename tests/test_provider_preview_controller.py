@@ -134,3 +134,15 @@ def test_provider_preview_controller_formats_success_and_failure() -> None:
 
     assert owner._provider_preview_statuses["asr"].text.startswith("Provider test failed: line one line two")
     assert len(owner._provider_preview_statuses["asr"].text) < 540
+
+
+def test_provider_preview_controller_redacts_failure_detail() -> None:
+    owner = _FakeOwner()
+    controller = ProviderPreviewController(owner)
+    controller.start = lambda _kind: None
+    controller._kind = "asr"
+
+    controller.failed("request failed https://example.test/probe?key=ui-secret")
+
+    assert "ui-secret" not in owner._provider_preview_statuses["asr"].text
+    assert "key=[redacted]" in owner._provider_preview_statuses["asr"].text

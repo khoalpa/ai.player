@@ -6,7 +6,8 @@ import pytest
 
 from ai_player.core import runtime_catalog as catalog
 from ai_player.core.config import DEFAULT_PERFORMANCE_PRESET, AppConfig
-from ai_player.services import tts
+from ai_player.services import tts_base
+from ai_player.services.tts_voices import voice_gender
 from scripts.compare_performance_presets import compare_presets
 
 
@@ -243,10 +244,10 @@ def test_performance_presets_default_to_female_voice() -> None:
     for settings in presets.values():
         provider = str(settings["tts_provider"])
         voice = str(settings["tts_voice"])
-        if tts.normalize_tts_provider(provider) == "none":
+        if tts_base.normalize_tts_provider(provider) == "none":
             continue
 
-        assert tts.voice_gender(provider, voice) == "female"
+        assert voice_gender(provider, voice) == "female"
 
 
 def test_subtitles_preset_disables_target_voice() -> None:

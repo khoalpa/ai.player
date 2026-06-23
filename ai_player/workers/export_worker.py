@@ -48,7 +48,7 @@ from ai_player.pipeline.export_plan import (
     write_srt_cues as _write_srt_cues,
 )
 from ai_player.pipeline.transcript_source import load_transcript_entries as _load_transcript_entries
-from ai_player.services.asr import is_online_asr_provider, transcribe_online_asr
+from ai_player.services.asr import should_use_online_asr, transcribe_asr
 from ai_player.services.audio_matcher import extract_audio_range, match_tts_to_reference
 from ai_player.services.demucs_separation import (
     DemucsSeparationError,
@@ -341,7 +341,7 @@ class DubbingExportWorker(QThread):
         )
 
     def _validate_whisper_model(self) -> None:
-        if is_online_asr_provider(self._config.asr_provider):
+        if should_use_online_asr(self._config, language=self._selected_whisper_language()):
             return
         if self._config.whisper_offline and not Path(self._config.whisper_model).exists():
             raise RuntimeError(self._tr("export_error_missing_whisper_offline"))
@@ -526,11 +526,19 @@ class DubbingExportWorker(QThread):
         )
 
     def _transcribe_with_fallback(self, source_audio: Path):
-        if is_online_asr_provider(self._config.asr_provider):
-            return transcribe_online_asr(self._config, source_audio, language=self._selected_whisper_language())
-        model = self._load_whisper_model()
-        kwargs = whisper_transcribe_kwargs(self._config, self._selected_whisper_language())
-        return DubbingExportWorker._transcribe_model_with_fallback(self, model, source_audio, kwargs)
+        language = self._selected_whisper_language()
+
+        def transcribe_local():
+            model = self._load_whisper_model()
+            kwargs = whisper_transcribe_kwargs(self._config, language)
+            return DubbingExportWorker._transcribe_model_with_fallback(self, model, source_audio, kwargs)
+
+        return transcribe_asr(
+            self._config,
+            source_audio,
+            language=language,
+            local_transcriber=transcribe_local,
+        )
 
     def _transcribe_model_with_fallback(
         self,
@@ -1228,22 +1236,30 @@ class StagedDubbingExportWorker(DubbingExportWorker):
         self._run_ffmpeg(full_quality_audio_args(self._video_path, output_path, self._export_range))
 
     def _transcribe_staged(self, source_audio: Path):
-        if is_online_asr_provider(self._config.asr_provider):
-            return transcribe_online_asr(self._config, source_audio, language=self._selected_whisper_language())
-        model = self._load_whisper_model()
-        kwargs = whisper_transcribe_kwargs(self._config, self._selected_whisper_language())
-        kwargs["word_timestamps"] = True
-        try:
-            return DubbingExportWorker._transcribe_model_with_fallback(
-                self,
-                model,
-                source_audio,
-                kwargs,
-                passthrough_errors=(TypeError,),
-            )
-        except TypeError:
-            kwargs.pop("word_timestamps", None)
-            return DubbingExportWorker._transcribe_model_with_fallback(self, model, source_audio, kwargs)
+        language = self._selected_whisper_language()
+
+        def transcribe_local():
+            model = self._load_whisper_model()
+            kwargs = whisper_transcribe_kwargs(self._config, language)
+            kwargs["word_timestamps"] = True
+            try:
+                return DubbingExportWorker._transcribe_model_with_fallback(
+                    self,
+                    model,
+                    source_audio,
+                    kwargs,
+                    passthrough_errors=(TypeError,),
+                )
+            except TypeError:
+                kwargs.pop("word_timestamps", None)
+                return DubbingExportWorker._transcribe_model_with_fallback(self, model, source_audio, kwargs)
+
+        return transcribe_asr(
+            self._config,
+            source_audio,
+            language=language,
+            local_transcriber=transcribe_local,
+        )
 
     def _source_cues_from_segments(self, segments: list[object], source_language: str | None) -> list[TranscriptCue]:
         return _source_cues_from_segments_data(segments, self._transcript_cleaner, source_language)

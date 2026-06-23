@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication
 
 from ai_player.core.config import RUNTIME_DIR
 from ai_player.core.optional_imports import install_unneeded_transformers_optional_import_blocks
+from ai_player.core.redaction import redact_secrets
 
 
 def _block_unneeded_optional_imports() -> None:
@@ -44,7 +45,7 @@ def _install_exception_logger() -> None:
         log_path = RUNTIME_DIR / "ai-player-error.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text(
-            "".join(traceback.format_exception(exc_type, exc, tb)),
+            redact_secrets("".join(traceback.format_exception(exc_type, exc, tb))),
             encoding="utf-8",
         )
         sys.__excepthook__(exc_type, exc, tb)

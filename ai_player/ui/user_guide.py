@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QTabWidget, 
 
 from ai_player.core.config import AppConfig
 from ai_player.services.translation import normalize_translator_provider
-from ai_player.services.tts import normalize_tts_provider
+from ai_player.services.tts_base import normalize_tts_provider
 from ai_player.ui.user_guide_render import html_items, html_list, table_rows
 from ai_player.ui.user_guide_text import GUIDE_TEXT
 

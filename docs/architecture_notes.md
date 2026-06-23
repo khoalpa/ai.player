@@ -46,7 +46,25 @@ Current extracted owners:
   state while preserving the existing mixin attribute API.
 - `ai_player.ui.channel_browser` owns pure channel-browser decisions such as
   Telegram/YouTube provider detection, channel keys, post/video id parsing,
-  media-kind normalization, search text, and filtered item selection.
+  media-kind normalization, search text, filtered item selection, item
+  label/detail/HTML shaping, channel navigation, and persisted browser values.
 - `ai_player.ui.video_url_controller` owns URL worker lifecycle plus pure
   retry/fallback decisions such as lower-quality retry selection, unrecoverable
   video errors, pending retry payloads, and browser fallback kwargs.
+- `ai_player.ui.runtime_tab_controller.RuntimeTabController` owns Runtime tab
+  refresh state, health/privacy/task summaries, media probing cache, and
+  process/system/GPU diagnostics. `PlayerRuntimeMixin` should stay focused on
+  building the Runtime tab widgets and delegating updates to the controller.
+- `ai_player.ui.player_window_task_center.PlayerTaskCenterMixin` owns the
+  user-facing Task Center dashboard. Long-running flows should update
+  `_set_background_task_detail` so Task Center, Runtime, and status-bar views
+  stay consistent without each worker owning duplicate UI.
+
+## TTS Service Boundaries
+
+`ai_player.services.tts` is a compatibility facade for provider creation and
+cross-provider voice selection. New callers should import provider-neutral
+helpers from `tts_base.py`, Edge-specific behavior from `tts_edge.py`, online
+provider behavior from `tts_online.py`, and VieNeu behavior from `tts_vieneu.py`.
+Tests should monkey-patch those provider modules directly instead of relying on
+facade-level hook synchronization.

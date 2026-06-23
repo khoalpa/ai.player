@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from ai_player.ui import task_center
+from ai_player.ui.player_window import PlayerWindow
+
+
+@pytest.fixture(autouse=True)
+def disable_task_center_background_startups(monkeypatch) -> None:
+    monkeypatch.setattr(PlayerWindow, "_start_runtime_warmup", lambda self: None)
+    monkeypatch.setattr(PlayerWindow, "_start_telegram_worker", lambda self, *args, **kwargs: None)
 
 
 class _RunningWorker:
@@ -130,3 +139,56 @@ def test_task_center_stops_active_tasks() -> None:
     assert ("url", 25) in calls
     assert ("dubbing", None) in calls
     assert ("_export_worker", 25) in calls
+
+
+def test_task_center_dashboard_logs_and_lists_active_tasks(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window._dub_worker = _RunningWorker(True)
+        window._set_background_task_detail("Realtime dubbing", "Mock segment 1")
+        window._refresh_task_center()
+
+        assert window._task_center_table.item(0, 0).text() == "Realtime dubbing"
+        assert window._task_center_table.item(0, 2).text() == "Mock segment 1"
+        assert "Realtime dubbing: Mock segment 1" in window._task_center_log_view.toPlainText()
+        assert window._task_center_stop_button.isEnabled()
+        window._dub_worker = None
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_task_center_dashboard_can_log_historical_detail_separately(qapp) -> None:
+    window = PlayerWindow()
+    original_runtime_warmup = window._runtime_warmup
+    try:
+        window._runtime_warmup = _RunningController(True, "Preloading Whisper...")
+        window._set_background_task_detail(
+            "Runtime preloading",
+            "Preloading Whisper...",
+            log_detail="Started preloading Whisper...",
+        )
+        window._refresh_task_center()
+
+        assert window._background_task_details["Runtime preloading"] == "Preloading Whisper..."
+        assert window._task_center_table.item(0, 2).text() == "Preloading Whisper..."
+        assert "Runtime preloading: Started preloading Whisper..." in window._task_center_log_view.toPlainText()
+        window._runtime_warmup = original_runtime_warmup
+        window._settings_save_timer.stop()
+    finally:
+        window._runtime_warmup = original_runtime_warmup
+        window.close()
+
+
+def test_task_center_dashboard_retry_action(qapp) -> None:
+    calls = []
+    window = PlayerWindow()
+    try:
+        window._set_task_center_retry("Retry demo", lambda: calls.append("retry"))
+        window._retry_task_center_action()
+
+        assert calls == ["retry"]
+        assert window.statusBar().currentMessage() == window._tr("task_center_retry_started")
+        window._settings_save_timer.stop()
+    finally:
+        window.close()

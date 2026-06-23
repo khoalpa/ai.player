@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import re
 import struct
 import time
 import wave
@@ -12,9 +11,11 @@ import requests
 from PIL import Image, ImageDraw
 
 from ai_player.core.config import RUNTIME_DIR, AppConfig
+from ai_player.core.redaction import compact_redacted_text
 from ai_player.services.asr import (
     ASSEMBLYAI_API_BASE,
     SPEECHMATICS_API_BASE,
+    effective_asr_provider,
     is_online_asr_provider,
     normalize_asr_provider,
 )
@@ -34,7 +35,8 @@ from ai_player.services.subtitle_ocr import (
 )
 from ai_player.services.transcript_cleanup import TranscriptCleaner
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
-from ai_player.services.tts import create_tts_provider, normalize_tts_provider, tts_output_suffix
+from ai_player.services.tts import create_tts_provider
+from ai_player.services.tts_base import normalize_tts_provider, tts_output_suffix
 from ai_player.services.whisper_runtime import (
     effective_whisper_compute_type,
     effective_whisper_device,
@@ -84,11 +86,12 @@ def preview_provider(kind: str, config: AppConfig) -> ProviderPreviewResult:
 
 
 def _preview_asr(config: AppConfig) -> tuple[str, str, str, str]:
-    provider = normalize_asr_provider(config.asr_provider)
+    provider = effective_asr_provider(config)
     if is_online_asr_provider(provider):
         _check_online_asr_endpoint(config, provider)
         return provider, "", "Online ASR endpoint accepted the configured credentials.", ""
 
+    provider = normalize_asr_provider(provider)
     device = effective_whisper_device(config.whisper_device)
     compute = effective_whisper_compute_type(config.whisper_compute_type, device)
     get_shared_whisper_model(
@@ -277,9 +280,4 @@ def _assemblyai_missing_preview_transcript(response: requests.Response) -> bool:
 
 
 def _preview_response_text(response: requests.Response) -> str:
-    raw = str(getattr(response, "text", "") or "").strip()
-    if not raw:
-        return ""
-    text = re.sub(r"<[^>]+>", " ", raw)
-    text = " ".join(text.split())
-    return text[:500]
+    return compact_redacted_text(getattr(response, "text", ""), strip_html=True)

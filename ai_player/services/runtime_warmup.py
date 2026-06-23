@@ -10,12 +10,8 @@ from ai_player.core.performance import measure_stage
 from ai_player.services.transcript_cleanup import TranscriptCleaner, is_online_transcript_cleanup_provider
 from ai_player.services.translation import effective_translator_provider, is_online_translation_provider
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
-from ai_player.services.tts import (
-    create_tts_provider,
-    is_online_tts_provider,
-    normalize_tts_provider,
-    tts_output_suffix,
-)
+from ai_player.services.tts import create_tts_provider
+from ai_player.services.tts_base import is_online_tts_provider, normalize_tts_provider, tts_output_suffix
 from ai_player.services.whisper_runtime import (
     effective_whisper_compute_type,
     effective_whisper_device,
@@ -47,21 +43,30 @@ def warm_runtime_components(
         check_cancelled()
         _emit(progress_callback, ui_text("warmup_loading_whisper", config.gui_language))
         timings["whisper_load_seconds"] = _time_call(lambda: _warm_whisper(config))
+        _emit_stage_loaded(progress_callback, config, "warmup_loaded_whisper", timings["whisper_load_seconds"])
 
     if _should_warm_translation(config):
         check_cancelled()
         _emit(progress_callback, ui_text("warmup_loading_translation", config.gui_language))
         timings["translation_seconds"] = _time_call(lambda: _warm_translation(config))
+        _emit_stage_loaded(progress_callback, config, "warmup_loaded_translation", timings["translation_seconds"])
 
     if _should_warm_transcript_cleanup(config):
         check_cancelled()
         _emit(progress_callback, ui_text("warmup_loading_transcript_cleanup", config.gui_language))
         timings["transcript_cleanup_seconds"] = _time_call(lambda: _warm_transcript_cleanup(config))
+        _emit_stage_loaded(
+            progress_callback,
+            config,
+            "warmup_loaded_transcript_cleanup",
+            timings["transcript_cleanup_seconds"],
+        )
 
     if _should_warm_tts(config):
         check_cancelled()
         _emit(progress_callback, ui_text("warmup_loading_tts", config.gui_language))
         timings["tts_seconds"] = _time_call(lambda: _warm_tts(config))
+        _emit_stage_loaded(progress_callback, config, "warmup_loaded_tts", timings["tts_seconds"])
 
     check_cancelled()
     return timings
@@ -161,3 +166,12 @@ def _time_call(callback: Callable[[], None]) -> float:
 def _emit(callback: Callable[[str], None] | None, message: str) -> None:
     if callback is not None:
         callback(message)
+
+
+def _emit_stage_loaded(
+    callback: Callable[[str], None] | None,
+    config: AppConfig,
+    key: str,
+    elapsed_seconds: float,
+) -> None:
+    _emit(callback, ui_text(key, config.gui_language, seconds=f"{elapsed_seconds:.1f}"))

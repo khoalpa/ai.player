@@ -8,7 +8,7 @@ from typing import Any
 from ai_player.core.config import AppConfig
 from ai_player.core.performance import measure_stage
 from ai_player.pipeline.export_plan import ExportCue, TranscriptCue
-from ai_player.services.tts import is_pathological_tts_duration, prepare_tts_text
+from ai_player.services.tts_base import is_pathological_tts_duration, prepare_tts_text
 from ai_player.workers.export_utils import _format_hhmmss, _nonempty_file, _probe_duration_seconds, _tts_disabled
 from ai_player.workers.worker_values import voice_tts_suffix
 

@@ -12,11 +12,8 @@ from pathlib import Path
 from ai_player.core.cli_encoding import prefer_utf8_stdio
 from ai_player.core.config import RUNTIME_DIR, AppConfig
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
-from ai_player.services.tts import (
-    create_tts_provider,
-    normalize_tts_provider,
-    tts_output_suffix,
-)
+from ai_player.services.tts import create_tts_provider
+from ai_player.services.tts_base import normalize_tts_provider, tts_output_suffix
 from ai_player.services.whisper_runtime import (
     effective_whisper_compute_type,
     effective_whisper_device,

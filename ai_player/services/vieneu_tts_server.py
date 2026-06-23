@@ -8,6 +8,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from ai_player.core.redaction import redact_secrets
 from ai_player.core.value_utils import clean_message as _core_clean_message
 from ai_player.core.value_utils import clean_text as _core_clean_text
 from ai_player.core.value_utils import finite_float as _core_finite_float
@@ -162,7 +163,7 @@ def _emit(payload: dict[str, Any]) -> None:
 
 
 def _clean_message(value: object) -> str:
-    return _core_clean_message(value)
+    return redact_secrets(_core_clean_message(value))
 
 
 def _clean_text(value: object) -> str:

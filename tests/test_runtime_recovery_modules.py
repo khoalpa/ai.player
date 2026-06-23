@@ -11,7 +11,7 @@ from ai_player.services.translation_runtime import (
     get_shared_vietnamese_translator,
     translation_runtime_key,
 )
-from ai_player.services.tts import tts_output_suffix
+from ai_player.services.tts_base import tts_output_suffix
 from ai_player.services.whisper_runtime import (
     clear_shared_whisper_models,
     effective_whisper_compute_type,

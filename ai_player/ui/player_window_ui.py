@@ -225,6 +225,30 @@ class PlayerUiMixin:
                 border: 1px solid #d8dee7;
                 border-radius: 8px;
             }
+            QFrame#headerActionGroup, QFrame#headerToolGroup {
+                background: #f7f9fb;
+                border: 1px solid #d8dee7;
+                border-radius: 8px;
+            }
+            QFrame#headerPrimaryGroup {
+                background: transparent;
+                border: 0;
+            }
+            QPushButton#taskStatusButton {
+                background: #eef6f4;
+                border: 1px solid #a8d6d0;
+                border-radius: 14px;
+                color: #0b514b;
+                font-size: 8.5pt;
+                font-weight: 600;
+                padding: 5px 8px;
+                max-width: 126px;
+            }
+            QPushButton#taskStatusButton[activeTasks="true"] {
+                background: #fff7e8;
+                border-color: #e9b75d;
+                color: #7a4b00;
+            }
             QFrame#videoPanel {
                 background: #ffffff;
                 border: 1px solid #d8dee7;
@@ -345,6 +369,11 @@ class PlayerUiMixin:
                 border: 1px solid #d8dee7;
                 border-radius: 8px;
             }
+            QFrame#displayOptionsPanel {
+                background: #f7f9fb;
+                border: 1px solid #d8dee7;
+                border-radius: 8px;
+            }
             QFrame#panelVisibilityBar {
                 background: transparent;
                 border: 0;
@@ -371,6 +400,28 @@ class PlayerUiMixin:
                 border-radius: 8px;
                 background: #ffffff;
                 top: -1px;
+            }
+            QFrame#settingsNav {
+                background: #eef2f6;
+                border: 1px solid #d8dee7;
+                border-radius: 8px;
+            }
+            QPushButton#settingsNavButton {
+                background: transparent;
+                border: 0;
+                border-radius: 6px;
+                color: #56657a;
+                font-size: 8.5pt;
+                font-weight: 600;
+                padding: 5px 6px;
+            }
+            QPushButton#settingsNavButton:hover {
+                background: #ffffff;
+                color: #146c63;
+            }
+            QPushButton#settingsNavButton:checked {
+                background: #ffffff;
+                color: #0b514b;
             }
             QTabBar::tab {
                 background: #eef2f6;

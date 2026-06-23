@@ -192,6 +192,8 @@ class AppConfig:
     asr_provider: str = DEFAULT_ASR_PROVIDER
     asr_api_base: str = ""
     asr_api_key: str = ""
+    asr_language_hints: str = ""
+    asr_fallback_to_whisper: bool = True
     asr_timeout_seconds: float = 600.0
     whisper_model: str = LOCAL_WHISPER_MODEL_PATH
     whisper_offline: bool = True
@@ -314,6 +316,8 @@ _APP_CONFIG_ENV_FIELDS = {
     "asr_provider": ("AI_PLAYER_ASR_PROVIDER", "str"),
     "asr_api_base": ("AI_PLAYER_ASR_API_BASE", "str"),
     "asr_api_key": ("AI_PLAYER_ASR_API_KEY", "str"),
+    "asr_language_hints": ("AI_PLAYER_ASR_LANGUAGE_HINTS", "str"),
+    "asr_fallback_to_whisper": ("AI_PLAYER_ASR_FALLBACK_TO_WHISPER", "bool"),
     "asr_timeout_seconds": ("AI_PLAYER_ASR_TIMEOUT_SECONDS", "float"),
     "whisper_model": ("AI_PLAYER_WHISPER_MODEL", "str"),
     "whisper_offline": ("AI_PLAYER_WHISPER_OFFLINE", "bool"),

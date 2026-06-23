@@ -52,8 +52,8 @@ def test_offline_models_manager_tab_exists(qapp) -> None:
         assert window._offline_models_preview_missing_button.property("i18n_key") == "offline_models_preview_missing"
         translation_required = tuple(Path(path) for path in window._offline_model_spec("translation")["required"])
         assert Path(LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH) / "model.bin" in translation_required
-        assert window._settings_tabs.count() == 6
-        window._settings_tabs.setCurrentIndex(2)
+        assert window._settings_tabs.count() == 8
+        window._settings_tabs.setCurrentIndex(4)
         qapp.processEvents()
         assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._offline_models_tab_widget)
         window._settings_save_timer.stop()

@@ -27,6 +27,7 @@ from ai_player.ui.player_window_media_browser import PlayerMediaBrowserMixin
 from ai_player.ui.player_window_meeting import PlayerMeetingMixin
 from ai_player.ui.player_window_offline_models import PlayerOfflineModelsMixin
 from ai_player.ui.player_window_provider_preview import PlayerProviderPreviewMixin
+from ai_player.ui.player_window_readiness import PlayerReadinessMixin
 from ai_player.ui.player_window_runtime import PlayerRuntimeMixin
 from ai_player.ui.player_window_settings import PlayerSettingsMixin
 from ai_player.ui.player_window_source_progress import PlayerSourceProgressMixin
@@ -41,8 +42,10 @@ from ai_player.ui.player_window_state import (
     TelegramChannelState,
     WorkerLifecycleState,
 )
+from ai_player.ui.player_window_task_center import PlayerTaskCenterMixin
 from ai_player.ui.player_window_transcript import PlayerTranscriptMixin
 from ai_player.ui.player_window_ui import PlayerUiMixin
+from ai_player.ui.runtime_tab_controller import RuntimeTabController
 from ai_player.ui.runtime_warmup_controller import RuntimeWarmupController
 from ai_player.ui.user_guide import UserGuideMixin
 from ai_player.ui.video_url_controller import VideoUrlController
@@ -50,6 +53,8 @@ from ai_player.ui.video_url_controller import VideoUrlController
 
 class PlayerWindow(
     UserGuideMixin,
+    PlayerReadinessMixin,
+    PlayerTaskCenterMixin,
     PlayerRuntimeMixin,
     PlayerProviderPreviewMixin,
     PlayerOfflineModelsMixin,
@@ -82,10 +87,11 @@ class PlayerWindow(
         self._runtime_state = RuntimeStatusState(
             last_wall=time.perf_counter(),
             last_process=time.process_time(),
-            last_system_cpu=self._read_system_cpu_times(),
+            last_system_cpu=RuntimeTabController.read_system_cpu_times(),
             gpu_text=self._tr("status_checking_gpu"),
             media_info_text=self._tr("status_no_video"),
         )
+        self._runtime_tab_controller = RuntimeTabController(self, self._runtime_state)
         self._playback_ui_state = PlaybackUiState(
             sidebar_panel_sizes=list(DEFAULT_SIDEBAR_PANEL_SIZES),
             dubbing_auto_enabled=self._config.dubbing_enabled_by_default,
@@ -142,8 +148,10 @@ class PlayerWindow(
         self._runtime_timer = QTimer(self)
         self._runtime_timer.setInterval(2000)
         self._runtime_timer.timeout.connect(self._refresh_runtime_tab)
+        self._runtime_timer.timeout.connect(self._refresh_task_center)
         self._runtime_timer.start()
         self._refresh_runtime_tab()
+        self._refresh_task_center()
 
         self.statusBar().showMessage(self._runtime_startup_status_message())
         self._start_runtime_warmup()

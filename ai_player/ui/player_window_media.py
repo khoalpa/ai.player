@@ -13,6 +13,7 @@ from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QFont, QPalette, QPixmap
 from PySide6.QtWidgets import QApplication, QFrame, QStyle
 
+from ai_player.core.redaction import redact_secrets
 from ai_player.services.ffmpeg import ffprobe_executable
 from ai_player.services.media_cache import playback_compat_cached_output_valid
 from ai_player.services.source_voice_filter import source_voice_filter_signature
@@ -766,7 +767,7 @@ class PlayerMediaMixin:
             self._last_subtitle_text = ""
             self._subtitle_overlay.hide()
             self.statusBar().showMessage(
-                self._tr("status_subtitle_load_failed").format(detail=_repair_mojibake(str(exc)))
+                self._tr("status_subtitle_load_failed").format(detail=_repair_mojibake(redact_secrets(exc)))
             )
 
     def _update_subtitle_overlay(self) -> None:

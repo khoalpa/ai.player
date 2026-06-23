@@ -8,7 +8,7 @@ from ai_player.services.translation import (
     configured_translation_backend,
     normalize_translator_provider,
 )
-from ai_player.services.tts import available_tts_providers, normalize_tts_provider
+from ai_player.services.tts_base import available_tts_providers, normalize_tts_provider
 from ai_player.services.video_source import is_supported_video_url, resolve_video_source
 
 

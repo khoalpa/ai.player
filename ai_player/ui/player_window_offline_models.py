@@ -29,6 +29,7 @@ from ai_player.core.config import (
     MODEL_ROOT,
     PROJECT_ROOT,
 )
+from ai_player.core.redaction import redact_secrets
 from ai_player.core.runtime_catalog import available_asr_models, available_ocr_models, available_speaker_gender_models
 from ai_player.services.translation import available_translation_models
 
@@ -381,6 +382,12 @@ class PlayerOfflineModelsMixin:
         self._offline_model_running_key = spec_key
         message = self._offline_model_started_message(spec_key, spec)
         self._offline_model_running_message = message
+        set_retry = getattr(self, "_set_task_center_retry", None)
+        if callable(set_retry):
+            set_retry(
+                self._tr("task_center_retry_offline_model").format(name=self._offline_model_name(spec_key)),
+                lambda key=spec_key: self._run_offline_model_script(key),
+            )
         self._offline_models_log.appendPlainText(message)
         self.statusBar().showMessage(message)
         self._set_offline_model_task_detail(message)
@@ -642,7 +649,10 @@ class PlayerOfflineModelsMixin:
         try:
             usage = shutil.disk_usage(MODEL_ROOT if MODEL_ROOT.exists() else PROJECT_ROOT)
         except OSError as exc:
-            return self._tr("offline_models_storage_summary_unavailable").format(size=model_size, detail=str(exc))
+            return self._tr("offline_models_storage_summary_unavailable").format(
+                size=model_size,
+                detail=redact_secrets(exc),
+            )
         return self._tr("offline_models_storage_summary").format(
             size=model_size,
             free=self._format_offline_model_size(usage.free),

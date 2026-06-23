@@ -57,7 +57,7 @@ from ai_player.services.source_voice_filter import (
 )
 from ai_player.services.speaker_voice_selector import normalize_speaker_gender_provider, normalize_voice_gender_mode
 from ai_player.services.translation import normalize_translator_provider
-from ai_player.services.tts import available_tts_providers, available_vieneu_modes, normalize_tts_provider
+from ai_player.services.tts_base import available_tts_providers, available_vieneu_modes, normalize_tts_provider
 from ai_player.services.video_source import is_supported_browser_video_url
 from ai_player.ui.player_window_media import DEFAULT_SIDEBAR_PANEL_SIZES
 from ai_player.ui.player_window_media_browser import DEFAULT_MEDIA_HOME_URL, build_media_browser_buttons
@@ -773,22 +773,58 @@ class PlayerLayoutMixin:
         self._source_bar = source_bar
         source_layout = QHBoxLayout(source_bar)
         source_layout.setContentsMargins(14, 9, 14, 9)
-        source_layout.setSpacing(6)
+        source_layout.setSpacing(8)
         title = QLabel("AI Player")
         title.setObjectName("appTitle")
         source_layout.addWidget(title)
         source_layout.addWidget(self._source_label, 1)
-        source_layout.addWidget(self._video_fullscreen_button)
-        source_layout.addWidget(self._panel_toggle_button)
-        source_layout.addWidget(self._panel_expand_button)
-        source_layout.addWidget(self._panel_collapse_button)
-        source_layout.addWidget(self._layout_reset_button)
-        source_layout.addWidget(self._help_button)
-        source_layout.addWidget(self._open_file_button)
-        source_layout.addWidget(self._open_url_button)
-        source_layout.addWidget(self._open_document_button)
-        source_layout.addWidget(self._meeting_button)
-        source_layout.addWidget(self._export_button)
+
+        self._task_status_button = QPushButton(self._tr("task_status_idle"))
+        self._task_status_button.setObjectName("taskStatusButton")
+        self._task_status_button.setMinimumWidth(0)
+        self._task_status_button.setMaximumWidth(126)
+        self._task_status_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self._task_status_button.setCursor(Qt.PointingHandCursor)
+        self._task_status_button.setToolTip(self._tr("task_status_tooltip"))
+        self._task_status_button.clicked.connect(
+            lambda: self._select_settings_tab_for_widget(self._task_center_tab_widget)
+        )
+        source_layout.addWidget(self._task_status_button)
+
+        source_actions = QFrame()
+        source_actions.setObjectName("headerActionGroup")
+        self._header_action_group = source_actions
+        source_actions_layout = QHBoxLayout(source_actions)
+        source_actions_layout.setContentsMargins(3, 3, 3, 3)
+        source_actions_layout.setSpacing(3)
+        source_actions_layout.addWidget(self._open_file_button)
+        source_actions_layout.addWidget(self._open_url_button)
+        source_actions_layout.addWidget(self._open_document_button)
+        source_layout.addWidget(source_actions)
+
+        primary_actions = QFrame()
+        primary_actions.setObjectName("headerPrimaryGroup")
+        self._header_primary_group = primary_actions
+        primary_actions_layout = QHBoxLayout(primary_actions)
+        primary_actions_layout.setContentsMargins(0, 0, 0, 0)
+        primary_actions_layout.setSpacing(6)
+        primary_actions_layout.addWidget(self._meeting_button)
+        primary_actions_layout.addWidget(self._export_button)
+        source_layout.addWidget(primary_actions)
+
+        tools = QFrame()
+        tools.setObjectName("headerToolGroup")
+        self._header_tool_group = tools
+        tools_layout = QHBoxLayout(tools)
+        tools_layout.setContentsMargins(3, 3, 3, 3)
+        tools_layout.setSpacing(2)
+        tools_layout.addWidget(self._video_fullscreen_button)
+        tools_layout.addWidget(self._panel_toggle_button)
+        tools_layout.addWidget(self._panel_expand_button)
+        tools_layout.addWidget(self._panel_collapse_button)
+        tools_layout.addWidget(self._layout_reset_button)
+        tools_layout.addWidget(self._help_button)
+        source_layout.addWidget(tools)
         source_layout.addWidget(self._ui_language_combo)
         self._header_controls = (
             self._video_fullscreen_button,
@@ -802,6 +838,10 @@ class PlayerLayoutMixin:
             self._meeting_button,
             self._export_button,
             self._ui_language_combo,
+            self._task_status_button,
+            self._header_action_group,
+            self._header_primary_group,
+            self._header_tool_group,
         )
 
         self._video_widget = QVideoWidget()
@@ -1124,6 +1164,15 @@ class PlayerLayoutMixin:
         self._subtitle_background_combo.setToolTip(self._tr("subtitle_background_tooltip"))
         self._subtitle_background_combo.setProperty("i18n_tooltip_key", "subtitle_background_tooltip")
         self._subtitle_background_combo.currentIndexChanged.connect(self._subtitle_size_changed)
+        self._display_options_button = self._make_button(
+            "display_options",
+            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
+        )
+        self._display_options_button.setObjectName("sourceButton")
+        self._display_options_button.setCheckable(True)
+        self._display_options_button.setToolTip(self._tr("display_options_tooltip"))
+        self._display_options_button.setProperty("i18n_tooltip_key", "display_options_tooltip")
+        self._display_options_button.toggled.connect(self._toggle_display_options)
 
         self._position_slider = QSlider(Qt.Horizontal)
         self._position_slider.setRange(0, 1000)
@@ -1185,7 +1234,7 @@ class PlayerLayoutMixin:
         timeline_layout.addWidget(self._audio_slider_control("original_audio", self._volume_slider))
 
         playback_layout = QHBoxLayout()
-        playback_layout.setSpacing(3)
+        playback_layout.setSpacing(6)
         playback_layout.addWidget(self._play_button)
         playback_layout.addWidget(self._pause_button)
         playback_layout.addWidget(self._stop_button)
@@ -1193,17 +1242,29 @@ class PlayerLayoutMixin:
         playback_layout.addWidget(self._next_page_button)
         playback_layout.addWidget(self._media_home_button)
         playback_layout.addWidget(self._telegram_browser_button)
-        playback_layout.addSpacing(2)
-        playback_layout.addWidget(self._aspect_combo)
-        playback_layout.addWidget(self._playback_quality_combo)
-        playback_layout.addWidget(self._subtitle_mode_combo)
-        playback_layout.addWidget(self._subtitle_size_combo)
-        playback_layout.addWidget(self._subtitle_color_combo)
-        playback_layout.addWidget(self._subtitle_background_combo)
+        playback_layout.addWidget(self._display_options_button)
         playback_layout.addStretch(1)
         playback_layout.addWidget(self._audio_slider_control("dub_audio", self._dub_volume_slider))
+        display_options = QFrame()
+        display_options.setObjectName("displayOptionsPanel")
+        self._display_options_panel = display_options
+        display_options_layout = QHBoxLayout(display_options)
+        display_options_layout.setContentsMargins(8, 6, 8, 6)
+        display_options_layout.setSpacing(6)
+        display_options_layout.addWidget(self._field_label("frame"))
+        display_options_layout.addWidget(self._aspect_combo)
+        display_options_layout.addWidget(self._playback_quality_combo)
+        display_options_layout.addSpacing(6)
+        display_options_layout.addWidget(self._field_label("subtitle"))
+        display_options_layout.addWidget(self._subtitle_mode_combo)
+        display_options_layout.addWidget(self._subtitle_size_combo)
+        display_options_layout.addWidget(self._subtitle_color_combo)
+        display_options_layout.addWidget(self._subtitle_background_combo)
+        display_options_layout.addStretch(1)
+        display_options.hide()
         controls_layout.addLayout(timeline_layout)
         controls_layout.addLayout(playback_layout)
+        controls_layout.addWidget(display_options)
 
         panel_visibility_bar = QFrame()
         panel_visibility_bar.setObjectName("panelVisibilityBar")
@@ -1291,6 +1352,8 @@ class PlayerLayoutMixin:
         self._asr_model_combo.setCurrentIndex(max(0, asr_model_index))
         self._asr_api_base_edit = QLineEdit(self._config.asr_api_base)
         self._asr_api_base_edit.setPlaceholderText(self._tr("asr_api_base_placeholder"))
+        self._asr_language_hints_edit = QLineEdit(self._config.asr_language_hints)
+        self._asr_language_hints_edit.setPlaceholderText(self._tr("asr_language_hints_placeholder"))
         self._asr_api_key_edit = QLineEdit(self._config.asr_api_key)
         self._asr_api_key_edit.setPlaceholderText(self._tr("asr_api_key_placeholder"))
         self._asr_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
@@ -1870,17 +1933,19 @@ class PlayerLayoutMixin:
         asr_grid.addWidget(self._asr_model_combo, 1, 1)
         asr_grid.addWidget(self._field_label("asr_api_base"), 2, 0)
         asr_grid.addWidget(self._asr_api_base_edit, 2, 1)
-        asr_grid.addWidget(self._field_label("asr_api_key"), 3, 0)
-        asr_grid.addWidget(self._api_key_control(self._asr_api_key_edit, self._asr_api_key_status), 3, 1)
-        asr_grid.addWidget(self._field_label("whisper_device"), 4, 0)
-        asr_grid.addWidget(self._whisper_device_combo, 4, 1)
-        asr_grid.addWidget(self._field_label("whisper_compute"), 5, 0)
-        asr_grid.addWidget(self._whisper_compute_combo, 5, 1)
-        asr_grid.addWidget(self._field_label("whisper_beam"), 6, 0)
-        asr_grid.addWidget(self._slider_row(self._whisper_beam_slider, self._whisper_beam_value), 6, 1)
-        asr_grid.addWidget(self._whisper_vad_check, 7, 0, 1, 2)
-        asr_grid.addWidget(self._whisper_offline_check, 8, 0, 1, 2)
-        add_provider_preview_row(asr_grid, self, "asr", 9)
+        asr_grid.addWidget(self._field_label("asr_language_hints"), 3, 0)
+        asr_grid.addWidget(self._asr_language_hints_edit, 3, 1)
+        asr_grid.addWidget(self._field_label("asr_api_key"), 4, 0)
+        asr_grid.addWidget(self._api_key_control(self._asr_api_key_edit, self._asr_api_key_status), 4, 1)
+        asr_grid.addWidget(self._field_label("whisper_device"), 5, 0)
+        asr_grid.addWidget(self._whisper_device_combo, 5, 1)
+        asr_grid.addWidget(self._field_label("whisper_compute"), 6, 0)
+        asr_grid.addWidget(self._whisper_compute_combo, 6, 1)
+        asr_grid.addWidget(self._field_label("whisper_beam"), 7, 0)
+        asr_grid.addWidget(self._slider_row(self._whisper_beam_slider, self._whisper_beam_value), 7, 1)
+        asr_grid.addWidget(self._whisper_vad_check, 8, 0, 1, 2)
+        asr_grid.addWidget(self._whisper_offline_check, 9, 0, 1, 2)
+        add_provider_preview_row(asr_grid, self, "asr", 10)
 
         ocr_grid = QGridLayout()
         ocr_grid.setHorizontalSpacing(8)
@@ -2086,12 +2151,16 @@ class PlayerLayoutMixin:
             advanced_playback_grid=advanced_playback_grid,
             advanced_capture_grid=advanced_capture_grid,
         )
+        readiness_tab = self._readiness_tab()
+        task_center_tab = self._task_center_tab()
         transcript_tab = build_transcript_settings_tab(self)
         runtime_tab = self._runtime_tab()
         offline_models_tab = self._offline_models_tab()
 
         self._settings_tabs = build_settings_tabs(
             self,
+            readiness_tab=readiness_tab,
+            task_center_tab=task_center_tab,
             basic_tab=basic_tab,
             models_tab=models_tab,
             offline_models_tab=offline_models_tab,
@@ -2141,6 +2210,10 @@ class PlayerLayoutMixin:
         self._sync_media_browser_state()
         self._sync_panel_visibility_buttons()
 
+    def _toggle_display_options(self, visible: bool) -> None:
+        if hasattr(self, "_display_options_panel"):
+            self._display_options_panel.setVisible(bool(visible))
+
     def _apply_control_tooltips(self) -> None:
         tooltips = (
             ("_ui_language_combo", "language"),
@@ -2161,6 +2234,7 @@ class PlayerLayoutMixin:
             ("_asr_provider_combo", "asr_provider"),
             ("_asr_model_combo", "asr_model"),
             ("_asr_api_base_edit", "asr_api_base_placeholder"),
+            ("_asr_language_hints_edit", "asr_language_hints_placeholder"),
             ("_asr_api_key_edit", "asr_api_key_placeholder"),
             ("_ocr_provider_combo", "ocr_provider"),
             ("_ocr_model_combo", "ocr_model"),

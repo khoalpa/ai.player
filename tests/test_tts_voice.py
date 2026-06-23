@@ -7,7 +7,8 @@ import queue
 import pytest
 
 from ai_player.core.config import AppConfig
-from ai_player.services import tts, vieneu_tts_server
+from ai_player.services import tts_base, tts_edge, tts_online, tts_vieneu, vieneu_tts_server
+from ai_player.services.tts_voices import voice_gender
 
 
 class _FakeResponse:
@@ -35,7 +36,7 @@ class _FakeResponse:
     ],
 )
 def test_normalize_tts_provider(value: str, expected: str) -> None:
-    assert tts.normalize_tts_provider(value) == expected
+    assert tts_base.normalize_tts_provider(value) == expected
 
 
 @pytest.mark.parametrize(
@@ -43,12 +44,12 @@ def test_normalize_tts_provider(value: str, expected: str) -> None:
     [("standard", "standard"), ("api", "turbo"), ("remote", "turbo"), ("cuda", "fast")],
 )
 def test_normalize_vieneu_mode(value: str, expected: str) -> None:
-    assert tts.normalize_vieneu_mode(value) == expected
+    assert tts_vieneu.normalize_vieneu_mode(value) == expected
 
 
 @pytest.mark.parametrize(("value", "expected"), [("gpu", "cuda"), ("cpu", "cpu"), ("weird", "auto")])
 def test_normalize_vieneu_device(value: str, expected: str) -> None:
-    assert tts.normalize_vieneu_device(value) == expected
+    assert tts_vieneu.normalize_vieneu_device(value) == expected
 
 
 @pytest.mark.parametrize(
@@ -65,17 +66,17 @@ def test_normalize_vieneu_device(value: str, expected: str) -> None:
     ],
 )
 def test_voice_gender(provider: str, voice: str, expected: str) -> None:
-    assert tts.voice_gender(provider, voice) == expected
+    assert voice_gender(provider, voice) == expected
 
 
 def test_online_tts_provider_options_include_confirmed_providers() -> None:
-    assert {provider.id for provider in tts.available_tts_providers()} >= {
+    assert {provider.id for provider in tts_base.available_tts_providers()} >= {
         "azure_tts",
         "google_tts",
         "amazon_polly",
     }
-    assert tts.is_online_tts_provider("azure")
-    assert tts.tts_output_suffix("google_tts") == "mp3"
+    assert tts_base.is_online_tts_provider("azure")
+    assert tts_base.tts_output_suffix("google_tts") == "mp3"
 
 
 @pytest.mark.parametrize(
@@ -88,17 +89,17 @@ def test_online_tts_provider_options_include_confirmed_providers() -> None:
     ],
 )
 def test_compatible_edge_voice_id_falls_back_by_gender(voice: str, expected: str) -> None:
-    assert tts._compatible_edge_voice_id(voice) == expected
+    assert tts_edge.compatible_edge_voice_id(voice) == expected
 
 
 def test_vieneu_preferred_voice_fallbacks_use_southern_voices_first() -> None:
     turbo_config = AppConfig(vieneu_tts_mode="turbo")
     standard_config = AppConfig(vieneu_tts_mode="standard")
 
-    assert tts._preferred_voice_ids("vieneu", turbo_config, "female")[0] == "Thục Đoan"
-    assert tts._preferred_voice_ids("vieneu", turbo_config, "male")[0] == "Xuân Vĩnh"
-    assert tts._preferred_voice_ids("vieneu", standard_config, "female")[0] == "Doan"
-    assert tts._preferred_voice_ids("vieneu", standard_config, "male")[0] == "Vinh"
+    assert tts_vieneu._preferred_vieneu_voice_ids(turbo_config, "female")[0] == "Thục Đoan"
+    assert tts_vieneu._preferred_vieneu_voice_ids(turbo_config, "male")[0] == "Xuân Vĩnh"
+    assert tts_vieneu._preferred_vieneu_voice_ids(standard_config, "female")[0] == "Doan"
+    assert tts_vieneu._preferred_vieneu_voice_ids(standard_config, "male")[0] == "Vinh"
 
 
 def test_removed_remote_vieneu_core_uses_local_fallbacks(monkeypatch) -> None:
@@ -109,13 +110,13 @@ def test_removed_remote_vieneu_core_uses_local_fallbacks(monkeypatch) -> None:
         vieneu_tts_python="D:/missing/python.exe",
         vieneu_tts_runtime="subprocess",
     )
-    monkeypatch.setattr(tts, "_runtime_has_cuda", lambda: True)
+    monkeypatch.setattr(tts_vieneu, "_runtime_has_cuda", lambda: True)
 
-    candidates = tts._vieneu_fallback_configs(config)
+    candidates = tts_vieneu._vieneu_fallback_configs(config)
 
     assert len(candidates) > 1
     assert all(
-        tts.resolve_vieneu_effective_mode(
+        tts_vieneu.resolve_vieneu_effective_mode(
             candidate.vieneu_tts_core,
             candidate.vieneu_tts_mode,
             candidate.vieneu_tts_device,
@@ -126,7 +127,7 @@ def test_removed_remote_vieneu_core_uses_local_fallbacks(monkeypatch) -> None:
 
 
 def test_vieneu_subprocess_requires_valid_python() -> None:
-    provider = tts.VieNeuTTSProvider(AppConfig(vieneu_tts_python="D:/missing/python.exe"))
+    provider = tts_vieneu.VieNeuTTSProvider(AppConfig(vieneu_tts_python="D:/missing/python.exe"))
 
     assert not provider._should_use_subprocess(provider._config)
 
@@ -134,14 +135,14 @@ def test_vieneu_subprocess_requires_valid_python() -> None:
 def test_removed_remote_vieneu_core_uses_turbo_voice_catalog() -> None:
     config = AppConfig(vieneu_tts_core="remote", tts_voice="Thục Đoan")
 
-    assert [voice.id.split(" (", 1)[0] for voice in tts.available_voices("vieneu", config)] == [
+    assert [voice.id.split(" (", 1)[0] for voice in tts_vieneu.vieneu_voices(config)] == [
         "Bích Ngọc",
         "Phạm Tuyên",
         "Thục Đoan",
         "Xuân Vĩnh",
     ]
-    assert tts._compatible_vieneu_voice_id(config, "Thục Đoan").startswith("Thục Đoan")
-    assert tts._compatible_vieneu_voice_id(config, "Xuân Vĩnh").startswith("Xuân Vĩnh")
+    assert tts_vieneu._compatible_vieneu_voice_id(config, "Thục Đoan").startswith("Thục Đoan")
+    assert tts_vieneu._compatible_vieneu_voice_id(config, "Xuân Vĩnh").startswith("Xuân Vĩnh")
 
 
 def test_removed_remote_vieneu_core_rejects_empty_audio_as_local(monkeypatch, tmp_path) -> None:
@@ -157,16 +158,16 @@ def test_removed_remote_vieneu_core_rejects_empty_audio_as_local(monkeypatch, tm
                 handle.write(b"")
 
     config = AppConfig(vieneu_tts_core="remote", vieneu_tts_api_base="http://localhost:23333/v1")
-    provider = tts.VieNeuTTSProvider(config)
-    monkeypatch.setattr(tts, "_get_vieneu_engine", lambda _config: FakeEngine())
+    provider = tts_vieneu.VieNeuTTSProvider(config)
+    monkeypatch.setattr(tts_vieneu, "_get_vieneu_engine", lambda _config: FakeEngine())
 
-    with pytest.raises(tts.TTSError, match="audio"):
+    with pytest.raises(tts_base.TTSError, match="audio"):
         provider._synthesize_in_process(config, "xin chao", tmp_path / "out.wav", "Doan")
 
 
 def test_removed_remote_vieneu_engine_kwargs_do_not_use_api_base() -> None:
-    kwargs = tts._build_vieneu_engine_kwargs(
-        mode=tts.normalize_vieneu_mode("remote"),
+    kwargs = tts_vieneu._build_vieneu_engine_kwargs(
+        mode=tts_vieneu.normalize_vieneu_mode("remote"),
         api_base="http://localhost:23333/v1",
         model_name="pnnbao-ump/VieNeu-TTS",
         device="cuda",
@@ -180,7 +181,7 @@ def test_removed_remote_vieneu_engine_kwargs_do_not_use_api_base() -> None:
 
 def test_removed_remote_vieneu_subprocess_kwargs_do_not_use_api_base() -> None:
     kwargs = vieneu_tts_server._engine_kwargs(
-        mode=tts.normalize_vieneu_mode("remote"),
+        mode=tts_vieneu.normalize_vieneu_mode("remote"),
         api_base="http://localhost:23333/v1",
         model_name="pnnbao-ump/VieNeu-TTS",
         device="cuda",
@@ -202,36 +203,36 @@ def test_vieneu_effective_paths_fall_back_to_bundled_files(monkeypatch, tmp_path
     decoder.write_bytes(b"decoder")
     encoder.write_bytes(b"encoder")
     codec.mkdir()
-    monkeypatch.setattr(tts, "INTERNAL_VIENEU_TURBO_DECODER", str(decoder))
-    monkeypatch.setattr(tts, "INTERNAL_VIENEU_TURBO_ENCODER", str(encoder))
-    monkeypatch.setattr(tts, "INTERNAL_VIENEU_STANDARD_CODEC", str(codec))
+    monkeypatch.setattr(tts_vieneu, "INTERNAL_VIENEU_TURBO_DECODER", str(decoder))
+    monkeypatch.setattr(tts_vieneu, "INTERNAL_VIENEU_TURBO_ENCODER", str(encoder))
+    monkeypatch.setattr(tts_vieneu, "INTERNAL_VIENEU_STANDARD_CODEC", str(codec))
     config = AppConfig(
         vieneu_tts_decoder_path="D:/missing/decoder.onnx",
         vieneu_tts_encoder_path="D:/missing/encoder.onnx",
         vieneu_tts_standard_codec_path="D:/missing/codec",
     )
 
-    assert tts._effective_vieneu_decoder_path(config) == str(decoder)
-    assert tts._effective_vieneu_encoder_path(config) == str(encoder)
-    assert tts._effective_vieneu_standard_codec_path(config) == str(codec)
+    assert tts_vieneu._effective_vieneu_decoder_path(config) == str(decoder)
+    assert tts_vieneu._effective_vieneu_encoder_path(config) == str(encoder)
+    assert tts_vieneu._effective_vieneu_standard_codec_path(config) == str(codec)
 
 
 def test_vieneu_import_root_falls_back_to_bundled_runtime(tmp_path) -> None:
-    assert tts._vieneu_import_root(tmp_path).name == "vieneu_tts"
+    assert tts_vieneu._vieneu_import_root(tmp_path).name == "vieneu_tts"
 
 
 def test_tts_cache_text_normalizes_unicode_and_format_chars() -> None:
-    assert tts._cache_text("Cafe\u0301\u200b") == "Caf\u00e9"
+    assert tts_base._cache_text("Cafe\u0301\u200b") == "Caf\u00e9"
 
 
 @pytest.mark.parametrize("value", ["Ah...", "ừm", "hmmm", "mm mm", "..."])
 def test_non_speech_tts_text_detects_filler_sounds(value: str) -> None:
-    assert tts.is_non_speech_tts_text(value)
+    assert tts_base.is_non_speech_tts_text(value)
 
 
 @pytest.mark.parametrize("value", ["xin chào", "có", "AI Player"])
 def test_non_speech_tts_text_keeps_spoken_words(value: str) -> None:
-    assert not tts.is_non_speech_tts_text(value)
+    assert not tts_base.is_non_speech_tts_text(value)
 
 
 @pytest.mark.parametrize(
@@ -244,21 +245,21 @@ def test_non_speech_tts_text_keeps_spoken_words(value: str) -> None:
     ],
 )
 def test_prepare_tts_text_removes_source_script_residue(value: str, expected: str) -> None:
-    assert tts.prepare_tts_text(value, "vi") == expected
+    assert tts_base.prepare_tts_text(value, "vi") == expected
 
 
 def test_pathological_tts_duration_detects_short_text_that_runs_too_long() -> None:
-    assert tts.is_pathological_tts_duration("l\u00e0 g\u00ec", 5.0, target_duration_seconds=1.0)
-    assert not tts.is_pathological_tts_duration("l\u00e0 g\u00ec", 1.2, target_duration_seconds=1.0)
+    assert tts_base.is_pathological_tts_duration("l\u00e0 g\u00ec", 5.0, target_duration_seconds=1.0)
+    assert not tts_base.is_pathological_tts_duration("l\u00e0 g\u00ec", 1.2, target_duration_seconds=1.0)
 
 
 def test_pathological_tts_duration_ignores_invalid_durations() -> None:
-    assert not tts.is_pathological_tts_duration("hello", "bad", target_duration_seconds=float("inf"))
-    assert not tts.is_pathological_tts_duration("hello", float("nan"), target_duration_seconds="bad")
+    assert not tts_base.is_pathological_tts_duration("hello", "bad", target_duration_seconds=float("inf"))
+    assert not tts_base.is_pathological_tts_duration("hello", float("nan"), target_duration_seconds="bad")
 
 
 def test_vieneu_infer_kwargs_sanitize_invalid_numeric_values() -> None:
-    kwargs = tts._build_vieneu_infer_kwargs(
+    kwargs = tts_vieneu._build_vieneu_infer_kwargs(
         engine=object(),
         text="hello",
         voice="voice",
@@ -273,7 +274,7 @@ def test_vieneu_infer_kwargs_sanitize_invalid_numeric_values() -> None:
 def test_tts_cache_path_sanitizes_invalid_vieneu_numeric_config(tmp_path) -> None:
     config = AppConfig(vieneu_tts_temperature=float("inf"), vieneu_tts_max_chars_chunk="bad")
 
-    cache_path = tts._tts_cache_path("vieneu", config, "hello", "voice", tmp_path / "out.wav")
+    cache_path = tts_base._tts_cache_path("vieneu", config, "hello", "voice", tmp_path / "out.wav")
 
     assert cache_path.suffix == ".wav"
 
@@ -283,12 +284,12 @@ def test_vieneu_server_read_response_rejects_invalid_json_payload() -> None:
         def poll(self):
             return None
 
-    client = tts.VieNeuServerClient.__new__(tts.VieNeuServerClient)
+    client = tts_vieneu.VieNeuServerClient.__new__(tts_vieneu.VieNeuServerClient)
     client._process = FakeProcess()
     client._output_queue = queue.Queue()
     client._output_queue.put("AI_PLAYER_JSON:not-json\n")
 
-    with pytest.raises(tts.TTSError, match="invalid JSON"):
+    with pytest.raises(tts_base.TTSError, match="invalid JSON"):
         client._read_response(timeout_seconds=1)
 
 
@@ -297,12 +298,12 @@ def test_vieneu_server_read_response_requires_json_object() -> None:
         def poll(self):
             return None
 
-    client = tts.VieNeuServerClient.__new__(tts.VieNeuServerClient)
+    client = tts_vieneu.VieNeuServerClient.__new__(tts_vieneu.VieNeuServerClient)
     client._process = FakeProcess()
     client._output_queue = queue.Queue()
     client._output_queue.put("AI_PLAYER_JSON:[]\n")
 
-    with pytest.raises(tts.TTSError, match="invalid JSON payload"):
+    with pytest.raises(tts_base.TTSError, match="invalid JSON payload"):
         client._read_response(timeout_seconds=1)
 
 
@@ -310,13 +311,13 @@ def test_cached_tts_provider_reuses_cached_audio(monkeypatch, tmp_path) -> None:
     calls: list[str] = []
     cache_path = tmp_path / "cache.wav"
 
-    class FakeProvider(tts.BaseTTSProvider):
+    class FakeProvider(tts_base.BaseTTSProvider):
         def synthesize(self, text, output_path, voice=None) -> None:
             calls.append(str(text))
             output_path.write_bytes(b"audio")
 
-    monkeypatch.setattr(tts, "_tts_cache_path", lambda *_args, **_kwargs: cache_path)
-    provider = tts.CachedTTSProvider(FakeProvider(), AppConfig(), "vieneu")
+    monkeypatch.setattr(tts_base, "_tts_cache_path", lambda *_args, **_kwargs: cache_path)
+    provider = tts_base.CachedTTSProvider(FakeProvider(), AppConfig(), "vieneu")
 
     provider.synthesize("hello", tmp_path / "first.wav", voice="Doan")
     provider.synthesize("hello", tmp_path / "second.wav", voice="Doan")
@@ -343,9 +344,9 @@ def test_edge_tts_provider_retries_empty_audio(monkeypatch, tmp_path) -> None:
             with open(path, "wb") as handle:
                 handle.write(b"audio")
 
-    monkeypatch.setattr(tts.edge_tts, "Communicate", FakeCommunicate)
-    monkeypatch.setattr(tts.time, "sleep", lambda _seconds: None)
-    provider = tts.EdgeTTSProvider(AppConfig(tts_voice="Doan"))
+    monkeypatch.setattr(tts_edge.edge_tts, "Communicate", FakeCommunicate)
+    monkeypatch.setattr(tts_edge.time, "sleep", lambda _seconds: None)
+    provider = tts_edge.EdgeTTSProvider(AppConfig(tts_voice="Doan"))
 
     provider.synthesize(" xin chao ", tmp_path / "out.mp3")
 
@@ -360,8 +361,8 @@ def test_azure_online_tts_posts_ssml(monkeypatch, tmp_path) -> None:
         calls.append((url, kwargs))
         return _FakeResponse(content=b"azure-audio")
 
-    monkeypatch.setattr(tts.requests, "post", fake_post)
-    provider = tts.OnlineTTSProvider(
+    monkeypatch.setattr(tts_online.requests, "post", fake_post)
+    provider = tts_online.OnlineTTSProvider(
         AppConfig(tts_provider="azure_tts", tts_api_key="key", tts_api_region="eastus"),
         "azure_tts",
     )
@@ -381,8 +382,8 @@ def test_google_online_tts_decodes_audio_content(monkeypatch, tmp_path) -> None:
         calls.append((url, kwargs))
         return _FakeResponse(payload={"audioContent": base64.b64encode(b"google-audio").decode("ascii")})
 
-    monkeypatch.setattr(tts.requests, "post", fake_post)
-    provider = tts.OnlineTTSProvider(AppConfig(tts_api_key="google-key"), "google_tts")
+    monkeypatch.setattr(tts_online.requests, "post", fake_post)
+    provider = tts_online.OnlineTTSProvider(AppConfig(tts_api_key="google-key"), "google_tts")
 
     provider.synthesize("Xin chao", tmp_path / "out.mp3", voice="vi-VN-Neural2-A")
 
@@ -406,15 +407,29 @@ def test_google_online_tts_error_uses_provider_message(monkeypatch, tmp_path) ->
             },
         )
 
-    monkeypatch.setattr(tts.requests, "post", fake_post)
-    provider = tts.OnlineTTSProvider(AppConfig(tts_api_key="bad-key"), "google_tts")
+    monkeypatch.setattr(tts_online.requests, "post", fake_post)
+    provider = tts_online.OnlineTTSProvider(AppConfig(tts_api_key="bad-key"), "google_tts")
 
-    with pytest.raises(tts.TTSError) as error:
+    with pytest.raises(tts_base.TTSError) as error:
         provider.synthesize("Xin chao", tmp_path / "out.mp3", voice="vi-VN-Neural2-A")
 
     message = str(error.value)
     assert "API key not valid" in message
     assert "details" not in message
+
+
+def test_tts_response_error_redacts_url_query_key() -> None:
+    response = _FakeResponse(
+        status_code=400,
+        text="failed https://texttospeech.googleapis.com/v1/text:synthesize?key=tts-secret",
+    )
+
+    with pytest.raises(tts_base.TTSError) as error:
+        tts_base.raise_for_tts_response(response, "Google TTS")
+
+    message = str(error.value)
+    assert "tts-secret" not in message
+    assert "key=[redacted]" in message
 
 
 def test_amazon_polly_online_tts_signs_request(monkeypatch, tmp_path) -> None:
@@ -424,8 +439,8 @@ def test_amazon_polly_online_tts_signs_request(monkeypatch, tmp_path) -> None:
         calls.append((url, kwargs))
         return _FakeResponse(content=b"polly-audio")
 
-    monkeypatch.setattr(tts.requests, "post", fake_post)
-    provider = tts.OnlineTTSProvider(
+    monkeypatch.setattr(tts_online.requests, "post", fake_post)
+    provider = tts_online.OnlineTTSProvider(
         AppConfig(
             tts_api_key="access",
             tts_api_secret="secret",

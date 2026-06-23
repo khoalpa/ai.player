@@ -17,7 +17,8 @@ from ai_player.core.config import AppConfig
 from ai_player.core.i18n import ui_text
 from ai_player.core.offline_env import OfflineEnvironmentToken, pop_hf_offline_environment, push_hf_offline_environment
 from ai_player.core.performance import measure_stage
-from ai_player.services.asr import is_online_asr_provider, transcribe_online_asr
+from ai_player.core.redaction import redact_secrets
+from ai_player.services.asr import should_use_online_asr, transcribe_asr
 from ai_player.services.capture_sources import capture_system_microphone_audio
 from ai_player.services.ffmpeg import concat_escape, ffmpeg_executable, ffplay_executable, terminate_process
 from ai_player.services.transcript_cleanup import TranscriptCleaner
@@ -103,7 +104,8 @@ class MeetingWorker(QThread):
             transcript_path = self._output_dir / f"{stem}.txt"
 
             temp_dir = Path(tempfile.mkdtemp(prefix="ai-player-meeting-live-"))
-            self._model = self._load_model()
+            if not should_use_online_asr(self._config, language=self._selected_whisper_language()):
+                self._model = self._load_model()
             self._translator = get_shared_vietnamese_translator(self._config)
             self._tts_provider = None if _tts_disabled(self._config) else create_tts_provider(self._config)
             self._start_playback_worker()
@@ -180,7 +182,7 @@ class MeetingWorker(QThread):
             )
         except Exception as exc:
             LOGGER.exception("Meeting worker failed.")
-            self.failed.emit(str(exc))
+            self.failed.emit(redact_secrets(exc))
         finally:
             self._finish_playback_worker(wait=False)
             if self._tts_provider is not None:
@@ -194,7 +196,7 @@ class MeetingWorker(QThread):
         return push_hf_offline_environment(self._config.whisper_offline)
 
     def _validate_whisper_model(self) -> None:
-        if is_online_asr_provider(self._config.asr_provider):
+        if should_use_online_asr(self._config, language=self._selected_whisper_language()):
             return
         if self._config.whisper_offline and not Path(self._config.whisper_model).exists():
             raise RuntimeError(self._tr("meeting_error_missing_whisper_offline"))
@@ -227,20 +229,28 @@ class MeetingWorker(QThread):
         return self._model
 
     def _transcribe_segments(self, audio_path: Path):
-        if is_online_asr_provider(self._config.asr_provider):
-            return transcribe_online_asr(self._config, audio_path, language=self._selected_whisper_language())
-        if self._model is None:
-            self._model = self._load_model()
-        kwargs = whisper_transcribe_kwargs(self._config, self._selected_whisper_language())
-        return transcribe_model_with_device_fallback(
-            self._model,
+        language = self._selected_whisper_language()
+
+        def transcribe_local():
+            if self._model is None:
+                self._model = self._load_model()
+            kwargs = whisper_transcribe_kwargs(self._config, language)
+            return transcribe_model_with_device_fallback(
+                self._model,
+                audio_path,
+                kwargs,
+                whisper_device=lambda: self._whisper_device,
+                whisper_compute_type=lambda: self._whisper_compute_type,
+                emit_status=lambda _key: None,
+                switch_whisper_to_cpu=lambda exc: self._switch_whisper_to_cpu(exc),
+                retry_cpu_compute=False,
+            )
+
+        return transcribe_asr(
+            self._config,
             audio_path,
-            kwargs,
-            whisper_device=lambda: self._whisper_device,
-            whisper_compute_type=lambda: self._whisper_compute_type,
-            emit_status=lambda _key: None,
-            switch_whisper_to_cpu=lambda exc: self._switch_whisper_to_cpu(exc),
-            retry_cpu_compute=False,
+            language=language,
+            local_transcriber=transcribe_local,
         )
 
     def _process_chunk(

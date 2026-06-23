@@ -28,6 +28,7 @@ def test_runtime_privacy_reports_online_provider_data_types() -> None:
     by_feature = {item.feature: item for item in items}
 
     assert by_feature["ASR"].data_type == "audio"
+    assert by_feature["ASR"].detail_key == "runtime_privacy_detail_asr"
     assert by_feature["Translation"].data_type == "text"
     assert by_feature["TTS"].provider == "edge"
     assert by_feature["OCR"].data_type == "image"
@@ -37,6 +38,19 @@ def test_runtime_privacy_reports_online_provider_data_types() -> None:
     summary = runtime_privacy.format_runtime_privacy(items, offline_text="Offline")
     assert "ASR: assemblyai (audio)" in summary
     assert "OCR: google_vision (image)" in summary
+
+
+def test_runtime_privacy_uses_translated_details_when_available() -> None:
+    config = AppConfig(asr_provider="assemblyai")
+    items = runtime_privacy.build_runtime_privacy(config)
+
+    summary = runtime_privacy.format_runtime_privacy(
+        items,
+        offline_text="Offline",
+        translate=lambda key: {"runtime_privacy_detail_asr": "Âm thanh có thể được gửi đi."}.get(key, key),
+    )
+
+    assert "ASR: assemblyai (audio) - Âm thanh có thể được gửi đi." in summary
 
 
 def test_runtime_privacy_ignores_disabled_cleanup_and_non_ai_speaker_gender() -> None:

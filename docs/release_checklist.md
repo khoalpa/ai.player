@@ -8,6 +8,9 @@ Use this checklist before sharing a build.
   smoke, model, and distribution expectations for this build.
 - Confirm the working tree contains only intended changes with `git status --short --branch`.
 - Review untracked files with `git ls-files -o --exclude-standard` and either add them intentionally or move generated scratch files under ignored paths.
+- Run `.\scripts\check_release_worktree.ps1 -FailOnModified` before creating a
+  release artifact. This fails on untracked source/plugin files unless they are
+  explicitly allowed with `-AllowUntrackedPath`.
 - Review optional plugin scope against `docs\plugin_policy.md`, especially any
   untracked source under `plugins\`.
 - Review binary fixture changes separately with `git diff --stat` so regenerated samples are not bundled by accident.
@@ -56,7 +59,11 @@ Use this checklist before sharing a build.
 
 ## Portable Build
 
-- Build with `.\scripts\build_portable.ps1`.
+- Build with `.\scripts\build_portable.ps1`. The script runs
+  `.\scripts\check_release_worktree.ps1 -FailOnModified` by default and should
+  fail if source/plugin files are untracked or tracked files are modified.
+- Use `.\scripts\build_portable.ps1 -SkipReleaseWorktreeCheck` only for local
+  development builds that will not be shared.
 - List available signing certificates with `.\scripts\build_portable.ps1 -ListCodeSigningCerts`.
 - On machines with enterprise code integrity enforcement, build with `.\scripts\build_portable.ps1 -RequireSignature`.
 - If multiple signing certificates are available, add `-CodeSigningCertThumbprint "<real-thumbprint>"`.

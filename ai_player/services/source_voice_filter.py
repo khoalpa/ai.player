@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from ai_player.core.redaction import redact_secrets
 from ai_player.services.demucs_separation import (
     DemucsSeparationError,
     demucs_available,
@@ -422,7 +423,7 @@ def _nonempty_file(path: Path) -> bool:
 
 
 def _exception_summary(exc: Exception, max_length: int = 240) -> str:
-    message = str(exc).strip() or exc.__class__.__name__
+    message = redact_secrets(str(exc).strip() or exc.__class__.__name__)
     message = " ".join(message.split())
     if len(message) > max_length:
         return f"{message[: max_length - 3]}..."

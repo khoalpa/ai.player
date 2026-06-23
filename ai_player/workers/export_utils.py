@@ -211,12 +211,18 @@ def _segments_words_payload(
     for segment in segments:
         words_payload: list[dict[str, object]] = []
         for word in getattr(segment, "words", None) or []:
+            confidence = _json_number(getattr(word, "confidence", None), default=None)
+            probability = _json_number(getattr(word, "probability", None), default=None)
             words_payload.append(
                 {
                     "start": _json_number(getattr(word, "start", 0.0), default=0.0),
                     "end": _json_number(getattr(word, "end", 0.0), default=0.0),
                     "word": _json_text(getattr(word, "word", ""), default=""),
-                    "probability": _json_number(getattr(word, "probability", 0.0), default=0.0),
+                    "probability": probability if probability is not None else (confidence or 0.0),
+                    "confidence": confidence,
+                    "language": _json_text(getattr(word, "language", None), default=None),
+                    "speaker": _json_text(getattr(word, "speaker", None), default=None),
+                    "provider": _json_text(getattr(word, "provider", None), default=None),
                 }
             )
         payload_segments.append(
@@ -224,12 +230,17 @@ def _segments_words_payload(
                 "start": _json_number(getattr(segment, "start", 0.0), default=0.0),
                 "end": _json_number(getattr(segment, "end", 0.0), default=0.0),
                 "text": _json_text(getattr(segment, "text", ""), default=""),
+                "provider": _json_text(getattr(segment, "provider", None), default=None),
+                "language": _json_text(getattr(segment, "language", None), default=None),
+                "confidence": _json_number(getattr(segment, "confidence", None), default=None),
+                "speaker": _json_text(getattr(segment, "speaker", None), default=None),
                 "words": words_payload,
             }
         )
     return {
         "language": _json_text(getattr(info, "language", None), default=None),
         "language_probability": _json_number(getattr(info, "language_probability", None), default=None),
+        "provider": _json_text(getattr(info, "provider", None), default=None),
         "segments": payload_segments,
     }
 

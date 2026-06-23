@@ -68,7 +68,7 @@ class RuntimeWarmupController:
     def show_status(self, message: str) -> None:
         set_detail = getattr(self._owner, "_set_background_task_detail", None)
         if callable(set_detail):
-            set_detail("Runtime preloading", message)
+            set_detail("Runtime preloading", message, log_detail=self._log_detail_for_status(message))
         if self.can_replace_status():
             self._last_status = message
             self._owner.statusBar().showMessage(message)
@@ -80,6 +80,10 @@ class RuntimeWarmupController:
             self._owner._tr("warmup_loading_translation"),
             self._owner._tr("warmup_loading_transcript_cleanup"),
             self._owner._tr("warmup_loading_tts"),
+            self._owner._tr("warmup_loaded_whisper"),
+            self._owner._tr("warmup_loaded_translation"),
+            self._owner._tr("warmup_loaded_transcript_cleanup"),
+            self._owner._tr("warmup_loaded_tts"),
             self._owner._tr("status_runtime_warmup_ready"),
         }
         warmup_failed_prefix = self._owner._tr("status_runtime_warmup_failed").split("{detail}", 1)[0]
@@ -90,6 +94,17 @@ class RuntimeWarmupController:
             or current in warmup_messages
             or (bool(warmup_failed_prefix) and current.startswith(warmup_failed_prefix))
         )
+
+    def _log_detail_for_status(self, message: str) -> str:
+        started_messages = {
+            self._owner._tr("warmup_loading_whisper"): self._owner._tr("warmup_started_whisper"),
+            self._owner._tr("warmup_loading_translation"): self._owner._tr("warmup_started_translation"),
+            self._owner._tr("warmup_loading_transcript_cleanup"): self._owner._tr(
+                "warmup_started_transcript_cleanup"
+            ),
+            self._owner._tr("warmup_loading_tts"): self._owner._tr("warmup_started_tts"),
+        }
+        return started_messages.get(message, message)
 
     def _worker_finished(self, worker: RuntimeWarmupWorker) -> None:
         if self._worker is worker:

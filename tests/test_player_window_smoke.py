@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QFrame, QScrollArea, QSizePolicy
+from PySide6.QtWidgets import QDialog, QFrame, QMessageBox, QScrollArea, QSizePolicy
 
 from ai_player.core.config import LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH, LOCAL_TRANSLATION_MODEL_PATH, AppConfig
 from ai_player.services import document_reader
@@ -15,6 +15,7 @@ from ai_player.services.document_reader import DocumentPage
 from ai_player.services.ffmpeg import probe_duration_seconds, run_ffmpeg
 from ai_player.services.telegram_channel import TelegramChannelVideo
 from ai_player.services.youtube_channel import YouTubeChannelItem
+from ai_player.ui import player_window_readiness, player_window_settings
 from ai_player.ui.player_window import PlayerWindow
 from ai_player.ui.player_window_layout import (
     DEFAULT_MEDIA_ASPECT_RATIO,
@@ -83,6 +84,9 @@ def test_player_window_constructs_offscreen(qapp) -> None:
     window = PlayerWindow()
     try:
         assert window.windowTitle()
+        assert window._settings_tabs.tabText(0) == window._tr("first_run_tab")
+        assert window._settings_tabs.tabText(1) == window._tr("task_center_tab")
+        assert window._readiness_selected_profile == "quick"
         assert window._source_filter_worker_mode == window._config.original_audio_voice_filter_mode
         assert window._source_filter_worker_model == window._config.original_audio_voice_filter_model
         assert window._source_filter_cache == {}
@@ -2194,6 +2198,320 @@ def test_player_window_applies_online_lite_preset_controls(qapp) -> None:
         window.close()
 
 
+def test_player_window_keeps_asr_api_keys_per_provider(qapp, monkeypatch) -> None:
+    monkeypatch.setattr(
+        player_window_settings,
+        "load_asr_provider_api_keys",
+        lambda: {"speechmatics": "speech-key"},
+    )
+    saved_keys = []
+    monkeypatch.setattr(
+        player_window_settings,
+        "save_asr_provider_api_keys",
+        lambda keys: saved_keys.append(dict(keys)),
+    )
+    window = PlayerWindow()
+    try:
+        window._set_combo_data(window._asr_provider_combo, "assemblyai")
+        qapp.processEvents()
+        window._asr_api_key_edit.setText("assembly-key")
+
+        window._set_combo_data(window._asr_provider_combo, "speechmatics")
+        qapp.processEvents()
+
+        assert window._asr_api_key_edit.text() == "speech-key"
+
+        window._set_combo_data(window._asr_provider_combo, "assemblyai")
+        qapp.processEvents()
+
+        assert window._asr_api_key_edit.text() == "assembly-key"
+
+        window._save_settings()
+        assert saved_keys[-1]["assemblyai"] == "assembly-key"
+        assert saved_keys[-1]["speechmatics"] == "speech-key"
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_keeps_api_keys_per_provider_for_online_groups(qapp, monkeypatch) -> None:
+    loaded = {
+        "ocr_api_key": {"google_vision": "google-ocr-key"},
+        "translator_api_key": {"deepl": "deepl-key"},
+        "tts_api_key": {"amazon_polly": "aws-access"},
+        "tts_api_secret": {"amazon_polly": "aws-secret"},
+        "transcript_cleanup_api_key": {"gemini": "gemini-key"},
+        "speaker_gender_api_key": {"huggingface_gender": "hf-key"},
+    }
+    saved = {}
+    monkeypatch.setattr(player_window_settings, "load_asr_provider_api_keys", lambda: {})
+    monkeypatch.setattr(player_window_settings, "save_asr_provider_api_keys", lambda keys: None)
+    monkeypatch.setattr(player_window_settings, "load_provider_api_secrets", lambda name: dict(loaded.get(name, {})))
+    monkeypatch.setattr(
+        player_window_settings,
+        "save_provider_api_secrets",
+        lambda name, keys: saved.setdefault(name, dict(keys)),
+    )
+    monkeypatch.setattr(player_window_settings, "save_app_config", lambda _config: None)
+
+    window = PlayerWindow()
+    try:
+        window._set_combo_data(window._translator_combo, "google_translate")
+        qapp.processEvents()
+        window._translator_api_key_edit.setText("google-key")
+        window._set_combo_data(window._translator_combo, "deepl")
+        qapp.processEvents()
+        assert window._translator_api_key_edit.text() == "deepl-key"
+        window._set_combo_data(window._translator_combo, "google_translate")
+        qapp.processEvents()
+        assert window._translator_api_key_edit.text() == "google-key"
+
+        window._set_combo_data(window._tts_provider_combo, "azure_tts")
+        qapp.processEvents()
+        window._tts_api_key_edit.setText("azure-key")
+        window._tts_api_secret_edit.clear()
+        window._set_combo_data(window._tts_provider_combo, "amazon_polly")
+        qapp.processEvents()
+        assert window._tts_api_key_edit.text() == "aws-access"
+        assert window._tts_api_secret_edit.text() == "aws-secret"
+        window._set_combo_data(window._tts_provider_combo, "azure_tts")
+        qapp.processEvents()
+        assert window._tts_api_key_edit.text() == "azure-key"
+        assert window._tts_api_secret_edit.text() == ""
+
+        window._set_combo_data(window._ocr_provider_combo, "azure_vision")
+        qapp.processEvents()
+        window._ocr_api_key_edit.setText("azure-ocr-key")
+        window._set_combo_data(window._ocr_provider_combo, "google_vision")
+        qapp.processEvents()
+        assert window._ocr_api_key_edit.text() == "google-ocr-key"
+        window._set_combo_data(window._ocr_provider_combo, "azure_vision")
+        qapp.processEvents()
+        assert window._ocr_api_key_edit.text() == "azure-ocr-key"
+
+        window._set_combo_data(window._transcript_cleanup_mode_combo, "light")
+        window._set_combo_data(window._transcript_cleanup_provider_combo, "groq")
+        qapp.processEvents()
+        window._transcript_cleanup_api_key_edit.setText("groq-key")
+        window._set_combo_data(window._transcript_cleanup_provider_combo, "gemini")
+        qapp.processEvents()
+        assert window._transcript_cleanup_api_key_edit.text() == "gemini-key"
+
+        window._set_combo_data(window._speaker_gender_provider_combo, "local")
+        qapp.processEvents()
+        window._speaker_gender_api_key_edit.clear()
+        window._set_combo_data(window._speaker_gender_provider_combo, "huggingface_gender")
+        qapp.processEvents()
+        assert window._speaker_gender_api_key_edit.text() == "hf-key"
+
+        window._save_settings()
+        assert saved["translator_api_key"]["google_translate"] == "google-key"
+        assert saved["translator_api_key"]["deepl"] == "deepl-key"
+        assert saved["tts_api_key"]["azure_tts"] == "azure-key"
+        assert saved["tts_api_key"]["amazon_polly"] == "aws-access"
+        assert saved["tts_api_secret"]["amazon_polly"] == "aws-secret"
+        assert saved["ocr_api_key"]["azure_vision"] == "azure-ocr-key"
+        assert saved["ocr_api_key"]["google_vision"] == "google-ocr-key"
+        assert saved["transcript_cleanup_api_key"]["groq"] == "groq-key"
+        assert saved["transcript_cleanup_api_key"]["gemini"] == "gemini-key"
+        assert saved["speaker_gender_api_key"]["huggingface_gender"] == "hf-key"
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_online_provider_consent_rejects_and_reverts(qapp, monkeypatch) -> None:
+    messages = []
+
+    def reject(_parent, title, message, _buttons, _default):
+        messages.append((title, message))
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(player_window_settings.QMessageBox, "question", reject)
+    window = PlayerWindow()
+    try:
+        window.show()
+        qapp.processEvents()
+        previous = window._translator_combo.currentData()
+
+        window._set_combo_data(window._translator_combo, "google_translate")
+        qapp.processEvents()
+
+        assert window._translator_combo.currentData() == previous
+        assert messages
+        assert "google_translate" in messages[0][1]
+        assert window.statusBar().currentMessage() == window._tr("online_provider_consent_rejected")
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_online_provider_consent_accepts_once_per_provider(qapp, monkeypatch) -> None:
+    calls = []
+
+    def accept(_parent, _title, message, _buttons, _default):
+        calls.append(message)
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(player_window_settings.QMessageBox, "question", accept)
+    window = PlayerWindow()
+    try:
+        window.show()
+        qapp.processEvents()
+
+        window._set_combo_data(window._asr_provider_combo, "assemblyai")
+        qapp.processEvents()
+        assert window._asr_provider_combo.currentData() == "assemblyai"
+
+        window._set_combo_data(window._asr_provider_combo, "faster_whisper")
+        window._set_combo_data(window._asr_provider_combo, "assemblyai")
+        qapp.processEvents()
+
+        assert len(calls) == 1
+        assert "assemblyai" in calls[0]
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_cleanup_online_consent_waits_until_cleanup_is_enabled(qapp, monkeypatch) -> None:
+    calls = []
+
+    def reject(_parent, _title, message, _buttons, _default):
+        calls.append(message)
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(player_window_settings.QMessageBox, "question", reject)
+    window = PlayerWindow()
+    try:
+        window.show()
+        qapp.processEvents()
+
+        window._set_combo_data(window._transcript_cleanup_mode_combo, "off")
+        window._set_combo_data(window._transcript_cleanup_provider_combo, "groq")
+        qapp.processEvents()
+        assert calls == []
+
+        window._set_combo_data(window._transcript_cleanup_mode_combo, "light")
+        qapp.processEvents()
+
+        assert len(calls) == 1
+        assert "groq" in calls[0]
+        assert window._transcript_cleanup_mode_combo.currentData() == "off"
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_readiness_wizard_applies_meeting_document_profile(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window._readiness_select_profile("meeting_document")
+        window._apply_readiness_profile()
+        config = window._current_runtime_config()
+
+        assert window._performance_preset_combo.currentData() == "balanced"
+        assert window._audio_source_combo.currentData() == "document_editor"
+        assert config.performance_preset == "balanced"
+        assert config.audio_source == "document_editor"
+        assert window._readiness_status.text()
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_readiness_wizard_opens_runtime_tab(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window._select_settings_tab_for_widget(window._runtime_tab_widget)
+        qapp.processEvents()
+
+        assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._runtime_tab_widget)
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_readiness_actions_are_direct(qapp, monkeypatch) -> None:
+    opened_urls = []
+    started_previews = []
+    previewed_missing = []
+
+    window = PlayerWindow()
+    try:
+        monkeypatch.setattr(window, "_missing_offline_model_keys", lambda: ("whisper",))
+        monkeypatch.setattr(window, "_preview_missing_offline_model_scripts", lambda: previewed_missing.append(True))
+        monkeypatch.setattr(window, "_start_provider_preview", lambda kind: started_previews.append(kind))
+        monkeypatch.setattr(
+            player_window_readiness.QDesktopServices,
+            "openUrl",
+            lambda url: opened_urls.append(url) or True,
+        )
+
+        window._refresh_readiness_status()
+
+        assert window._readiness_download_button.isEnabled()
+        assert window._readiness_preview_missing_button.isEnabled()
+        assert window._readiness_test_provider_button.property("provider_preview_kind") in {
+            "asr",
+            "translation",
+            "tts",
+            "ocr",
+        }
+
+        window._readiness_preview_missing()
+        assert previewed_missing == [True]
+        assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._offline_models_tab_widget)
+
+        window._readiness_open_model_folder()
+        assert opened_urls
+        assert opened_urls[0].isLocalFile()
+
+        monkeypatch.setattr(
+            player_window_readiness,
+            "build_runtime_health",
+            lambda _config: (SimpleNamespace(name="Translation", status="ATTENTION"),),
+        )
+        window._readiness_test_provider()
+        assert started_previews == ["translation"]
+        assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._models_tab_widget)
+
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_readiness_optimize_speed_applies_quick_profile(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window._readiness_select_profile("quality")
+        window._readiness_optimize_speed()
+
+        assert window._readiness_selected_profile == "quick"
+        assert window._performance_preset_combo.currentData() == "low_latency"
+        assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._basic_tab_widget)
+        assert window.statusBar().currentMessage() == window._tr("first_run_speed_optimized")
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_readiness_tab_does_not_overflow_sidebar(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window.resize(1366, 768)
+        window._settings_tabs.setCurrentIndex(0)
+        qapp.processEvents()
+
+        scroll = window._settings_tabs.widget(0)
+        assert isinstance(scroll, QScrollArea)
+        assert scroll.horizontalScrollBar().maximum() == 0
+        assert window._readiness_tab_widget.width() <= scroll.viewport().width() + 8
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
 def test_player_window_event_loop_smoke(qapp) -> None:
     window = PlayerWindow()
     try:
@@ -2640,7 +2958,7 @@ def test_sidebar_header_stays_outside_scroll_area(qapp) -> None:
         assert isinstance(window._settings_tabs.widget(0), QScrollArea)
         assert window._settings_tabs.parentWidget() is window._settings_scroll
 
-        window._settings_tabs.setCurrentIndex(5)
+        window._settings_tabs.setCurrentIndex(7)
         qapp.processEvents()
 
         assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._runtime_tab_widget)

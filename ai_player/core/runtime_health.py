@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ai_player.core.config import AppConfig
-from ai_player.services.asr import is_online_asr_provider, normalize_asr_provider
+from ai_player.services.asr import effective_asr_provider, is_online_asr_provider
 from ai_player.services.ffmpeg import ffmpeg_executable, ffplay_executable
 from ai_player.services.subtitle_ocr import is_online_ocr_provider, normalize_ocr_provider
 from ai_player.services.translation import is_online_translation_provider
-from ai_player.services.tts import is_online_tts_provider, normalize_tts_provider
+from ai_player.services.tts_base import is_online_tts_provider, normalize_tts_provider
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ def format_runtime_health(items: tuple[RuntimeHealthItem, ...]) -> str:
 
 
 def _asr_health(config: AppConfig) -> RuntimeHealthItem:
-    provider = normalize_asr_provider(config.asr_provider)
+    provider = effective_asr_provider(config)
     if is_online_asr_provider(provider):
         if _has_text(config.asr_api_key):
             return RuntimeHealthItem("ASR", "READY", f"{provider} API key is configured.")
