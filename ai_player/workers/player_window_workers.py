@@ -15,6 +15,7 @@ from ai_player.services.media_cache import (
     remove_playback_compat_output,
     write_playback_compat_metadata,
 )
+from ai_player.services.provider_preview import preview_provider
 from ai_player.services.runtime_warmup import RuntimeWarmupCancelled, warm_runtime_components
 from ai_player.services.source_voice_filter import (
     SourceVoiceFilterCancelled,
@@ -75,6 +76,32 @@ class RuntimeWarmupWorker(QThread):
             return
         if not self._stop_requested and not self.isInterruptionRequested():
             self.finished_successfully.emit(timings)
+
+
+class ProviderPreviewWorker(QThread):
+    ready = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, kind: str, config: AppConfig, parent=None) -> None:
+        super().__init__(parent)
+        self._kind = kind
+        self._config = config
+        self._stop_requested = False
+
+    def stop(self) -> None:
+        self._stop_requested = True
+        self.requestInterruption()
+
+    def run(self) -> None:
+        try:
+            result = preview_provider(self._kind, self._config)
+        except Exception as exc:
+            if not self._stop_requested and not self.isInterruptionRequested():
+                LOGGER.exception("Provider preview worker failed.")
+                self.failed.emit(str(exc))
+            return
+        if not self._stop_requested and not self.isInterruptionRequested():
+            self.ready.emit(result)
 
 
 class VideoSourceWorker(QThread):

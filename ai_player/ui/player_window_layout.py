@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QSlider,
     QSplitter,
@@ -26,7 +25,6 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QStyleOptionButton,
     QStyleOptionViewItem,
-    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -61,15 +59,24 @@ from ai_player.services.speaker_voice_selector import normalize_speaker_gender_p
 from ai_player.services.translation import normalize_translator_provider
 from ai_player.services.tts import available_tts_providers, available_vieneu_modes, normalize_tts_provider
 from ai_player.services.video_source import is_supported_browser_video_url
-from ai_player.ui.player_window_media import DEFAULT_SIDEBAR_PANEL_SIZES, DEFAULT_SIDEBAR_PANEL_WIDTH
+from ai_player.ui.player_window_media import DEFAULT_SIDEBAR_PANEL_SIZES
+from ai_player.ui.player_window_media_browser import DEFAULT_MEDIA_HOME_URL, build_media_browser_buttons
+from ai_player.ui.player_window_settings_tabs import (
+    build_advanced_settings_tab,
+    build_basic_settings_tab,
+    build_models_settings_tab,
+    build_settings_panel,
+    build_settings_tabs,
+    build_transcript_settings_tab,
+)
 from ai_player.ui.player_window_utils import (
     dropdown_options as _dropdown_options,
 )
 from ai_player.ui.player_window_utils import (
     ui_label as _ui_label,
 )
+from ai_player.ui.provider_preview_panel import add_provider_preview_row, build_provider_preview_panel
 
-DEFAULT_MEDIA_HOME_URL = "https://www.google.com"
 DEFAULT_MEDIA_ASPECT_RATIO = "16:9"
 TELEGRAM_ITEM_HTML_ROLE = Qt.ItemDataRole.UserRole.value + 10
 TELEGRAM_BLACKLIST_BUTTON_ROLE = Qt.ItemDataRole.UserRole.value + 11
@@ -1078,19 +1085,7 @@ class PlayerLayoutMixin:
         self._previous_page_button.clicked.connect(self._previous_media_item)
         self._next_page_button = self._icon_button(QStyle.StandardPixmap.SP_MediaSkipForward, "next")
         self._next_page_button.clicked.connect(self._next_media_item)
-        self._media_home_button = QPushButton(self.style().standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon), "")
-        self._media_home_button.setObjectName("mediaHomeButton")
-        self._media_home_button.setProperty("i18n_tooltip_key", "google_home_tooltip")
-        self._media_home_button.setToolTip(self._tr("google_home_tooltip"))
-        self._media_home_button.setFixedSize(32, 32)
-        self._media_home_button.clicked.connect(self._open_media_home)
-        self._telegram_browser_button = QPushButton(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack), "")
-        self._telegram_browser_button.setObjectName("telegramBrowserButton")
-        self._telegram_browser_button.setProperty("i18n_key", "telegram_channel_back")
-        self._telegram_browser_button.setProperty("i18n_tooltip_key", "telegram_channel_back")
-        self._telegram_browser_button.setToolTip(self._tr("telegram_channel_back"))
-        self._telegram_browser_button.clicked.connect(self._return_to_telegram_channel_browser)
-        self._telegram_browser_button.hide()
+        build_media_browser_buttons(self)
         self._subtitle_mode_combo = QComboBox()
         self._subtitle_mode_combo.addItem("...", "off")
         self._subtitle_mode_combo.addItem(self._tr("source"), "source")
@@ -1758,6 +1753,7 @@ class PlayerLayoutMixin:
         self._vieneu_decoder_path_edit = QLineEdit(self._config.vieneu_tts_decoder_path)
         self._vieneu_encoder_path_edit = QLineEdit(self._config.vieneu_tts_encoder_path)
         self._vieneu_standard_codec_path_edit = QLineEdit(self._config.vieneu_tts_standard_codec_path)
+        build_provider_preview_panel(self)
 
         preset_row = QWidget()
         preset_layout = QHBoxLayout(preset_row)
@@ -1884,6 +1880,7 @@ class PlayerLayoutMixin:
         asr_grid.addWidget(self._slider_row(self._whisper_beam_slider, self._whisper_beam_value), 6, 1)
         asr_grid.addWidget(self._whisper_vad_check, 7, 0, 1, 2)
         asr_grid.addWidget(self._whisper_offline_check, 8, 0, 1, 2)
+        add_provider_preview_row(asr_grid, self, "asr", 9)
 
         ocr_grid = QGridLayout()
         ocr_grid.setHorizontalSpacing(8)
@@ -1915,6 +1912,7 @@ class PlayerLayoutMixin:
         ocr_grid.addWidget(self._slider_row(self._ocr_min_confidence_slider, self._ocr_min_confidence_value), 12, 1)
         ocr_grid.addWidget(self._field_label("ocr_merge_similarity"), 13, 0)
         ocr_grid.addWidget(self._slider_row(self._ocr_merge_similarity_slider, self._ocr_merge_similarity_value), 13, 1)
+        add_provider_preview_row(ocr_grid, self, "ocr", 14)
 
         translation_grid = QGridLayout()
         translation_grid.setHorizontalSpacing(8)
@@ -1942,6 +1940,7 @@ class PlayerLayoutMixin:
             self._slider_row(self._translation_beams_slider, self._translation_beams_value), 7, 1
         )
         translation_grid.addWidget(self._translation_offline_check, 8, 0, 1, 2)
+        add_provider_preview_row(translation_grid, self, "translation", 9)
 
         tts_grid = QGridLayout()
         tts_grid.setHorizontalSpacing(8)
@@ -1965,6 +1964,7 @@ class PlayerLayoutMixin:
         tts_grid.addWidget(self._field_label("tts_max_chars"), 8, 0)
         tts_grid.addWidget(self._slider_row(self._vieneu_max_chars_slider, self._vieneu_max_chars_value), 8, 1)
         tts_grid.addWidget(self._vieneu_offline_check, 9, 0, 1, 2)
+        add_provider_preview_row(tts_grid, self, "tts", 10)
 
         tts_advanced_grid = QGridLayout()
         tts_advanced_grid.setHorizontalSpacing(8)
@@ -2014,6 +2014,7 @@ class PlayerLayoutMixin:
         )
         cleanup_grid.addWidget(self._field_label("cleanup_timeout"), 5, 0)
         cleanup_grid.addWidget(self._slider_row(self._cleanup_timeout_slider, self._cleanup_timeout_value), 5, 1)
+        add_provider_preview_row(cleanup_grid, self, "cleanup", 6)
 
         voice_ai_grid = QGridLayout()
         voice_ai_grid.setHorizontalSpacing(8)
@@ -2036,6 +2037,7 @@ class PlayerLayoutMixin:
         )
         voice_ai_grid.addWidget(self._field_label("source_filter_model"), 5, 0)
         voice_ai_grid.addWidget(self._source_filter_model_combo, 5, 1)
+        add_provider_preview_row(voice_ai_grid, self, "speaker_gender", 6)
 
         self._transcript = QTextEdit()
         self._transcript.setObjectName("transcript")
@@ -2059,102 +2061,45 @@ class PlayerLayoutMixin:
         self._export_transcript_button.clicked.connect(self._export_transcript)
         self._transcript.setPlaceholderText(self._tr("transcript_placeholder"))
 
-        def scrollable_tab(content: QWidget) -> QScrollArea:
-            scroll = QScrollArea()
-            scroll.setObjectName("sideScroll")
-            scroll.setWidgetResizable(True)
-            scroll.setFrameShape(QFrame.Shape.NoFrame)
-            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            scroll.setWidget(content)
-            return scroll
-
-        settings_panel = QFrame()
-        settings_panel.setObjectName("sidePanel")
-        settings_panel.setMinimumWidth(DEFAULT_SIDEBAR_PANEL_WIDTH)
-        settings_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        settings_layout = QVBoxLayout(settings_panel)
-        settings_layout.setContentsMargins(12, 12, 12, 12)
-        settings_layout.setSpacing(10)
-
-        basic_tab = QWidget()
-        basic_layout = QVBoxLayout(basic_tab)
-        basic_layout.setContentsMargins(7, 7, 7, 7)
-        basic_layout.setSpacing(10)
-        basic_layout.addWidget(self._dub_button)
-        basic_layout.addWidget(self._section_title("basic_source_group"))
-        basic_layout.addLayout(basic_source_grid)
-        basic_layout.addWidget(self._section_title("basic_voice_group"))
-        basic_layout.addLayout(basic_voice_grid)
-        basic_layout.addWidget(self._section_title("basic_playback_group"))
-        basic_layout.addLayout(basic_playback_grid)
-        basic_layout.addWidget(self._section_title("basic_processing_group"))
-        basic_layout.addLayout(basic_processing_grid)
-        basic_layout.addStretch(1)
-
-        models_tab = QWidget()
-        models_layout = QVBoxLayout(models_tab)
-        models_layout.setContentsMargins(7, 7, 7, 7)
-        models_layout.setSpacing(10)
-        models_layout.addWidget(self._section_title("asr_group"))
-        models_layout.addLayout(asr_grid)
-        models_layout.addWidget(self._section_title("translation_group"))
-        models_layout.addLayout(translation_grid)
-        models_layout.addWidget(self._section_title("tts_group"))
-        models_layout.addLayout(tts_grid)
-        models_layout.addWidget(self._section_title("tts_advanced_group"))
-        models_layout.addLayout(tts_advanced_grid)
-        models_layout.addWidget(self._section_title("voice_ai_group"))
-        models_layout.addLayout(voice_ai_grid)
-        models_layout.addWidget(self._section_title("ocr_group"))
-        models_layout.addLayout(ocr_grid)
-        models_layout.addWidget(self._section_title("cleanup_group"))
-        models_layout.addLayout(cleanup_grid)
-        models_layout.addStretch(1)
-
-        advanced_tab = QWidget()
-        advanced_layout = QVBoxLayout(advanced_tab)
-        advanced_layout.setContentsMargins(7, 7, 7, 7)
-        advanced_layout.setSpacing(10)
-        advanced_layout.addWidget(self._section_title("advanced_terms_group"))
-        advanced_layout.addLayout(advanced_terms_grid)
-        advanced_layout.addWidget(self._section_title("advanced_timing_group"))
-        advanced_layout.addLayout(advanced_timing_grid)
-        advanced_layout.addWidget(self._section_title("advanced_audio_match_group"))
-        advanced_layout.addLayout(advanced_match_grid)
-        advanced_layout.addWidget(self._section_title("advanced_playback_group"))
-        advanced_layout.addLayout(advanced_playback_grid)
-        advanced_layout.addWidget(self._section_title("advanced_capture_group"))
-        advanced_layout.addLayout(advanced_capture_grid)
-        advanced_layout.addStretch(1)
-
-        transcript_tab = QWidget()
-        transcript_layout = QVBoxLayout(transcript_tab)
-        transcript_layout.setContentsMargins(7, 7, 7, 7)
-        transcript_layout.setSpacing(7)
-        transcript_toolbar = QWidget()
-        transcript_toolbar_layout = QHBoxLayout(transcript_toolbar)
-        transcript_toolbar_layout.setContentsMargins(0, 0, 0, 0)
-        transcript_toolbar_layout.setSpacing(6)
-        transcript_toolbar_layout.addWidget(self._transcript_view_combo, 1)
-        transcript_toolbar_layout.addWidget(self._transcript_type_combo, 1)
-        transcript_toolbar_layout.addWidget(self._export_transcript_button)
-        transcript_layout.addWidget(transcript_toolbar)
-        transcript_layout.addWidget(self._transcript, 1)
-
+        basic_tab = build_basic_settings_tab(
+            self,
+            basic_source_grid=basic_source_grid,
+            basic_voice_grid=basic_voice_grid,
+            basic_playback_grid=basic_playback_grid,
+            basic_processing_grid=basic_processing_grid,
+        )
+        models_tab = build_models_settings_tab(
+            self,
+            asr_grid=asr_grid,
+            translation_grid=translation_grid,
+            tts_grid=tts_grid,
+            tts_advanced_grid=tts_advanced_grid,
+            voice_ai_grid=voice_ai_grid,
+            ocr_grid=ocr_grid,
+            cleanup_grid=cleanup_grid,
+        )
+        advanced_tab = build_advanced_settings_tab(
+            self,
+            advanced_terms_grid=advanced_terms_grid,
+            advanced_timing_grid=advanced_timing_grid,
+            advanced_match_grid=advanced_match_grid,
+            advanced_playback_grid=advanced_playback_grid,
+            advanced_capture_grid=advanced_capture_grid,
+        )
+        transcript_tab = build_transcript_settings_tab(self)
         runtime_tab = self._runtime_tab()
         offline_models_tab = self._offline_models_tab()
 
-        self._settings_tabs = QTabWidget()
-        self._settings_tabs.setObjectName("settingsTabs")
-        self._settings_tabs.addTab(scrollable_tab(basic_tab), self._tr("basic_tab"))
-        self._settings_tabs.addTab(scrollable_tab(models_tab), self._tr("models_tab"))
-        self._settings_tabs.addTab(scrollable_tab(offline_models_tab), self._tr("offline_models_tab"))
-        self._settings_tabs.addTab(scrollable_tab(advanced_tab), self._tr("advanced_tab"))
-        self._settings_tabs.addTab(transcript_tab, self._tr("transcript_tab"))
-        self._settings_tabs.addTab(scrollable_tab(runtime_tab), self._tr("runtime_tab"))
-        self._settings_tabs.currentChanged.connect(self._runtime_tab_changed)
-        self._settings_tabs.currentChanged.connect(self._offline_models_tab_changed)
-        settings_layout.addWidget(self._settings_tabs, 1)
+        self._settings_tabs = build_settings_tabs(
+            self,
+            basic_tab=basic_tab,
+            models_tab=models_tab,
+            offline_models_tab=offline_models_tab,
+            advanced_tab=advanced_tab,
+            transcript_tab=transcript_tab,
+            runtime_tab=runtime_tab,
+        )
+        settings_panel = build_settings_panel(self, self._settings_tabs)
         self._refresh_tts_options()
         self._sync_auto_voice_controls_enabled()
         self._sync_auto_match_controls_enabled()
@@ -2195,45 +2140,6 @@ class PlayerLayoutMixin:
             url_changed.connect(lambda *_args: self._sync_media_browser_state())
         self._sync_media_browser_state()
         self._sync_panel_visibility_buttons()
-
-    def _sync_media_browser_state(self) -> None:
-        self._sync_media_home_button()
-        self._sync_media_browser_address()
-
-    def _open_media_home(self) -> None:
-        if not hasattr(self, "_video_placeholder"):
-            return
-        set_url = getattr(self._video_placeholder, "setUrl", None)
-        if callable(set_url):
-            set_url(QUrl(DEFAULT_MEDIA_HOME_URL))
-        if hasattr(self, "_media_stack"):
-            self._media_stack.setCurrentWidget(self._video_placeholder)
-        self._sync_media_browser_state()
-
-    def _sync_media_home_button(self) -> None:
-        button = getattr(self, "_media_home_button", None)
-        media_stack = getattr(self, "_media_stack", None)
-        placeholder = getattr(self, "_video_placeholder", None)
-        if button is None or media_stack is None or placeholder is None:
-            return
-        button.setVisible(
-            media_stack.currentWidget() is placeholder and callable(getattr(placeholder, "setUrl", None))
-        )
-
-    def _sync_media_browser_address(self) -> None:
-        media_stack = getattr(self, "_media_stack", None)
-        placeholder = getattr(self, "_video_placeholder", None)
-        source_label = getattr(self, "_source_label", None)
-        if media_stack is None or placeholder is None or source_label is None:
-            return
-        if media_stack.currentWidget() is not placeholder:
-            return
-        url_getter = getattr(placeholder, "url", None)
-        if not callable(url_getter):
-            source_label.setText(self._tr("source_empty"))
-            return
-        url = url_getter().toString()
-        source_label.setText(url or self._tr("source_empty"))
 
     def _apply_control_tooltips(self) -> None:
         tooltips = (

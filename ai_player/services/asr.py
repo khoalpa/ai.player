@@ -11,7 +11,7 @@ import requests
 from ai_player.core.config import AppConfig
 
 ASSEMBLYAI_API_BASE = "https://api.assemblyai.com"
-SPEECHMATICS_API_BASE = "https://eu1.asr.api.speechmatics.com/v2"
+SPEECHMATICS_API_BASE = "https://asr.api.speechmatics.com/v2"
 ONLINE_ASR_PROVIDERS = {"assemblyai", "speechmatics"}
 
 

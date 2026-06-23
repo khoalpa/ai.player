@@ -16,15 +16,20 @@ from ai_player.services.translation import (
     configured_translation_backend,
 )
 from ai_player.ui.media_player import VideoPlayer
+from ai_player.ui.player_window_channel_browser import PlayerChannelBrowserMixin
+from ai_player.ui.player_window_channel_flow import PlayerChannelFlowMixin
 from ai_player.ui.player_window_dubbing import PlayerDubbingMixin
 from ai_player.ui.player_window_export import PlayerExportMixin
 from ai_player.ui.player_window_layout import PlayerLayoutMixin
 from ai_player.ui.player_window_lifecycle import PlayerLifecycleMixin
 from ai_player.ui.player_window_media import DEFAULT_SIDEBAR_PANEL_SIZES, PlayerMediaMixin
+from ai_player.ui.player_window_media_browser import PlayerMediaBrowserMixin
 from ai_player.ui.player_window_meeting import PlayerMeetingMixin
 from ai_player.ui.player_window_offline_models import PlayerOfflineModelsMixin
+from ai_player.ui.player_window_provider_preview import PlayerProviderPreviewMixin
 from ai_player.ui.player_window_runtime import PlayerRuntimeMixin
 from ai_player.ui.player_window_settings import PlayerSettingsMixin
+from ai_player.ui.player_window_source_progress import PlayerSourceProgressMixin
 from ai_player.ui.player_window_sources import PlayerSourceMixin
 from ai_player.ui.player_window_state import (
     DocumentPlaybackState,
@@ -46,12 +51,17 @@ from ai_player.ui.video_url_controller import VideoUrlController
 class PlayerWindow(
     UserGuideMixin,
     PlayerRuntimeMixin,
+    PlayerProviderPreviewMixin,
     PlayerOfflineModelsMixin,
     PlayerTranscriptMixin,
     PlayerSettingsMixin,
     PlayerMediaMixin,
+    PlayerMediaBrowserMixin,
     PlayerUiMixin,
     PlayerLayoutMixin,
+    PlayerChannelBrowserMixin,
+    PlayerChannelFlowMixin,
+    PlayerSourceProgressMixin,
     PlayerSourceMixin,
     PlayerExportMixin,
     PlayerMeetingMixin,
@@ -103,9 +113,11 @@ class PlayerWindow(
         self._live_subtitle_target_text = ""
         self._live_subtitle_expires_at = 0.0
         self._live_subtitle_entries: list[tuple[float, float, str, str]] = []
+        self._background_task_details: dict[str, str] = {}
         self._clamping_to_screen = False
         self._video_url = VideoUrlController(self)
         self._runtime_warmup = RuntimeWarmupController(self)
+        self._init_provider_preview()
         self._video_delay_timer = QTimer(self)
         self._video_delay_timer.setSingleShot(True)
         self._video_delay_timer.timeout.connect(self._finish_delayed_video_playback)

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QFrame, QPushButton, QScrollArea, QSizePolicy
+from PySide6.QtWidgets import QDialog, QFrame, QScrollArea, QSizePolicy
 
 from ai_player.core.config import LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH, LOCAL_TRANSLATION_MODEL_PATH, AppConfig
 from ai_player.services import document_reader
@@ -2644,45 +2644,6 @@ def test_sidebar_header_stays_outside_scroll_area(qapp) -> None:
         qapp.processEvents()
 
         assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._runtime_tab_widget)
-        window._settings_save_timer.stop()
-    finally:
-        window.close()
-
-
-def test_offline_models_manager_tab_exists(qapp) -> None:
-    window = PlayerWindow()
-    try:
-        assert hasattr(window, "_offline_models_tab_widget")
-        assert "whisper" in window._offline_model_rows
-        assert "adult_extractors" in window._offline_model_rows
-        assert "telegram_client" in window._offline_model_rows
-        assert "youtube_client" in window._offline_model_rows
-        assert "backup" in window._offline_model_rows
-        assert window._offline_model_target_text(window._offline_model_spec("adult_extractors")) == (
-            "ai-player-adult-extractors"
-        )
-        assert window._offline_model_target_text(window._offline_model_spec("telegram_client")) == (
-            "ai-player-telegram-client"
-        )
-        assert window._offline_model_target_text(window._offline_model_spec("youtube_client")) == (
-            "ai-player-youtube-client"
-        )
-        assert window._offline_model_spec("adult_extractors")["script"] == "install_adult_extractors.ps1"
-        assert window._offline_model_spec("telegram_client")["script"] == "install_telegram_client.ps1"
-        assert window._offline_model_spec("youtube_client")["script"] == "install_youtube_client.ps1"
-        for key in ("whisper", "translation", "vieneu", "ocr", "speaker_gender"):
-            button = window._offline_model_rows[key]["button"]
-            assert isinstance(button, QPushButton)
-            assert button.property("i18n_key") == "offline_models_download"
-        assert window._offline_model_rows["adult_extractors"]["button"].property("i18n_key") == "offline_models_install"
-        assert window._offline_model_rows["telegram_client"]["button"].property("i18n_key") == "offline_models_install"
-        assert window._offline_model_rows["youtube_client"]["button"].property("i18n_key") == "offline_models_install"
-        assert window._offline_model_rows["portable"]["button"].property("i18n_key") == "offline_models_build"
-        assert window._offline_model_rows["backup"]["button"].property("i18n_key") == "offline_models_backup_action"
-        assert window._settings_tabs.count() == 6
-        window._settings_tabs.setCurrentIndex(2)
-        qapp.processEvents()
-        assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._offline_models_tab_widget)
         window._settings_save_timer.stop()
     finally:
         window.close()

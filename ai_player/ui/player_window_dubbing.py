@@ -156,7 +156,7 @@ class PlayerDubbingMixin:
             dubbing_config,
             self,
         )
-        self._dub_worker.status_changed.connect(self.statusBar().showMessage)
+        self._dub_worker.status_changed.connect(self._dubbing_status_changed)
         self._dub_worker.segment_ready.connect(self._append_dubbing_segment)
         self._dub_worker.subtitle_ready.connect(self._set_timed_live_subtitle)
         self._dub_worker.audio_started.connect(self._sync_document_to_audio_start)
@@ -179,6 +179,7 @@ class PlayerDubbingMixin:
                 return False
             self._dub_worker = None
             worker.deleteLater()
+        self._clear_background_task_detail("Realtime dubbing")
         self._set_dubbing_ready(False if self._dub_button.isChecked() else True)
         if not self._dubbing_auto_enabled:
             self._dub_button.setChecked(False)
@@ -188,6 +189,11 @@ class PlayerDubbingMixin:
         if generation == self._dub_worker_generation:
             self._dub_worker = None
             self._set_dubbing_ready(False if self._dub_button.isChecked() else True)
+
+    def _dubbing_status_changed(self, message: str) -> None:
+        clean = _repair_mojibake(message)
+        self._set_background_task_detail("Realtime dubbing", clean)
+        self.statusBar().showMessage(clean)
 
     def _dubbing_failed(self, message: str) -> None:
         self._dubbing_auto_enabled = False

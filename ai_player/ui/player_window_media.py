@@ -123,7 +123,9 @@ class PlayerMediaMixin:
         self._source_filter_worker.warning.connect(self._source_audio_filter_warning)
         self._source_filter_worker.finished.connect(self._source_audio_filter_finished)
         self._source_filter_worker.start()
-        self.statusBar().showMessage(self._tr("status_source_filter_preparing"))
+        message = self._tr("status_source_filter_preparing")
+        self._set_background_task_detail("Source voice filter", message)
+        self.statusBar().showMessage(message)
 
     def _source_audio_filter_ready(self, source_path: str, filtered_path: str, backend: str = "") -> None:
         worker_mode = getattr(self, "_source_filter_worker_mode", self._selected_source_filter_mode())
@@ -143,6 +145,7 @@ class PlayerMediaMixin:
                 self._source_filter_restart_pending = True
                 return
             self._switch_player_source(filtered_path, preserve_state=True)
+            self._clear_background_task_detail("Source voice filter")
             self.statusBar().showMessage(self._tr("status_source_filter_ready"))
             if hasattr(self, "_play_pending_telegram_navigation"):
                 self._play_pending_telegram_navigation(source_path=source_path)
@@ -150,11 +153,13 @@ class PlayerMediaMixin:
     def _source_audio_filter_failed(self, source_path: str, message: str) -> None:
         if self._video_path == source_path:
             detail = _repair_mojibake(message)
+            self._set_background_task_detail("Source voice filter", detail)
             self.statusBar().showMessage(self._tr("status_source_filter_failed").format(detail=detail))
 
     def _source_audio_filter_warning(self, source_path: str, message: str) -> None:
         if self._video_path == source_path:
             detail = _repair_mojibake(message)
+            self._set_background_task_detail("Source voice filter", detail)
             self.statusBar().showMessage(self._tr("status_source_filter_warning").format(detail=detail))
 
     def _source_audio_filter_finished(self) -> None:
@@ -175,7 +180,9 @@ class PlayerMediaMixin:
         self._playback_compat_worker.failed.connect(self._playback_compat_failed)
         self._playback_compat_worker.finished.connect(self._playback_compat_finished)
         self._playback_compat_worker.start()
-        self.statusBar().showMessage(self._tr("status_playback_compat_preparing"))
+        message = self._tr("status_playback_compat_preparing")
+        self._set_background_task_detail("Playback compatibility", message)
+        self.statusBar().showMessage(message)
 
     def _playback_compat_ready(self, source_path: str, compat_path: str) -> None:
         expected_output = self._playback_compat_output_path(source_path)
@@ -184,6 +191,7 @@ class PlayerMediaMixin:
         self._playback_compat_cache[self._playback_compat_cache_key(source_path)] = compat_path
         if self._video_path == source_path and not self._document_mode:
             self._switch_player_source(compat_path, preserve_state=True)
+            self._clear_background_task_detail("Playback compatibility")
             self.statusBar().showMessage(self._tr("status_playback_compat_ready"))
             if hasattr(self, "_play_pending_telegram_navigation"):
                 self._play_pending_telegram_navigation(source_path=source_path)
@@ -191,6 +199,7 @@ class PlayerMediaMixin:
     def _playback_compat_failed(self, source_path: str, message: str) -> None:
         if self._video_path == source_path:
             detail = _repair_mojibake(message)
+            self._set_background_task_detail("Playback compatibility", detail)
             self.statusBar().showMessage(self._tr("status_playback_compat_failed").format(detail=detail))
 
     def _playback_compat_finished(self) -> None:

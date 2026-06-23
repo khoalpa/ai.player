@@ -641,12 +641,35 @@ def _response_json(response: requests.Response, context: str):
     try:
         response.raise_for_status()
     except requests.HTTPError as exc:
-        message = str(getattr(response, "text", "") or "").strip()[:500]
+        message = _response_error_message(response)
         raise TranslationError(f"{context}: HTTP {response.status_code} {message}") from exc
     try:
         return response.json()
     except ValueError as exc:
         raise TranslationError(f"{context}: invalid JSON response") from exc
+
+
+def _response_error_message(response: requests.Response) -> str:
+    try:
+        data = response.json()
+    except Exception:
+        return _compact_response_text(getattr(response, "text", ""))
+    if isinstance(data, dict):
+        error = data.get("error")
+        if isinstance(error, dict):
+            message = str(error.get("message") or "").strip()
+            if message:
+                return message[:500]
+        message = str(data.get("message") or data.get("error") or "").strip()
+        if message:
+            return message[:500]
+    return _compact_response_text(getattr(response, "text", ""))
+
+
+def _compact_response_text(value: object) -> str:
+    text = re.sub(r"<[^>]+>", " ", str(value or ""))
+    text = " ".join(text.split())
+    return text[:500]
 
 
 def _align_translation_results(source_texts: list[str], translated_texts: list[str]) -> list[str]:

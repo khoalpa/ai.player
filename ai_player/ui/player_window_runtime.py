@@ -11,12 +11,14 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGridLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QStyle, QVBoxLayout, QWidget
 
 from ai_player.core.runtime_diagnostics import (
     collect_runtime_diagnostics,
     format_runtime_diagnostics_summary,
 )
+from ai_player.core.runtime_health import build_runtime_health, format_runtime_health
+from ai_player.core.runtime_privacy import build_runtime_privacy, format_runtime_privacy
 from ai_player.services.ffmpeg import ffprobe_executable
 from ai_player.ui.player_window_utils import (
     float_value as _float_value,
@@ -30,6 +32,7 @@ from ai_player.ui.player_window_utils import (
 from ai_player.ui.player_window_utils import (
     repair_mojibake as _repair_mojibake,
 )
+from ai_player.ui.task_center import collect_background_tasks, format_background_tasks, stop_background_tasks
 
 
 class PlayerRuntimeMixin:
@@ -56,11 +59,27 @@ class PlayerRuntimeMixin:
         warmup_grid.addWidget(self._runtime_warmup_tts_check, 3, 0, 1, 2)
         layout.addLayout(warmup_grid)
 
+        task_toolbar = QWidget()
+        task_toolbar_layout = QHBoxLayout(task_toolbar)
+        task_toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        self._runtime_stop_tasks_button = self._make_button(
+            "runtime_tasks_stop",
+            self.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop),
+        )
+        self._runtime_stop_tasks_button.clicked.connect(self._stop_runtime_background_tasks)
+        self._runtime_stop_tasks_button.setEnabled(False)
+        task_toolbar_layout.addWidget(self._runtime_stop_tasks_button)
+        task_toolbar_layout.addStretch(1)
+        layout.addWidget(task_toolbar)
+
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(7)
         self._runtime_labels: dict[str, QLabel] = {}
         rows = [
+            ("health", "runtime_health"),
+            ("privacy", "runtime_privacy"),
+            ("tasks", "runtime_tasks"),
             ("media", "runtime_media"),
             ("gpu_runtime", "runtime_gpu_runtime"),
             ("process_cpu", "runtime_process_cpu"),
@@ -125,6 +144,12 @@ class PlayerRuntimeMixin:
         else:
             self._runtime_labels["system_memory"].setText(self._tr("runtime_unavailable"))
         self._runtime_labels["media"].setText(self._runtime_media_info_text_current())
+        self._runtime_labels["health"].setText(self._runtime_health_summary())
+        self._runtime_labels["privacy"].setText(self._runtime_privacy_summary())
+        tasks = collect_background_tasks(self)
+        self._runtime_labels["tasks"].setText(self._runtime_task_summary(tasks))
+        if hasattr(self, "_runtime_stop_tasks_button"):
+            self._runtime_stop_tasks_button.setEnabled(bool(tasks))
         self._runtime_labels["gpu_runtime"].setText(self._gpu_runtime_text())
         self._runtime_labels["gpu"].setText(self._runtime_gpu_text)
         self._runtime_labels["python"].setText(platform.python_version())
@@ -439,6 +464,54 @@ class PlayerRuntimeMixin:
             return format_runtime_diagnostics_summary(report)
         except Exception as exc:
             return self._tr("runtime_diagnostics_failed").format(detail=_repair_mojibake(str(exc)))
+
+    def _runtime_health_summary(self) -> str:
+        try:
+            return format_runtime_health(build_runtime_health(self._current_runtime_config()))
+        except Exception as exc:
+            return self._tr("runtime_health_failed").format(detail=_repair_mojibake(str(exc)))
+
+    def _runtime_privacy_summary(self) -> str:
+        try:
+            return format_runtime_privacy(
+                build_runtime_privacy(self._current_runtime_config()),
+                offline_text=self._tr("runtime_privacy_offline"),
+            )
+        except Exception as exc:
+            return self._tr("runtime_privacy_failed").format(detail=_repair_mojibake(str(exc)))
+
+    def _runtime_task_summary(self, tasks: tuple[object, ...] | None = None) -> str:
+        try:
+            if tasks is None:
+                tasks = collect_background_tasks(self)
+            return format_background_tasks(
+                tasks,
+                idle_text=self._tr("runtime_tasks_idle"),
+            )
+        except Exception as exc:
+            return self._tr("runtime_tasks_failed").format(detail=_repair_mojibake(str(exc)))
+
+    def _set_background_task_detail(self, name: str, detail: object) -> None:
+        text = " ".join(str(detail or "").split())
+        if not text:
+            return
+        if not hasattr(self, "_background_task_details"):
+            self._background_task_details = {}
+        self._background_task_details[str(name)] = text[:500]
+
+    def _clear_background_task_detail(self, name: str) -> None:
+        if not hasattr(self, "_background_task_details"):
+            return
+        self._background_task_details.pop(str(name), None)
+
+    def _stop_runtime_background_tasks(self) -> None:
+        summary = stop_background_tasks(self)
+        self._refresh_runtime_tab()
+        if summary.failed:
+            message = self._tr("runtime_tasks_stop_partial").format(failed=", ".join(summary.failed))
+        else:
+            message = self._tr("runtime_tasks_stopped").format(count=summary.stopped)
+        self.statusBar().showMessage(message)
 
     def _format_seconds(self, value: float | None) -> str:
         if value is None:

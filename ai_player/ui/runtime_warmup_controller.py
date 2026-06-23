@@ -44,6 +44,16 @@ class RuntimeWarmupController:
         self._worker = None
         return True
 
+    def is_running(self) -> bool:
+        worker = self._worker
+        if worker is None:
+            return False
+        is_running = getattr(worker, "isRunning", None)
+        return bool(is_running()) if callable(is_running) else True
+
+    def task_detail(self) -> str:
+        return self._last_status or "Preloading runtime components."
+
     def status_changed(self, message: str) -> None:
         self.show_status(message)
 
@@ -56,6 +66,9 @@ class RuntimeWarmupController:
         self.show_status(self._owner._tr("status_runtime_warmup_failed").format(detail=message))
 
     def show_status(self, message: str) -> None:
+        set_detail = getattr(self._owner, "_set_background_task_detail", None)
+        if callable(set_detail):
+            set_detail("Runtime preloading", message)
         if self.can_replace_status():
             self._last_status = message
             self._owner.statusBar().showMessage(message)

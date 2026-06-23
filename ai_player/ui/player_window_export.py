@@ -240,11 +240,16 @@ class PlayerExportMixin:
 
     def _export_progress_changed(self, message: str) -> None:
         clean = _repair_mojibake(message)
+        self._export_progress_text = clean
+        self._set_background_task_detail("Export", clean)
         self.statusBar().showMessage(clean)
         if self._export_dialog is not None:
             self._export_dialog.update_status(clean)
 
     def _export_progress_percent_changed(self, value: int) -> None:
+        detail = getattr(self, "_export_progress_text", "")
+        if detail:
+            self._set_background_task_detail("Export", f"{value}% | {detail}")
         if self._export_dialog is not None:
             self._export_dialog.update_progress(value)
 
@@ -266,6 +271,7 @@ class PlayerExportMixin:
         if self._export_dialog is not None:
             self._export_dialog.mark_finished(output_path)
         self.statusBar().showMessage(f"{self._tr('status_export_done_prefix')} {output_path}")
+        self._clear_background_task_detail("Export")
 
     def _export_partial_finished(self, output_path: str) -> None:
         self._export_terminal = True
@@ -273,6 +279,7 @@ class PlayerExportMixin:
         if self._export_dialog is not None:
             self._export_dialog.mark_partial_finished(output_path)
         self.statusBar().showMessage(f"{self._tr('status_export_partial_done_prefix')} {output_path}")
+        self._clear_background_task_detail("Export")
 
     def _export_failed(self, message: str) -> None:
         self._export_terminal = True
@@ -280,6 +287,7 @@ class PlayerExportMixin:
         if self._export_dialog is not None:
             self._export_dialog.mark_failed(message)
         self.statusBar().showMessage(self._tr("status_export_stopped"))
+        self._clear_background_task_detail("Export")
 
     def _export_worker_finished(self, worker) -> None:
         cancelled = self._worker_lifecycle_state.finish_export(worker, terminal=self._export_terminal)
@@ -288,6 +296,7 @@ class PlayerExportMixin:
             self.statusBar().showMessage(self._tr("status_cancel_export"))
             if self._export_dialog is not None:
                 self._export_dialog.mark_cancelled(self._tr("status_cancel_export"))
+            self._clear_background_task_detail("Export")
         worker.deleteLater()
 
     def _choose_export_range(self) -> ExportRange | None:

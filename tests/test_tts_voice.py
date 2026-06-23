@@ -392,6 +392,31 @@ def test_google_online_tts_decodes_audio_content(monkeypatch, tmp_path) -> None:
     assert (tmp_path / "out.mp3").read_bytes() == b"google-audio"
 
 
+def test_google_online_tts_error_uses_provider_message(monkeypatch, tmp_path) -> None:
+    def fake_post(_url, **_kwargs):
+        return _FakeResponse(
+            status_code=400,
+            payload={
+                "error": {
+                    "code": 400,
+                    "message": "API key not valid. Please pass a valid API key.",
+                    "status": "INVALID_ARGUMENT",
+                    "details": [{"reason": "API_KEY_INVALID"}],
+                }
+            },
+        )
+
+    monkeypatch.setattr(tts.requests, "post", fake_post)
+    provider = tts.OnlineTTSProvider(AppConfig(tts_api_key="bad-key"), "google_tts")
+
+    with pytest.raises(tts.TTSError) as error:
+        provider.synthesize("Xin chao", tmp_path / "out.mp3", voice="vi-VN-Neural2-A")
+
+    message = str(error.value)
+    assert "API key not valid" in message
+    assert "details" not in message
+
+
 def test_amazon_polly_online_tts_signs_request(monkeypatch, tmp_path) -> None:
     calls = []
 
@@ -419,4 +444,3 @@ def test_amazon_polly_online_tts_signs_request(monkeypatch, tmp_path) -> None:
     assert payload["VoiceId"] == "Joanna"
     assert payload["Engine"] == "standard"
     assert (tmp_path / "out.mp3").read_bytes() == b"polly-audio"
-

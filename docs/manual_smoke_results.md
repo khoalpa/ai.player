@@ -2,6 +2,32 @@
 
 Use this file to keep a short, build-specific record before sharing a Windows build.
 
+## 2026-06-23 UI And Portable Refactor Smoke
+
+- Source baseline: current working tree after provider preview UI helpers,
+  provider preview mixin, download task detail helper, and TTS error parsing
+  extraction were added.
+- Lint: `.\.venv\Scripts\python.exe -m ruff check .` passed.
+- Dependency consistency: `.\.venv\Scripts\python.exe -m pip check` passed.
+- Unit/integration tests: `.\.venv\Scripts\python.exe -m pytest` passed, 788 tests.
+- Runtime Doctor: `.\.venv\Scripts\python.exe .\scripts\runtime_doctor.py --ci`
+  passed with required package, FFmpeg/ffplay, Tesseract, LibreOffice, local
+  model folders, and tessdata checks available.
+- Source UI launch smoke: `.\.venv\Scripts\python.exe main.py` stayed running
+  for 12 seconds and was stopped after verification.
+- Release smoke coverage: `.\.venv\Scripts\python.exe -m pytest tests\test_release_smoke.py`
+  passed, 4 tests.
+- Workflow benchmark: `.\.venv\Scripts\python.exe .\scripts\workflow_benchmark.py --audio samples\demo-video.mp4 --output data\tmp\workflow-benchmark-current.json --source-language en`
+  passed and wrote `data\tmp\workflow-benchmark-current.json`; ASR returned 0
+  speech segments for the short demo sample, while translation and TTS completed.
+- Portable build: `.\scripts\build_portable.ps1` passed and created
+  `dist\portable\AI Player Lite`.
+- Portable launch smoke: `.\scripts\smoke_launch_app.ps1 -AppPath "dist\portable\AI Player Lite\AI Player\AI Player.exe" -Seconds 12`
+  passed after the final rebuild.
+- Note: no code-signing certificate was provided, so 689 PE files remain
+  unsigned. PyInstaller also reported optional missing TensorRT/TBB libraries;
+  the build completed and launch smoke passed.
+
 ## 2026-06-21 Online Provider Config And Portable Rebuild
 
 - Source baseline: current working tree after online provider/API credential

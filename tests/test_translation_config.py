@@ -100,6 +100,32 @@ def test_google_translate_posts_batch(monkeypatch) -> None:
     assert kwargs["json"] == {"q": ["Hello"], "target": "vi", "format": "text"}
 
 
+def test_online_translation_error_uses_provider_message(monkeypatch) -> None:
+    def fake_request(_method, _url, **_kwargs):
+        return FakeResponse(
+            {
+                "error": {
+                    "code": 400,
+                    "message": "API key not valid. Please pass a valid API key.",
+                    "errors": [{"reason": "badRequest"}],
+                }
+            },
+            status_code=400,
+        )
+
+    monkeypatch.setattr(translation.requests, "request", fake_request)
+    translator = translation.OnlineTranslator(
+        AppConfig(translator_provider="google_translate", translator_api_key="bad-key")
+    )
+
+    with pytest.raises(translation.TranslationError) as error:
+        translator.translate_many(["Hello"], "en")
+
+    message = str(error.value)
+    assert "API key not valid" in message
+    assert "errors" not in message
+
+
 def test_deepl_translate_posts_batch(monkeypatch) -> None:
     calls = []
 
