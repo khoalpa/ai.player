@@ -86,7 +86,7 @@ def test_player_window_constructs_offscreen(qapp) -> None:
         assert window.windowTitle()
         assert window._settings_tabs.tabText(0) == window._tr("first_run_tab")
         assert window._settings_tabs.tabText(1) == window._tr("task_center_tab")
-        assert window._readiness_selected_profile == "quick"
+        assert window._readiness_selected_profile == "auto"
         assert window._source_filter_worker_mode == window._config.original_audio_voice_filter_mode
         assert window._source_filter_worker_model == window._config.original_audio_voice_filter_model
         assert window._source_filter_cache == {}
@@ -114,8 +114,28 @@ def test_player_window_constructs_offscreen(qapp) -> None:
         placeholder_url = getattr(window._video_placeholder, "url", None)
         if callable(placeholder_url):
             assert placeholder_url().toString() == DEFAULT_MEDIA_HOME_URL
-            assert window._source_label.text() == DEFAULT_MEDIA_HOME_URL
+            assert window._media_stack.currentWidget() is window._media_start_page
+            assert window._source_label.text() == window._tr("source_empty")
             assert not window._media_home_button.isHidden()
+
+        media_video_button = window._media_start_workflow_buttons["first_run_workflow_video"]
+        assert media_video_button.text() == window._tr("first_run_workflow_video")
+        assert window._tr("first_run_workflow_video_detail") in media_video_button.toolTip()
+
+        readiness_video_button = window._readiness_workflow_buttons["first_run_workflow_video"]
+        assert readiness_video_button.text() == window._tr("first_run_workflow_video")
+        assert window._tr("first_run_workflow_video_detail") in readiness_video_button.toolTip()
+
+        media_quick_button = window._media_start_profile_buttons["quick"]
+        assert media_quick_button.text() == window._tr("first_run_profile_quick")
+        assert window._tr("first_run_profile_quick_detail") in media_quick_button.toolTip()
+        media_auto_button = window._media_start_profile_buttons["auto"]
+        assert media_auto_button.text() == window._tr("first_run_profile_auto")
+        assert window._tr("first_run_profile_auto_detail") in media_auto_button.toolTip()
+
+        readiness_quick_button = window._readiness_profile_buttons["quick"]
+        assert readiness_quick_button.text() == window._tr("first_run_profile_quick")
+        assert window._tr("first_run_profile_quick_detail") in readiness_quick_button.toolTip()
     finally:
         window.close()
 
@@ -192,14 +212,14 @@ def test_simple_sidebar_tracks_workflow_context(qapp) -> None:
         qapp.processEvents()
 
         assert tabs.tabBar().isHidden()
-        assert visible_tabs() == {1, 2, 3, 6}
+        assert visible_tabs() == {2, 3, 6}
         assert not window._settings_group_buttons["settings_group_workflow"].isHidden()
         assert window._settings_group_buttons["settings_group_start"].isHidden()
 
         window._start_workflow("meeting", lambda: None)
         qapp.processEvents()
 
-        assert visible_tabs() == {1, 2, 6}
+        assert visible_tabs() == {2, 3, 6}
         assert tabs.currentIndex() == 2
         assert window._current_workflow_context == "meeting"
         assert window._tr("first_run_workflow_meeting") in window.statusBar().currentMessage()
@@ -239,6 +259,7 @@ def test_player_window_google_home_button_resets_placeholder_url(qapp) -> None:
             return
 
         set_url(QUrl("https://example.com/search"))
+        window._media_stack.setCurrentWidget(window._video_placeholder)
         window._sync_media_browser_state()
         assert window._source_label.text() == "https://example.com/search"
 
@@ -281,7 +302,9 @@ def test_player_window_media_home_button_click_resets_placeholder_url(qapp) -> N
             return
 
         set_url(QUrl("https://example.com/search"))
+        window._media_stack.setCurrentWidget(window._video_placeholder)
         window._sync_media_browser_state()
+        assert not window._media_home_button.isHidden()
 
         QTest.mouseClick(window._media_home_button, Qt.MouseButton.LeftButton)
 
@@ -364,6 +387,14 @@ def test_source_button_click_through_local_video_path(qapp, monkeypatch) -> None
         monkeypatch.setattr(window, "_save_settings", lambda: None)
         monkeypatch.setattr(window, "_stop_dubbing", lambda: None)
 
+        action_texts = [action.text() for action in window._source_menu.actions() if not action.isSeparator()]
+        assert window._tr("smart_open_files") in action_texts
+        assert window._tr("smart_open_paste") in action_texts
+        assert window._tr("open_video") not in action_texts
+        assert window._tr("open_url") not in action_texts
+        assert window._tr("open_document") not in action_texts
+        assert "SRT" not in window._open_file_button.toolTip()
+
         QTest.mouseClick(window._open_file_button, Qt.MouseButton.LeftButton)
 
         assert loaded_paths == [str(video_path)]
@@ -371,6 +402,53 @@ def test_source_button_click_through_local_video_path(qapp, monkeypatch) -> None
         assert window._video_path == str(video_path)
         assert window._source_label.text() == str(video_path)
         assert window._selected_audio_source() == "original"
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_smart_open_attaches_transcript_for_video_pair(qapp, tmp_path, monkeypatch) -> None:
+    window = PlayerWindow()
+    try:
+        video_path = tmp_path / "demo.mp4"
+        subtitle_path = tmp_path / "demo.srt"
+        video_path.write_bytes(b"video")
+        subtitle_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
+        loaded_paths: list[str | None] = []
+
+        monkeypatch.setattr(
+            "ai_player.ui.player_window_sources.QFileDialog.getOpenFileNames",
+            lambda *_args, **_kwargs: ([str(video_path), str(subtitle_path)], ""),
+        )
+        monkeypatch.setattr(window, "_auto_select_video_aspect_ratio", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(window, "_load_current_video_for_playback", lambda: loaded_paths.append(window._video_path))
+        monkeypatch.setattr(window, "_show_video_output", lambda: None)
+        monkeypatch.setattr(window, "_save_settings", lambda: None)
+        monkeypatch.setattr(window, "_stop_dubbing", lambda: None)
+
+        window._open_smart_action.trigger()
+
+        assert loaded_paths == [str(video_path)]
+        assert window._video_path == str(video_path)
+        assert window._transcript_path_edit.text() == str(subtitle_path)
+        assert window._selected_audio_source() == "transcript"
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_smart_open_clipboard_url_action_uses_url_flow(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    try:
+        opened: list[str] = []
+        qapp.clipboard().setText("https://www.youtube.com/watch?v=demo123")
+        monkeypatch.setattr(window, "_open_url_from_browser", lambda url: opened.append(url))
+
+        window._refresh_open_source_menu()
+
+        assert window._open_clipboard_source_action.isVisible()
+        window._open_clipboard_source_action.trigger()
+        assert opened == ["https://www.youtube.com/watch?v=demo123"]
         window._settings_save_timer.stop()
     finally:
         window.close()
@@ -3146,6 +3224,21 @@ def test_video_url_full_cache_is_below_auto_match_audio(qapp) -> None:
         ).y()
 
         assert full_cache_y > auto_match_y
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_video_cache_dir_updates_runtime_config(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window._video_cache_dir_edit.setText(r"D:\media-cache")
+
+        assert window._current_runtime_config().video_cache_dir == r"D:\media-cache"
+
+        window._reset_video_cache_dir()
+
+        assert window._current_runtime_config().video_cache_dir == ""
         window._settings_save_timer.stop()
     finally:
         window.close()

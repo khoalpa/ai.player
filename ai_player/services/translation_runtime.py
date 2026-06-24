@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from ai_player.core.config import AppConfig
 from ai_player.core.value_utils import int_value as _core_int_value
 from ai_player.services.translation import PassthroughTranslator, VietnameseTranslator, effective_translator_provider
+from ai_player.services.workflow_cache import get_text_result, put_text_result
 
 
 @dataclass(frozen=True)
@@ -28,15 +29,81 @@ class TranslationRuntimeKey:
 class SharedVietnameseTranslator:
     def __init__(self, config: AppConfig) -> None:
         self._translator = VietnameseTranslator(config)
+        self._runtime_key = translation_runtime_key(config)
         self._lock = threading.Lock()
 
     def translate(self, text: str, source_language: str | None = None) -> str:
         with self._lock:
-            return self._translator.translate(text, source_language)
+            runtime_key = getattr(self, "_runtime_key", None)
+            if runtime_key is None:
+                return self._translator.translate(text, source_language)
+            cached = get_text_result(
+                "translation",
+                runtime_key,
+                text,
+                source_language=source_language,
+            )
+            if cached is not None:
+                return cached
+            translated = self._translator.translate(text, source_language)
+            return put_text_result(
+                "translation",
+                runtime_key,
+                text,
+                translated,
+                source_language=source_language,
+            )
 
     def translate_many(self, texts: list[str], source_language: str | None = None) -> list[str]:
         with self._lock:
-            return self._translator.translate_many(texts, source_language)
+            runtime_key = getattr(self, "_runtime_key", None)
+            if runtime_key is None:
+                return self._translator.translate_many(texts, source_language)
+            results: list[str | None] = []
+            missing_texts: list[str] = []
+            missing_indexes: list[int] = []
+            seen_missing: dict[str, int] = {}
+            for index, text in enumerate(texts):
+                cached = get_text_result(
+                    "translation",
+                    runtime_key,
+                    text,
+                    source_language=source_language,
+                )
+                if cached is not None:
+                    results.append(cached)
+                    continue
+                normalized = " ".join(str(text or "").split())
+                duplicate_index = seen_missing.get(normalized)
+                if duplicate_index is not None:
+                    results.append(None)
+                    missing_indexes.append(index)
+                    continue
+                seen_missing[normalized] = len(missing_texts)
+                missing_texts.append(text)
+                missing_indexes.append(index)
+                results.append(None)
+
+            if missing_texts:
+                translated_missing = _align_text_results(
+                    missing_texts,
+                    self._translator.translate_many(missing_texts, source_language),
+                )
+                translated_by_normalized = {
+                    " ".join(str(text or "").split()): translated
+                    for text, translated in zip(missing_texts, translated_missing, strict=False)
+                }
+                for index in missing_indexes:
+                    text = texts[index]
+                    translated = translated_by_normalized.get(" ".join(str(text or "").split()), str(text or ""))
+                    results[index] = put_text_result(
+                        "translation",
+                        runtime_key,
+                        text,
+                        translated,
+                        source_language=source_language,
+                    )
+            return [str(result or "") for result in results]
 
 
 _TRANSLATOR_CACHE_LOCK = threading.Lock()
@@ -82,3 +149,22 @@ def translation_runtime_key(config: AppConfig) -> TranslationRuntimeKey:
 
 def _int_value(value: object, *, default: int, minimum: int) -> int:
     return _core_int_value(value, default=default, minimum=minimum)
+
+
+def _align_text_results(fallback_texts: list[str], results: object) -> list[str]:
+    if isinstance(results, str | bytes):
+        result_items = []
+    else:
+        try:
+            result_items = list(results)
+        except TypeError:
+            result_items = []
+    aligned = []
+    for index, fallback in enumerate(fallback_texts):
+        result = result_items[index] if index < len(result_items) else fallback
+        if isinstance(result, bytes):
+            result = result.decode("utf-8", errors="replace")
+        elif not isinstance(result, str):
+            result = fallback
+        aligned.append(" ".join(str(result or fallback or "").split()) or fallback)
+    return aligned

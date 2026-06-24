@@ -6,6 +6,7 @@ import pytest
 
 from ai_player.core.config import AppConfig
 from ai_player.services import translation_runtime
+from ai_player.services.workflow_cache import clear_workflow_text_cache
 
 
 def test_translation_runtime_key_normalizes_provider() -> None:
@@ -99,3 +100,29 @@ def test_shared_translator_delegates_translate_many(monkeypatch) -> None:
     shared._lock = translation_runtime.threading.Lock()
 
     assert shared.translate_many(["a", "b"], "en") == ["A", "B"]
+
+
+def test_shared_translator_reuses_cached_batch_results(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    class FakeVietnameseTranslator:
+        def __init__(self, _config) -> None:
+            pass
+
+        def translate(self, text, source_language=None):
+            calls.append([text])
+            return text.upper()
+
+        def translate_many(self, texts, source_language=None):
+            calls.append(list(texts))
+            return [text.upper() for text in texts]
+
+    clear_workflow_text_cache()
+    translation_runtime.clear_shared_vietnamese_translators()
+    monkeypatch.setattr(translation_runtime, "VietnameseTranslator", FakeVietnameseTranslator)
+    translator = translation_runtime.get_shared_vietnamese_translator(AppConfig(translator_provider="nllb"))
+
+    assert translator.translate_many(["hello", "hello", "world"], "en") == ["HELLO", "HELLO", "WORLD"]
+    assert translator.translate_many(["hello", "world"], "en") == ["HELLO", "WORLD"]
+
+    assert calls == [["hello", "world"]]

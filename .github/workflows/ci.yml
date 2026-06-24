@@ -31,6 +31,12 @@ jobs:
       - name: Test
         run: python -m pytest
 
+      - name: Benchmark preset guard
+        run: |
+          python scripts/compare_performance_presets.py --language en --json
+          python scripts/compare_performance_presets.py --language vi
+          python scripts/workflow_benchmark.py --check-baselines --baseline docs/workflow_benchmark_baselines.json
+
   test:
     needs: quick
     runs-on: windows-latest

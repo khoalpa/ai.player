@@ -25,11 +25,11 @@ def build_media_browser_buttons(owner) -> None:
 
 class PlayerMediaBrowserMixin:
     def _sync_media_browser_state(self) -> None:
-        self._sync_media_home_button()
-        self._sync_media_browser_address()
         sync_start = getattr(self, "_sync_media_start_overlay", None)
         if callable(sync_start):
             sync_start()
+        self._sync_media_home_button()
+        self._sync_media_browser_address()
 
     def _open_media_home(self) -> None:
         if not hasattr(self, "_video_placeholder"):
@@ -47,8 +47,10 @@ class PlayerMediaBrowserMixin:
         placeholder = getattr(self, "_video_placeholder", None)
         if button is None or media_stack is None or placeholder is None:
             return
+        start_page = getattr(self, "_media_start_page", None)
         button.setVisible(
-            media_stack.currentWidget() is placeholder and callable(getattr(placeholder, "setUrl", None))
+            media_stack.currentWidget() in {start_page, placeholder}
+            and callable(getattr(placeholder, "setUrl", None))
         )
 
     def _sync_media_browser_address(self) -> None:
@@ -56,6 +58,10 @@ class PlayerMediaBrowserMixin:
         placeholder = getattr(self, "_video_placeholder", None)
         source_label = getattr(self, "_source_label", None)
         if media_stack is None or placeholder is None or source_label is None:
+            return
+        start_page = getattr(self, "_media_start_page", None)
+        if start_page is not None and media_stack.currentWidget() is start_page:
+            source_label.setText(self._tr("source_empty"))
             return
         if media_stack.currentWidget() is not placeholder:
             return

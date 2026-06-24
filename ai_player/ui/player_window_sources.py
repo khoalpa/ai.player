@@ -7,6 +7,7 @@ from PySide6.QtCore import QRect, QSignalBlocker, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -85,6 +86,8 @@ TELEGRAM_BLACKLIST_BUTTON_MARGIN = 10
 TELEGRAM_TRANSLATION_COLOR = "#0f766e"
 VIDEO_SUBTITLE_DIR_NAMES = ("subtitles", "subtitle", "subs")
 VIDEO_SUBTITLE_LANGUAGE_SUFFIXES = ("vi", "en", "ja", "jp", "ko", "zh", "zh-Hans", "zh-Hant")
+TRANSCRIPT_SOURCE_EXTENSIONS = {".srt", ".vtt", ".txt"}
+VIDEO_SOURCE_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".ts"}
 
 
 def _video_subtitle_candidates(video_path: str | Path) -> list[Path]:
@@ -114,6 +117,106 @@ def _video_subtitle_candidates(video_path: str | Path) -> list[Path]:
 
 
 class PlayerSourceMixin:
+    def _open_smart_source(self, *_args) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            self._tr("choose_source_title"),
+            str(Path.home()),
+            self._tr("smart_open_file_filter"),
+        )
+        self._open_smart_source_paths(paths)
+
+    def _open_smart_source_prompt(self, *_args) -> None:
+        text, accepted = QInputDialog.getText(
+            self,
+            self._tr("choose_source_title"),
+            self._tr("smart_open_text_label"),
+        )
+        if accepted:
+            self._open_smart_source_text(text)
+
+    def _open_smart_source_from_clipboard(self, *_args) -> None:
+        clipboard = QApplication.clipboard()
+        self._open_smart_source_text(clipboard.text() if clipboard is not None else "")
+
+    def _smart_source_clipboard_text(self) -> str:
+        clipboard = QApplication.clipboard()
+        return str(clipboard.text() if clipboard is not None else "").strip()
+
+    def _smart_source_text_supported(self, text: object) -> bool:
+        value = str(text or "").strip().strip('"')
+        if not value:
+            return False
+        if self._smart_source_url_supported(value):
+            return True
+        return Path(value).expanduser().exists()
+
+    def _smart_source_url_supported(self, text: str) -> bool:
+        parsed = urlparse(str(text or "").strip())
+        return parsed.scheme in {"http", "https", "tg"} and (
+            is_supported_video_url(text) or is_telegram_channel_url(text) or is_youtube_browse_url(text)
+        )
+
+    def _open_smart_source_text(self, text: object) -> None:
+        value = str(text or "").strip().strip('"')
+        if not value:
+            return
+        if self._smart_source_url_supported(value):
+            self._start_goal_workflow("url", lambda: self._open_url_from_browser(value))
+            return
+        path = Path(value).expanduser()
+        if path.exists():
+            self._open_smart_source_paths([str(path)])
+            return
+        QMessageBox.warning(self, self._tr("app_title"), self._tr("smart_open_unsupported"))
+
+    def _open_smart_source_paths(self, paths: list[str] | tuple[str, ...]) -> None:
+        selected = [Path(path) for path in paths if str(path or "").strip()]
+        selected = [path for path in selected if path.exists() and path.is_file()]
+        if not selected:
+            return
+
+        timed_transcripts = [path for path in selected if path.suffix.lower() in {".srt", ".vtt"}]
+        text_transcripts = [path for path in selected if path.suffix.lower() == ".txt"]
+        transcript_candidates = [*timed_transcripts]
+        if len(selected) > 1:
+            transcript_candidates.extend(text_transcripts)
+
+        transcript_path = transcript_candidates[0] if transcript_candidates else None
+        documents = [
+            path
+            for path in selected
+            if is_supported_document_path(path) and (path not in transcript_candidates or len(selected) == 1)
+        ]
+        videos = [
+            path
+            for path in selected
+            if path not in documents
+            and path not in transcript_candidates
+            and (path.suffix.lower() in VIDEO_SOURCE_EXTENSIONS or not is_supported_document_path(path))
+        ]
+
+        if videos:
+            video_path = videos[0]
+            self._start_goal_workflow(
+                "video",
+                lambda: self._open_local_video_path(
+                    str(video_path),
+                    prompt_for_subtitle=transcript_path is None,
+                    subtitle_path=transcript_path,
+                ),
+            )
+            return
+
+        if documents:
+            document_path = documents[0]
+            self._pending_smart_transcript_path = str(transcript_path) if transcript_path is not None else ""
+            self._start_goal_workflow("document", lambda: self._load_document(str(document_path)))
+            return
+
+        if transcript_path is not None:
+            self._apply_transcript_path(transcript_path)
+
     def _open_video(self, *_args) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -183,7 +286,11 @@ class PlayerSourceMixin:
 
     def _apply_video_subtitle_path(self, path: str | Path, *, save: bool = True) -> bool:
         subtitle_path = Path(path)
-        if subtitle_path.suffix.lower() != ".srt" or not subtitle_path.exists() or not subtitle_path.is_file():
+        if (
+            subtitle_path.suffix.lower() not in TRANSCRIPT_SOURCE_EXTENSIONS
+            or not subtitle_path.exists()
+            or not subtitle_path.is_file()
+        ):
             QMessageBox.warning(
                 self,
                 self._tr("video_subtitle_invalid_title"),
@@ -210,15 +317,25 @@ class PlayerSourceMixin:
                 self._tr("video_subtitle_empty_message").format(path=subtitle_path),
             )
             return False
-        self._transcript_path_edit.setText(str(subtitle_path))
+        return self._apply_transcript_path(subtitle_path, save=save, count=len(entries))
+
+    def _apply_transcript_path(self, path: str | Path, *, save: bool = True, count: int | None = None) -> bool:
+        transcript_path = Path(path)
+        if transcript_path.suffix.lower() not in TRANSCRIPT_SOURCE_EXTENSIONS:
+            return False
+        self._transcript_path_edit.setText(str(transcript_path))
         self._invalidate_subtitle_entries()
         self._set_combo_data(self._audio_source_combo, "transcript")
         self._sync_audio_source_controls()
         if save:
             self._queue_save_settings()
-        self.statusBar().showMessage(
-            self._tr("status_video_subtitle_attached").format(path=subtitle_path, count=len(entries))
+        message_key = "status_video_subtitle_attached" if count is not None else "status_selected_transcript"
+        message = (
+            self._tr(message_key).format(path=transcript_path, count=count)
+            if count is not None
+            else self._tr(message_key).format(path=transcript_path)
         )
+        self.statusBar().showMessage(message)
         if hasattr(self, "_refresh_next_action_panel"):
             self._refresh_next_action_panel()
         return True
@@ -276,6 +393,10 @@ class PlayerSourceMixin:
         self._transcript_path_edit.setText(str(transcript.transcript_path))
         self._invalidate_subtitle_entries()
         self._set_combo_data(self._audio_source_combo, "transcript")
+        pending_transcript = str(getattr(self, "_pending_smart_transcript_path", "") or "")
+        self._pending_smart_transcript_path = ""
+        if pending_transcript:
+            self._apply_transcript_path(pending_transcript, save=False)
         self._clear_transcript()
         self._source_label.setText(str(transcript.source_path))
         self._save_settings()
@@ -405,8 +526,30 @@ class PlayerSourceMixin:
             url,
             self._config.playback_video_quality,
             full_cache=full_cache,
+            cache_dir=self._config.video_cache_dir,
             language_id=self._config.gui_language,
         )
+
+    def _choose_video_cache_dir(self) -> None:
+        current = self._video_cache_dir_edit.text().strip() if hasattr(self, "_video_cache_dir_edit") else ""
+        start_dir = current or str(Path.home())
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            self._tr("video_cache_dir_choose"),
+            start_dir,
+        )
+        if not selected or not hasattr(self, "_video_cache_dir_edit"):
+            return
+        self._video_cache_dir_edit.setText(selected)
+        self._queue_save_settings()
+        self.statusBar().showMessage(self._tr("status_video_cache_dir_selected").format(path=selected))
+
+    def _reset_video_cache_dir(self) -> None:
+        if not hasattr(self, "_video_cache_dir_edit"):
+            return
+        self._video_cache_dir_edit.clear()
+        self._queue_save_settings()
+        self.statusBar().showMessage(self._tr("status_video_cache_dir_default"))
 
     def _remember_video_url(self, url: str) -> None:
         normalized = str(url or "").strip()
@@ -1518,6 +1661,10 @@ class PlayerSourceMixin:
         self._source_label.setText(label)
         provider = f" ({source.provider})" if source.is_resolved else ""
         self.statusBar().showMessage(self._tr("status_opened_url").format(provider=provider, label=label))
+        if bool(getattr(self, "_last_video_url_request", {}).get("full_cache")):
+            self._url_cache_completed_count = int(getattr(self, "_url_cache_completed_count", 0) or 0) + 1
+            if hasattr(self, "_set_background_task_detail"):
+                self._set_background_task_detail("URL/cache loading", self._tr("task_center_url_cached"))
         self._save_settings()
         if self._dubbing_auto_enabled:
             self._dub_button.setChecked(True)

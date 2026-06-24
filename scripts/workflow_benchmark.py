@@ -21,6 +21,7 @@ from ai_player.services.whisper_runtime import (
 )
 
 BENCHMARK_SCHEMA_VERSION = 1
+DEFAULT_BASELINE_FILE = Path(__file__).resolve().parents[1] / "docs" / "workflow_benchmark_baselines.json"
 
 
 def _time_call(callback):
@@ -38,6 +39,16 @@ def main() -> int:
     parser.add_argument("--source-language", default="en", help="Source language hint for translation/ASR.")
     parser.add_argument("--baseline", default="", help="Optional previous JSON result to compare timings against.")
     parser.add_argument(
+        "--baseline-workflow",
+        default="",
+        help="Named workflow baseline to compare against, e.g. video_short, transcript, or document.",
+    )
+    parser.add_argument(
+        "--check-baselines",
+        action="store_true",
+        help="Validate the workflow baseline file and exit without running ASR/translation/TTS.",
+    )
+    parser.add_argument(
         "--max-regression-percent",
         type=float,
         default=35.0,
@@ -47,6 +58,11 @@ def main() -> int:
     parser.add_argument("--skip-translation", action="store_true")
     parser.add_argument("--skip-tts", action="store_true")
     args = parser.parse_args()
+
+    if args.check_baselines:
+        baselines = load_workflow_baselines(Path(args.baseline) if args.baseline else DEFAULT_BASELINE_FILE)
+        print(json.dumps({"workflows": sorted(baselines), "count": len(baselines)}, indent=2))
+        return 0
 
     config = AppConfig.from_env()
     timings: dict[str, float] = {}
@@ -106,10 +122,18 @@ def main() -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result, indent=2))
-    if args.baseline:
+    baseline = {}
+    if args.baseline_workflow:
+        baseline = load_named_workflow_baseline(
+            Path(args.baseline) if args.baseline else DEFAULT_BASELINE_FILE,
+            args.baseline_workflow,
+        )
+    elif args.baseline:
+        baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8-sig"))
+    if baseline:
         regressions = compare_timing_regressions(
             result,
-            json.loads(Path(args.baseline).read_text(encoding="utf-8-sig")),
+            baseline,
             max_regression_percent=args.max_regression_percent,
         )
         if regressions:
@@ -180,6 +204,47 @@ def compare_timing_regressions(
                 f"({baseline_seconds:.3f}s baseline, +{max_regression_percent:.1f}% allowed)"
             )
     return regressions
+
+
+def load_workflow_baselines(path: Path = DEFAULT_BASELINE_FILE) -> dict[str, dict[str, object]]:
+    data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    if data.get("schema_version") != BENCHMARK_SCHEMA_VERSION:
+        raise ValueError(f"Unsupported benchmark baseline schema: {data.get('schema_version')!r}")
+    workflows = data.get("workflows")
+    if not isinstance(workflows, dict) or not workflows:
+        raise ValueError("Benchmark baseline file must contain a non-empty 'workflows' object.")
+    parsed: dict[str, dict[str, object]] = {}
+    for name, entry in workflows.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Benchmark baseline workflow names must be non-empty strings.")
+        if not isinstance(entry, dict):
+            raise ValueError(f"Benchmark baseline '{name}' must be an object.")
+        result = entry.get("result")
+        if not isinstance(result, dict):
+            raise ValueError(f"Benchmark baseline '{name}' must contain a result object.")
+        _validate_benchmark_result(result, context=name)
+        parsed[name] = result
+    return parsed
+
+
+def load_named_workflow_baseline(path: Path, workflow: str) -> dict[str, object]:
+    baselines = load_workflow_baselines(path)
+    key = str(workflow or "").strip()
+    if key not in baselines:
+        available = ", ".join(sorted(baselines))
+        raise ValueError(f"Unknown benchmark workflow '{workflow}'. Available: {available}")
+    return baselines[key]
+
+
+def _validate_benchmark_result(result: dict[str, object], *, context: str) -> None:
+    if result.get("schema_version") != BENCHMARK_SCHEMA_VERSION:
+        raise ValueError(f"Benchmark baseline '{context}' has an unsupported result schema.")
+    timings = result.get("timings")
+    if not isinstance(timings, dict) or not timings:
+        raise ValueError(f"Benchmark baseline '{context}' must include timings.")
+    for key, value in timings.items():
+        if not str(key).endswith("_seconds") or _positive_float(value) <= 0.0:
+            raise ValueError(f"Benchmark baseline '{context}' has invalid timing '{key}'.")
 
 
 def _positive_float(value: object) -> float:

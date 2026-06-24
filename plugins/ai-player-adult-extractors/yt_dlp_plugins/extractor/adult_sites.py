@@ -4,6 +4,7 @@ import re
 from urllib.parse import quote, urlencode, urlparse
 
 from yt_dlp.extractor.common import InfoExtractor
+from yt_dlp.networking import HEADRequest
 from yt_dlp.utils import ExtractorError, determine_ext, int_or_none, js_to_json, unescapeHTML, url_or_none, urljoin
 
 
@@ -79,7 +80,9 @@ class _AdultSiteBaseIE(InfoExtractor):
                 continue
             seen_urls.add(media_url)
             ext = determine_ext(media_url)
-            if ext == "m3u8":
+            if ext in {"m3u8", "vl"}:
+                if ext == "vl" and self._hls_playlist_looks_like_image_sequence(page_url, video_id, media_url):
+                    continue
                 formats.extend(
                     self._extract_m3u8_formats(
                         media_url,
@@ -96,6 +99,46 @@ class _AdultSiteBaseIE(InfoExtractor):
                 formats.append({"url": media_url, "ext": ext, "http_headers": self._adult_site_headers(page_url)})
         return formats
 
+    def _hls_playlist_looks_like_image_sequence(self, page_url: str, video_id: str, media_url: str) -> bool:
+        playlist = self._download_webpage(
+            media_url,
+            video_id,
+            note="Checking .vl playlist",
+            fatal=False,
+            headers=self._adult_site_headers(page_url),
+        )
+        if not isinstance(playlist, str):
+            return False
+        segment_url = self._first_hls_segment_url(media_url, playlist)
+        if not segment_url:
+            return False
+        response = None
+        try:
+            response = self._request_webpage(
+                HEADRequest(segment_url, headers=self._adult_site_headers(page_url)),
+                video_id,
+                note="Checking .vl segment type",
+                fatal=False,
+            )
+            if response is False:
+                return False
+            content_type = str(response.headers.get("Content-Type") or response.headers.get("content-type") or "")
+        except ExtractorError:
+            return False
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
+        return content_type.lower().split(";", 1)[0].strip().startswith("image/")
+
+    def _first_hls_segment_url(self, playlist_url: str, playlist: str) -> str | None:
+        for line in playlist.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            return url_or_none(urljoin(playlist_url, line))
+        return None
+
     def _find_media_urls(self, page_url: str, webpage: str) -> list[str]:
         candidates = []
         meta_video_url = self._html_search_meta(
@@ -108,11 +151,11 @@ class _AdultSiteBaseIE(InfoExtractor):
             candidates.append(meta_video_url)
         for match in re.finditer(
             r"""(?ix)
-            ["'](?P<quoted>https?:\\/\\/[^"']+\.(?:m3u8|mpd|mp4|m4v|webm)(?:\?[^"']*)?)["']
+            ["'](?P<quoted>https?:\\/\\/[^"']+\.(?:m3u8|mpd|mp4|m4v|webm|vl)(?:\?[^"']*)?)["']
             |
-            (?P<bare>https?://[^\s"'<>\\]+\.(?:m3u8|mpd|mp4|m4v|webm)(?:\?[^\s"'<>\\]+)?)
+            (?P<bare>https?://[^\s"'<>\\]+\.(?:m3u8|mpd|mp4|m4v|webm|vl)(?:\?[^\s"'<>\\]+)?)
             |
-            (?:file|src|source|videoUrl|video_url|hls|url)\s*[:=]\s*["'](?P<named>[^"']+\.(?:m3u8|mpd|mp4|m4v|webm)(?:\?[^"']*)?)["']
+            (?:file|src|source|videoUrl|video_url|hls|url)\s*[:=]\s*["'](?P<named>[^"']+\.(?:m3u8|mpd|mp4|m4v|webm|vl)(?:\?[^"']*)?)["']
             """,
             webpage,
         ):
@@ -235,6 +278,38 @@ class LiveJasminIE(_AdultSiteBaseIE):
         return self._extract_adult_site(url, self._match_id(url).strip("/") or self._generic_id(url))
 
 
+class VLXXIE(_AdultSiteBaseIE):
+    IE_NAME = "vlxx"
+    _VALID_URL = r"https?://(?:[^/]+\.)?vlxx\.[^/]+/(?:video/)?(?P<id>[^/?#&]+)(?:/(?P<numeric_id>\d+))?/?"
+    _IFRAME_DEPTH = 2
+
+    def _real_extract(self, url: str) -> dict:
+        matched = self._match_valid_url(url)
+        video_id = str(matched.group("numeric_id") or matched.group("id") or self._generic_id(url))
+        webpage = self._download_webpage(url, video_id, headers=self._adult_site_headers(url))
+        ajax_url = urljoin(url, "/ajax.php")
+        escaped_video_id = re.escape(video_id)
+        server_ids = dict.fromkeys(
+            re.findall(rf"""(?i)\bserver\s*\(\s*(\d+)\s*,\s*{escaped_video_id}\s*\)""", webpage)
+            + re.findall(r"""(?i)\bdata-sv=["'](\d+)["']""", webpage)
+            + ["1", "2"]
+        )
+        player_webpages = []
+        for server_id in server_ids:
+            payload = urlencode({"vlxx_server": "1", "id": video_id, "server": server_id}).encode()
+            ajax_data = self._download_json(
+                ajax_url,
+                video_id,
+                note=f"Downloading server {server_id} player",
+                data=payload,
+                headers={**self._adult_site_headers(url), "X-Requested-With": "XMLHttpRequest"},
+                fatal=False,
+            )
+            if isinstance(ajax_data, dict) and ajax_data.get("player"):
+                player_webpages.append(str(ajax_data.get("player") or ""))
+        return self._extract_from_webpage(url, video_id, "\n".join([webpage, *player_webpages]), self._IFRAME_DEPTH)
+
+
 class BuomTVIE(_AdultSiteBaseIE):
     IE_NAME = "buomtv"
     _VALID_URL = (
@@ -335,4 +410,5 @@ __all__ = [
     "MissAVIE",
     "R18IE",
     "SupJavIE",
+    "VLXXIE",
 ]

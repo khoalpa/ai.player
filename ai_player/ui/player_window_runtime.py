@@ -134,23 +134,16 @@ class PlayerRuntimeMixin:
         return self._runtime_tab_controller.task_summary(tasks)
 
     def _set_background_task_detail(self, name: str, detail: object, *, log_detail: object | None = None) -> None:
-        text = " ".join(str(detail or "").split())
-        if not text:
+        controller = getattr(self, "_background_task_controller", None)
+        if controller is None:
             return
-        if not hasattr(self, "_background_task_details"):
-            self._background_task_details = {}
-        self._background_task_details[str(name)] = text[:500]
-        record_task = getattr(self, "_record_task_center_event", None)
-        if callable(record_task):
-            record_task(str(name), text if log_detail is None else log_detail)
+        controller.set_detail(name, detail, log_detail=log_detail)
 
     def _clear_background_task_detail(self, name: str) -> None:
-        if not hasattr(self, "_background_task_details"):
+        controller = getattr(self, "_background_task_controller", None)
+        if controller is None:
             return
-        self._background_task_details.pop(str(name), None)
-        refresh_task_center = getattr(self, "_refresh_task_center", None)
-        if callable(refresh_task_center):
-            refresh_task_center()
+        controller.clear_detail(name)
 
     def _stop_runtime_background_tasks(self) -> None:
         self._runtime_tab_controller.stop_background_tasks()

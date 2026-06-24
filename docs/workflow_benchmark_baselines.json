@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "max_regression_percent": 35.0,
+  "workflows": {
+    "video_short": {
+      "description": "Short local video workflow with ASR, translation, and TTS enabled.",
+      "command": "python scripts/workflow_benchmark.py --audio samples/demo-video.mp4 --source-language en --baseline-workflow video_short",
+      "result": {
+        "schema_version": 1,
+        "app_version": "baseline",
+        "python": "3.10",
+        "platform": "windows-latest",
+        "preset": "balanced",
+        "audio": "samples/demo-video.mp4",
+        "source_language": "en",
+        "config": {
+          "asr_provider": "faster_whisper",
+          "whisper_model": "models/asr/faster-whisper-base",
+          "whisper_device": "auto",
+          "whisper_compute_type": "int8",
+          "translator_provider": "nllb_ct2",
+          "local_translation_model": "models/translation/nllb-200-distilled-600M-ct2-int8",
+          "tts_provider": "vieneu",
+          "tts_voice": "Thuc Doan",
+          "vieneu_tts_mode": "turbo",
+          "vieneu_tts_device": "auto"
+        },
+        "timings": {
+          "asr_seconds": 18.0,
+          "translation_seconds": 1.2,
+          "tts_seconds": 4.5
+        },
+        "details": {
+          "asr_segments": 12
+        }
+      }
+    },
+    "transcript": {
+      "description": "Transcript-only workflow that exercises cleanup/translation/TTS without ASR.",
+      "command": "python scripts/workflow_benchmark.py --skip-asr --text \"Hello, this is an AI Player benchmark.\" --source-language en --baseline-workflow transcript",
+      "result": {
+        "schema_version": 1,
+        "app_version": "baseline",
+        "python": "3.10",
+        "platform": "windows-latest",
+        "preset": "low_latency",
+        "audio": "",
+        "source_language": "en",
+        "config": {
+          "asr_provider": "faster_whisper",
+          "whisper_model": "models/asr/faster-whisper-base",
+          "whisper_device": "auto",
+          "whisper_compute_type": "int8",
+          "translator_provider": "nllb_ct2",
+          "local_translation_model": "models/translation/nllb-200-distilled-600M-ct2-int8",
+          "tts_provider": "vieneu",
+          "tts_voice": "Thuc Doan",
+          "vieneu_tts_mode": "turbo",
+          "vieneu_tts_device": "auto"
+        },
+        "timings": {
+          "translation_seconds": 1.0,
+          "tts_seconds": 3.0
+        },
+        "details": {}
+      }
+    },
+    "document": {
+      "description": "Document narration workflow baseline for translation and voice generation.",
+      "command": "python scripts/workflow_benchmark.py --skip-asr --text \"This document summary is ready for narration.\" --source-language en --baseline-workflow document",
+      "result": {
+        "schema_version": 1,
+        "app_version": "baseline",
+        "python": "3.10",
+        "platform": "windows-latest",
+        "preset": "balanced",
+        "audio": "",
+        "source_language": "en",
+        "config": {
+          "asr_provider": "faster_whisper",
+          "whisper_model": "models/asr/faster-whisper-base",
+          "whisper_device": "auto",
+          "whisper_compute_type": "int8",
+          "translator_provider": "nllb_ct2",
+          "local_translation_model": "models/translation/nllb-200-distilled-600M-ct2-int8",
+          "tts_provider": "vieneu",
+          "tts_voice": "Thuc Doan",
+          "vieneu_tts_mode": "turbo",
+          "vieneu_tts_device": "auto"
+        },
+        "timings": {
+          "translation_seconds": 1.1,
+          "tts_seconds": 3.5
+        },
+        "details": {}
+      }
+    }
+  }
+}

@@ -614,6 +614,7 @@ class DubbingWorker(QThread):
             wav_path,
             language=language,
             local_transcriber=transcribe_local,
+            cache_details={"word_timestamps": False},
         )
 
     def _resume_if_buffer_ready(self, current_seconds: float) -> None:

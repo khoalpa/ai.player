@@ -115,6 +115,7 @@ class VideoSourceWorker(QThread):
         url: str,
         playback_quality: str,
         full_cache: bool = True,
+        cache_dir: str = "",
         language_id: str | None = None,
         parent=None,
     ) -> None:
@@ -122,6 +123,7 @@ class VideoSourceWorker(QThread):
         self._url = url
         self._playback_quality = playback_quality
         self._full_cache = full_cache
+        self._cache_dir = cache_dir
         self._language_id = language_id
         self._stop_requested = False
 
@@ -136,6 +138,7 @@ class VideoSourceWorker(QThread):
                     self._url,
                     self._playback_quality,
                     full_cache=self._full_cache,
+                    cache_dir=self._cache_dir,
                     progress_callback=self.progress_changed.emit if self._full_cache else None,
                     cancel_callback=lambda: self._stop_requested or self.isInterruptionRequested(),
                     language_id=self._language_id,

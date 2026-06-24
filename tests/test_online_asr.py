@@ -7,7 +7,9 @@ import requests
 
 from ai_player.core.config import AppConfig
 from ai_player.services.asr import (
+    AsrSegment,
     OnlineAsrError,
+    clear_asr_transcript_cache,
     configured_language_hints,
     effective_asr_provider,
     is_online_asr_provider,
@@ -181,6 +183,100 @@ def test_online_asr_falls_back_to_local_transcriber(tmp_path) -> None:
     assert local_calls == [True]
     assert segments == []
     assert info.language == "local"
+
+
+def test_transcribe_asr_reuses_cached_local_result(monkeypatch, tmp_path) -> None:
+    from ai_player.services import asr
+
+    monkeypatch.setattr(asr, "RUNTIME_DIR", tmp_path)
+    clear_asr_transcript_cache()
+    audio = tmp_path / "sample.wav"
+    audio.write_bytes(b"wav")
+    local_calls = []
+
+    def transcribe_local():
+        local_calls.append(True)
+        return [AsrSegment("hello", 0.0, 1.0, provider="fake")], SimpleNamespace(language="en")
+
+    config = AppConfig(asr_provider="faster_whisper")
+    first_segments, first_info = transcribe_asr(
+        config,
+        audio,
+        language="en",
+        local_transcriber=transcribe_local,
+        cache_details={"workflow": "preview", "word_timestamps": False},
+    )
+    cached_segments, cached_info = transcribe_asr(
+        config,
+        audio,
+        language="en",
+        local_transcriber=transcribe_local,
+        cache_details={"workflow": "preview", "word_timestamps": False},
+    )
+
+    assert local_calls == [True]
+    assert first_segments[0].text == cached_segments[0].text == "hello"
+    assert first_info.language == cached_info.language == "en"
+    assert cached_info.from_cache is True
+
+
+def test_transcribe_asr_cache_respects_workflow_details(monkeypatch, tmp_path) -> None:
+    from ai_player.services import asr
+
+    monkeypatch.setattr(asr, "RUNTIME_DIR", tmp_path)
+    clear_asr_transcript_cache()
+    audio = tmp_path / "sample.wav"
+    audio.write_bytes(b"wav")
+    local_calls = []
+
+    def transcribe_local():
+        local_calls.append(True)
+        return [AsrSegment(f"call {len(local_calls)}", 0.0, 1.0)], SimpleNamespace(language="en")
+
+    config = AppConfig(asr_provider="faster_whisper")
+    transcribe_asr(
+        config,
+        audio,
+        language="en",
+        local_transcriber=transcribe_local,
+        cache_details={"workflow": "preview", "word_timestamps": False},
+    )
+    segments, _info = transcribe_asr(
+        config,
+        audio,
+        language="en",
+        local_transcriber=transcribe_local,
+        cache_details={"workflow": "staged_export", "word_timestamps": True},
+    )
+
+    assert len(local_calls) == 2
+    assert segments[0].text == "call 2"
+
+
+def test_transcribe_asr_skips_cache_when_audio_hash_is_unavailable(monkeypatch, tmp_path) -> None:
+    from ai_player.services import asr
+
+    monkeypatch.setattr(asr, "RUNTIME_DIR", tmp_path)
+    clear_asr_transcript_cache()
+    missing_audio = tmp_path / "missing.wav"
+    local_calls = []
+
+    def transcribe_local():
+        local_calls.append(True)
+        return [AsrSegment("uncached", 0.0, 1.0)], SimpleNamespace(language="en")
+
+    segments, info = transcribe_asr(
+        AppConfig(asr_provider="faster_whisper"),
+        missing_audio,
+        language="en",
+        local_transcriber=transcribe_local,
+        cache_details={"workflow": "preview", "word_timestamps": False},
+    )
+
+    assert local_calls == [True]
+    assert segments[0].text == "uncached"
+    assert info.language == "en"
+    assert asr.asr_transcript_cache_stats()["entries"] == 0
 
 
 def test_online_asr_can_disable_local_fallback(tmp_path) -> None:

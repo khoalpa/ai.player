@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, QUrl
@@ -699,12 +700,6 @@ class PlayerLayoutMixin:
         self._open_file_button.setObjectName("sourceButton")
         self._open_file_button.clicked.connect(lambda _checked=False: self._start_workflow("video", self._open_video))
         self._set_control_tooltip(self._open_file_button, "open_video_tooltip")
-        self._open_video_with_subtitle_action = QAction(self._tr("open_video_with_subtitle"), self)
-        self._open_video_with_subtitle_action.triggered.connect(
-            lambda _checked=False: self._start_workflow("video", self._open_video_with_subtitle)
-        )
-        self._open_file_button.addAction(self._open_video_with_subtitle_action)
-        self._open_file_button.setContextMenuPolicy(Qt.ActionsContextMenu)
         self._open_url_button = self._make_button(
             "open_url",
             self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
@@ -721,6 +716,16 @@ class PlayerLayoutMixin:
         )
 
         self._source_menu = QMenu(self)
+        self._open_smart_action = QAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
+            self._tr("smart_open_files"),
+            self,
+        )
+        self._open_smart_action.triggered.connect(self._open_smart_source)
+        self._open_clipboard_source_action = QAction(self._tr("smart_open_clipboard"), self)
+        self._open_clipboard_source_action.triggered.connect(self._open_smart_source_from_clipboard)
+        self._open_paste_source_action = QAction(self._tr("smart_open_paste"), self)
+        self._open_paste_source_action.triggered.connect(self._open_smart_source_prompt)
         self._open_video_action = QAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
             self._tr("open_video"),
@@ -745,10 +750,10 @@ class PlayerLayoutMixin:
         self._open_document_action.triggered.connect(
             lambda _checked=False: self._start_workflow("document", self._open_document)
         )
-        self._source_menu.addAction(self._open_video_action)
-        self._source_menu.addAction(self._open_video_with_subtitle_action)
-        self._source_menu.addAction(self._open_url_action)
-        self._source_menu.addAction(self._open_document_action)
+        self._source_menu.aboutToShow.connect(self._refresh_open_source_menu)
+        self._source_menu.addAction(self._open_smart_action)
+        self._source_menu.addAction(self._open_clipboard_source_action)
+        self._source_menu.addAction(self._open_paste_source_action)
         self._open_source_button = self._make_button(
             "open_source",
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
@@ -779,7 +784,7 @@ class PlayerLayoutMixin:
         )
         self._export_button.setObjectName("primaryButton")
         self._export_button.clicked.connect(
-            lambda _checked=False: self._start_workflow("export", self._show_export_workflow)
+            lambda _checked=False: self._start_workflow("export", self._run_contextual_export)
         )
         self._video_fullscreen_button = self._icon_button(QStyle.StandardPixmap.SP_TitleBarMaxButton, "fullscreen")
         self._video_fullscreen_button.setToolTip(self._tr("fullscreen_tooltip"))
@@ -827,6 +832,28 @@ class PlayerLayoutMixin:
         self._simple_sidebar_action.setCheckable(True)
         self._simple_sidebar_action.setChecked(True)
         self._simple_sidebar_action.toggled.connect(self._set_simple_sidebar_mode)
+        self._task_center_action = QAction(self._tr("task_center_tab"), self)
+        self._task_center_action.triggered.connect(
+            lambda: self._select_settings_tab_for_widget(self._task_center_tab_widget)
+        )
+        self._offline_models_action = QAction(self._tr("offline_models_tab"), self)
+        self._offline_models_action.triggered.connect(
+            lambda: self._select_settings_tab_for_widget(self._offline_models_tab_widget)
+        )
+        self._advanced_settings_action = QAction(self._tr("advanced_tab"), self)
+        self._advanced_settings_action.triggered.connect(
+            lambda: self._select_settings_tab_for_widget(self._advanced_tab_widget)
+        )
+        self._runtime_details_action = QAction(self._tr("runtime_tab"), self)
+        self._runtime_details_action.triggered.connect(
+            lambda: self._select_settings_tab_for_widget(self._runtime_tab_widget)
+        )
+        self._workflow_health_action = QAction(self._tr("workflow_health_title"), self)
+        self._workflow_health_action.triggered.connect(self._show_workflow_health)
+        self._cache_inspector_action = QAction(self._tr("cache_inspector_title"), self)
+        self._cache_inspector_action.triggered.connect(self._show_cache_inspector)
+        self._clear_workflow_cache_action = QAction(self._tr("task_center_clear_cache"), self)
+        self._clear_workflow_cache_action.triggered.connect(self._clear_workflow_caches)
         self._fullscreen_action = QAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMaxButton),
             self._tr("fullscreen"),
@@ -864,6 +891,17 @@ class PlayerLayoutMixin:
         )
         self._help_action.triggered.connect(self._show_user_guide)
         self._tools_menu.addAction(self._simple_sidebar_action)
+        self._tools_menu.addSeparator()
+        for action in (
+            self._task_center_action,
+            self._offline_models_action,
+            self._advanced_settings_action,
+            self._runtime_details_action,
+            self._workflow_health_action,
+            self._cache_inspector_action,
+            self._clear_workflow_cache_action,
+        ):
+            self._tools_menu.addAction(action)
         self._tools_menu.addSeparator()
         for action in (
             self._fullscreen_action,
@@ -1169,16 +1207,44 @@ class PlayerLayoutMixin:
         self._video_url_full_cache_check.setChecked(self._config.video_url_full_cache)
         self._video_url_full_cache_check.setToolTip(self._tr("video_url_full_cache_tooltip"))
         self._video_url_full_cache_check.setProperty("i18n_tooltip_key", "video_url_full_cache_tooltip")
+        self._video_cache_dir_edit = QLineEdit(self._config.video_cache_dir)
+        self._video_cache_dir_edit.setPlaceholderText(self._tr("video_cache_dir_default"))
+        self._video_cache_dir_edit.setProperty("i18n_key", "video_cache_dir_default")
+        self._video_cache_dir_edit.editingFinished.connect(self._queue_save_settings)
+        self._video_cache_dir_button = QPushButton(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
+            "",
+        )
+        self._video_cache_dir_button.setFixedWidth(34)
+        self._video_cache_dir_button.setToolTip(self._tr("video_cache_dir_choose"))
+        self._video_cache_dir_button.setProperty("i18n_tooltip_key", "video_cache_dir_choose")
+        self._video_cache_dir_button.clicked.connect(self._choose_video_cache_dir)
+        self._video_cache_dir_reset_button = QPushButton(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogResetButton),
+            "",
+        )
+        self._video_cache_dir_reset_button.setFixedWidth(34)
+        self._video_cache_dir_reset_button.setToolTip(self._tr("video_cache_dir_reset"))
+        self._video_cache_dir_reset_button.setProperty("i18n_tooltip_key", "video_cache_dir_reset")
+        self._video_cache_dir_reset_button.clicked.connect(self._reset_video_cache_dir)
         self._media_stack = QStackedWidget()
         self._media_stack.setObjectName("mediaStack")
         self._media_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._media_start_page = QFrame()
+        self._media_start_page.setObjectName("mediaStartPage")
+        self._media_start_page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        media_start_page_layout = QGridLayout(self._media_start_page)
+        media_start_page_layout.setContentsMargins(0, 0, 0, 0)
+        media_start_page_layout.setSpacing(0)
+        self._media_start_overlay = self._media_start_panel()
+        media_start_page_layout.addWidget(self._media_start_overlay, 0, 0, Qt.AlignmentFlag.AlignCenter)
+        self._media_stack.addWidget(self._media_start_page)
         self._media_stack.addWidget(self._video_placeholder)
         self._media_stack.addWidget(self._video_widget)
         self._media_stack.addWidget(self._document_view)
         self._media_stack.addWidget(self._telegram_channel_view)
-        self._media_stack.setCurrentWidget(self._video_placeholder)
+        self._media_stack.setCurrentWidget(self._media_start_page)
         self._media_stack.installEventFilter(self)
-        self._media_start_overlay = self._media_start_panel()
         self._media_frame = QFrame()
         self._media_frame.setObjectName("mediaFrame")
         self._media_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -1187,8 +1253,6 @@ class PlayerLayoutMixin:
         media_frame_layout.setContentsMargins(0, 0, 0, 0)
         media_frame_layout.setSpacing(0)
         media_frame_layout.addWidget(self._media_stack, 0, 0)
-        media_frame_layout.addWidget(self._media_start_overlay, 0, 0, Qt.AlignmentFlag.AlignCenter)
-        self._media_start_overlay.raise_()
         self._subtitle_overlay = SubtitleOverlayLabel()
         self._subtitle_overlay.setWindowFlags(
             Qt.Tool
@@ -1980,6 +2044,15 @@ class PlayerLayoutMixin:
         basic_processing_grid.addWidget(self._field_label("export_video_quality"), 2, 0)
         basic_processing_grid.addWidget(self._export_video_quality_combo, 2, 1)
         basic_processing_grid.addWidget(self._video_url_full_cache_check, 3, 0, 1, 2)
+        basic_processing_grid.addWidget(self._field_label("video_cache_dir"), 4, 0)
+        video_cache_dir_row = QWidget()
+        video_cache_dir_layout = QHBoxLayout(video_cache_dir_row)
+        video_cache_dir_layout.setContentsMargins(0, 0, 0, 0)
+        video_cache_dir_layout.setSpacing(6)
+        video_cache_dir_layout.addWidget(self._video_cache_dir_edit, 1)
+        video_cache_dir_layout.addWidget(self._video_cache_dir_button)
+        video_cache_dir_layout.addWidget(self._video_cache_dir_reset_button)
+        basic_processing_grid.addWidget(video_cache_dir_row, 4, 1)
 
         advanced_terms_grid = QGridLayout()
         advanced_terms_grid.setHorizontalSpacing(8)
@@ -2436,13 +2509,85 @@ class PlayerLayoutMixin:
         elif action_id == "runtime":
             self._select_settings_tab_for_widget(self._runtime_tab_widget)
 
+    def _start_goal_workflow(self, workflow: str, action) -> None:
+        selected_profile = str(getattr(self, "_readiness_selected_profile", "auto") or "auto")
+        profile_key = (
+            self._auto_goal_profile(str(workflow or "").strip().lower())
+            if selected_profile == "auto"
+            else selected_profile
+        )
+        if selected_profile == "auto" and profile_key:
+            self._record_task_center_event(
+                self._tr("first_run_profile_auto"),
+                self._auto_goal_profile_reason(str(workflow or "").strip().lower(), profile_key),
+            )
+        if profile_key and hasattr(self, "_readiness_select_profile"):
+            self._readiness_select_profile(profile_key)
+            if hasattr(self, "_apply_readiness_profile"):
+                self._apply_readiness_profile()
+        self._start_workflow(workflow, action)
+
+    def _auto_goal_profile(self, workflow: str) -> str:
+        workflow_key = str(workflow or "").strip().lower()
+        if workflow_key == "export":
+            return "quality"
+        if workflow_key in {"document", "meeting"}:
+            return "meeting_document"
+        if workflow_key in {"video", "url"} and self._offline_goal_ready():
+            return "offline"
+        return "quick"
+
+    def _auto_goal_profile_reason(self, workflow: str, profile_key: str) -> str:
+        profile_title_key = {
+            "quick": "first_run_profile_quick",
+            "offline": "first_run_profile_offline",
+            "quality": "first_run_profile_quality",
+            "meeting_document": "first_run_profile_meeting_document",
+        }.get(profile_key, "first_run_profile_auto")
+        reason_key = {
+            "export": "auto_preset_reason_export",
+            "document": "auto_preset_reason_document",
+            "meeting": "auto_preset_reason_meeting",
+            "url": "auto_preset_reason_url",
+            "video": "auto_preset_reason_video",
+        }.get(workflow, "auto_preset_reason_default")
+        return self._tr("auto_preset_selected").format(
+            profile=self._tr(profile_title_key),
+            reason=self._tr(reason_key),
+        )
+
+    def _offline_goal_ready(self) -> bool:
+        config = getattr(self, "_config", None)
+        if config is None:
+            return False
+        local_paths = (
+            getattr(config, "whisper_model", ""),
+            getattr(config, "local_translation_model", ""),
+            getattr(config, "vieneu_tts_model_name", ""),
+        )
+        return (
+            bool(getattr(config, "whisper_offline", False))
+            and bool(getattr(config, "local_translation_offline", False))
+            and bool(getattr(config, "vieneu_tts_offline", False))
+            and all(Path(str(path)).exists() for path in local_paths if str(path or "").strip())
+        )
+
     def _refresh_header_menu_text(self) -> None:
         action_texts = (
             ("_open_video_action", "open_video"),
+            ("_open_smart_action", "smart_open_files"),
+            ("_open_clipboard_source_action", "smart_open_clipboard"),
+            ("_open_paste_source_action", "smart_open_paste"),
             ("_open_url_action", "open_url"),
             ("_open_document_action", "open_document"),
-            ("_open_video_with_subtitle_action", "open_video_with_subtitle"),
             ("_simple_sidebar_action", "simple_sidebar_mode"),
+            ("_task_center_action", "task_center_tab"),
+            ("_offline_models_action", "offline_models_tab"),
+            ("_advanced_settings_action", "advanced_tab"),
+            ("_runtime_details_action", "runtime_tab"),
+            ("_workflow_health_action", "workflow_health_title"),
+            ("_cache_inspector_action", "cache_inspector_title"),
+            ("_clear_workflow_cache_action", "task_center_clear_cache"),
             ("_fullscreen_action", "fullscreen"),
             ("_toggle_sidebar_action", "panel_hide"),
             ("_sidebar_wider_action", "sidebar_wider"),
@@ -2453,7 +2598,10 @@ class PlayerLayoutMixin:
         for action_name, key in action_texts:
             action = getattr(self, action_name, None)
             if action is not None:
-                action.setText(self._tr(key))
+                if action_name == "_workflow_health_action":
+                    action.setText(self._workflow_health_action_label())
+                else:
+                    action.setText(self._tr(key))
 
     def _start_workflow(self, workflow: str, action) -> None:
         self._apply_workflow_sidebar_context(workflow)
@@ -2469,11 +2617,11 @@ class PlayerLayoutMixin:
         workflow_key = str(workflow or "").strip().lower()
         if getattr(self, "_simple_sidebar_enabled", True):
             contexts = {
-                "video": ({2, 6, 3, 1}, 2),
-                "url": ({2, 6, 3, 1}, 2),
-                "document": ({2, 6, 3, 1}, 2),
-                "meeting": ({2, 6, 1}, 2),
-                "export": ({2, 6, 1}, 2),
+                "video": ({2, 6, 3}, 2),
+                "url": ({2, 6, 3}, 2),
+                "document": ({2, 6, 3}, 2),
+                "meeting": ({2, 6, 3}, 2),
+                "export": ({2, 6, 3}, 2),
             }
         else:
             contexts = {
@@ -2511,7 +2659,7 @@ class PlayerLayoutMixin:
         if workflow:
             self._apply_workflow_sidebar_context(workflow)
             return
-        visible = {1, 2, 3, 6} if self._simple_sidebar_enabled else set(range(self._settings_tabs.count()))
+        visible = {2, 3, 6} if self._simple_sidebar_enabled else set(range(self._settings_tabs.count()))
         self._set_sidebar_tab_visibility(visible)
         if self._settings_tabs.currentIndex() not in visible:
             self._settings_tabs.setCurrentIndex(2 if 2 in visible else 0)
@@ -2544,7 +2692,6 @@ class PlayerLayoutMixin:
     def _sync_open_source_menu_enabled(self) -> None:
         pairs = (
             ("_open_file_button", "_open_video_action"),
-            ("_open_file_button", "_open_video_with_subtitle_action"),
             ("_open_url_button", "_open_url_action"),
             ("_open_document_button", "_open_document_action"),
         )
@@ -2559,6 +2706,19 @@ class PlayerLayoutMixin:
         source_button = getattr(self, "_open_source_button", None)
         if source_button is not None:
             source_button.setEnabled(any_enabled)
+
+    def _refresh_open_source_menu(self) -> None:
+        action = getattr(self, "_open_clipboard_source_action", None)
+        if action is None:
+            return
+        text = self._smart_source_clipboard_text()
+        supported = self._smart_source_text_supported(text)
+        action.setVisible(supported)
+        action.setEnabled(supported)
+        if supported:
+            label = self._tr("smart_open_clipboard")
+            display = text if len(text) <= 48 else f"{text[:45]}..."
+            action.setText(f"{label}: {display}")
 
     def _media_start_panel(self) -> QFrame:
         panel = QFrame()
@@ -2586,13 +2746,12 @@ class PlayerLayoutMixin:
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         self._media_start_workflow_buttons = {}
-        for index, (workflow_key, title_key, detail_key, tooltip_key, icon, callback) in enumerate(
+        for index, (workflow_key, title_key, detail_key, icon, callback) in enumerate(
             (
                 (
                     "video",
                     "first_run_workflow_video",
                     "first_run_workflow_video_detail",
-                    "open_video_tooltip",
                     QStyle.StandardPixmap.SP_DirOpenIcon,
                     self._open_video,
                 ),
@@ -2600,7 +2759,6 @@ class PlayerLayoutMixin:
                     "url",
                     "first_run_workflow_url",
                     "first_run_workflow_url_detail",
-                    "open_url",
                     QStyle.StandardPixmap.SP_BrowserReload,
                     self._open_video_url,
                 ),
@@ -2608,7 +2766,6 @@ class PlayerLayoutMixin:
                     "document",
                     "first_run_workflow_document",
                     "first_run_workflow_document_detail",
-                    "open_document",
                     QStyle.StandardPixmap.SP_FileIcon,
                     self._open_document,
                 ),
@@ -2616,7 +2773,6 @@ class PlayerLayoutMixin:
                     "meeting",
                     "first_run_workflow_meeting",
                     "first_run_workflow_meeting_detail",
-                    "meeting_start_label",
                     QStyle.StandardPixmap.SP_MediaPlay,
                     self._toggle_meeting,
                 ),
@@ -2629,20 +2785,22 @@ class PlayerLayoutMixin:
             button.setProperty("workflow_detail_key", detail_key)
             button.setMinimumHeight(74)
             button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-            button.setToolTip(self._tr(tooltip_key))
-            button.setProperty("i18n_tooltip_key", tooltip_key)
-            button.clicked.connect(lambda _checked=False, key=workflow_key, cb=callback: self._start_workflow(key, cb))
+            button.setToolTip(self._media_start_button_tooltip(title_key, detail_key))
+            button.clicked.connect(
+                lambda _checked=False, key=workflow_key, cb=callback: self._start_goal_workflow(key, cb)
+            )
             grid.addWidget(button, index // 2, index % 2)
             self._media_start_workflow_buttons[title_key] = button
         layout.addLayout(grid)
 
-        setup_title = QLabel(self._tr("media_start_setup_title"))
+        setup_title = QPushButton(self._tr("first_run_profile_change"))
         setup_title.setObjectName("mediaStartSetupTitle")
-        setup_title.setProperty("i18n_key", "media_start_setup_title")
-        setup_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        setup_title.setProperty("i18n_key", "first_run_profile_change")
+        setup_title.setCheckable(True)
         layout.addWidget(setup_title)
 
         profile_row = QWidget()
+        self._media_start_profile_row = profile_row
         profile_layout = QHBoxLayout(profile_row)
         profile_layout.setContentsMargins(0, 0, 0, 0)
         profile_layout.setSpacing(8)
@@ -2658,12 +2816,15 @@ class PlayerLayoutMixin:
             button.setCursor(Qt.PointingHandCursor)
             button.setProperty("launcher_profile", profile_key)
             button.setProperty("launcher_profile_title_key", str(profile["title"]))
+            button.setProperty("launcher_profile_detail_key", str(profile["detail"]))
             button.clicked.connect(
                 lambda _checked=False, key=profile_key: self._apply_media_start_profile(key)
             )
             self._media_start_profile_group.addButton(button)
             self._media_start_profile_buttons[profile_key] = button
             profile_layout.addWidget(button)
+        profile_row.setVisible(False)
+        setup_title.toggled.connect(profile_row.setVisible)
         layout.addWidget(profile_row)
         self._refresh_media_start_launcher_text()
         return panel
@@ -2682,15 +2843,21 @@ class PlayerLayoutMixin:
             title_key = str(button.property("workflow_title_key") or "")
             detail_key = str(button.property("workflow_detail_key") or "")
             if title_key and detail_key:
-                button.setText(f"{self._tr(title_key)}\n{self._tr(detail_key)}")
+                button.setText(self._tr(title_key))
+                button.setToolTip(self._media_start_button_tooltip(title_key, detail_key))
         for button in getattr(self, "_media_start_profile_buttons", {}).values():
             title_key = str(button.property("launcher_profile_title_key") or "")
-            if title_key:
+            detail_key = str(button.property("launcher_profile_detail_key") or "")
+            if title_key and detail_key:
                 button.setText(self._tr(title_key))
+                button.setToolTip(self._media_start_button_tooltip(title_key, detail_key))
         self._sync_media_start_profile_buttons()
 
+    def _media_start_button_tooltip(self, title_key: str, detail_key: str) -> str:
+        return f"{self._tr(title_key)}\n{self._tr(detail_key)}"
+
     def _sync_media_start_profile_buttons(self) -> None:
-        selected = str(getattr(self, "_readiness_selected_profile", "quick") or "quick")
+        selected = str(getattr(self, "_readiness_selected_profile", "auto") or "auto")
         for profile_key, button in getattr(self, "_media_start_profile_buttons", {}).items():
             button.setChecked(profile_key == selected)
 
@@ -2698,12 +2865,10 @@ class PlayerLayoutMixin:
         overlay = getattr(self, "_media_start_overlay", None)
         media_stack = getattr(self, "_media_stack", None)
         placeholder = getattr(self, "_video_placeholder", None)
-        if overlay is None or media_stack is None or placeholder is None:
+        start_page = getattr(self, "_media_start_page", None)
+        if overlay is None or media_stack is None or placeholder is None or start_page is None:
             return
-        show = media_stack.currentWidget() is placeholder
-        url_getter = getattr(placeholder, "url", None)
-        if callable(url_getter):
-            show = show and url_getter().toString() == DEFAULT_MEDIA_HOME_URL
+        show = media_stack.currentWidget() is start_page
         overlay.setVisible(show)
         if show:
             overlay.raise_()
@@ -2784,6 +2949,9 @@ class PlayerLayoutMixin:
             ("_source_filter_mode_combo", "source_filter_mode_tooltip"),
             ("_source_filter_model_combo", "source_filter_model"),
             ("_video_url_full_cache_check", "video_url_full_cache_tooltip"),
+            ("_video_cache_dir_edit", "video_cache_dir_tooltip"),
+            ("_video_cache_dir_button", "video_cache_dir_choose"),
+            ("_video_cache_dir_reset_button", "video_cache_dir_reset"),
             ("_whisper_device_combo", "whisper_device"),
             ("_whisper_compute_combo", "whisper_compute"),
             ("_whisper_beam_slider", "whisper_beam"),

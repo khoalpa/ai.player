@@ -50,6 +50,14 @@ GUIDE_TEXT = {
             "VieNeu local trên CPU có thể mất lâu ở đoạn đầu; dùng Edge TTS nếu ưu tiên tốc độ.",
             "Bộ đệm cao giúp phát ổn định hơn nhưng làm thời gian chờ ban đầu dài hơn.",
         ],
+        "task_center_title": "Theo dõi tác vụ và cache",
+        "task_center_items": [
+            "Mở tab <b>Tác vụ</b> để xem warmup runtime, tải model, cache URL, chuẩn bị media, provider preview và export.",
+            "Mục <b>Cache workflow</b> cho biết ASR, text/translation cleanup, TTS và URL đã được dùng lại hay ghi mới bao nhiêu lần.",
+            "Dùng <b>Cache</b> để xóa riêng ASR, Text, TTS hoặc xóa tất cả khi muốn chạy lại sạch sau khi đổi model/provider.",
+            "Mục <b>Sức khỏe workflow</b> so sánh benchmark local gần nhất với baseline đã lưu để nhận ra workflow bị chậm bất thường.",
+            "Nếu một tác vụ nền kẹt lâu, dùng <b>Dừng tất cả</b>, giảm preset/model nặng rồi chạy lại.",
+        ],
         "troubleshooting_title": "Sự cố thường gặp",
         "troubleshooting_rows": [
             (
@@ -67,6 +75,14 @@ GUIDE_TEXT = {
             (
                 "Dịch/đọc sai thuật ngữ",
                 "Bật <b>Giữ thuật ngữ</b> và chọn file thuật ngữ; kiểm tra lại ngôn ngữ nguồn trước khi chạy.",
+            ),
+            (
+                "Kết quả cũ vẫn lặp lại",
+                "Xóa cache workflow liên quan trong tab <b>Tác vụ</b>, nhất là sau khi đổi model, provider hoặc thuật ngữ.",
+            ),
+            (
+                "Không rõ app đang bận gì",
+                "Mở tab <b>Tác vụ</b> để xem việc nền đang chạy, lỗi gần đây, cache và nút dừng/thử lại.",
             ),
         ],
         "supported_title": "Nguồn và định dạng đã hỗ trợ",
@@ -553,6 +569,14 @@ GUIDE_TEXT = {
             "VieNeu local TTS on CPU can take time on the first segment; use Edge TTS when speed matters.",
             "A larger buffer improves stability but increases the initial wait.",
         ],
+        "task_center_title": "Track tasks and cache",
+        "task_center_items": [
+            "Open the <b>Task Center</b> tab to watch runtime warmup, model downloads, URL cache, media preparation, provider previews, and export.",
+            "<b>Workflow cache</b> shows how often ASR, text/translation cleanup, TTS, and URL stages are reused or written.",
+            "Use <b>Cache Inspector</b> to clear ASR, Text, TTS, or all workflow caches when changing models/providers or rerunning cleanly.",
+            "<b>Workflow Health</b> compares the latest local benchmark result with the saved baseline to flag unusual slowdowns.",
+            "If a background task stalls, use <b>Stop all</b>, lower the preset/model load, then retry.",
+        ],
         "troubleshooting_title": "Common fixes",
         "troubleshooting_rows": [
             (
@@ -570,6 +594,14 @@ GUIDE_TEXT = {
             (
                 "Terms translate poorly",
                 "Enable <b>Preserve terms</b> and choose a terminology file; check the source language before running.",
+            ),
+            (
+                "Old results keep repeating",
+                "Clear the related workflow cache in <b>Task Center</b>, especially after changing a model, provider, or terminology.",
+            ),
+            (
+                "You cannot tell what is busy",
+                "Open <b>Task Center</b> to see running background work, recent errors, cache status, and stop/retry controls.",
             ),
         ],
         "supported_title": "Supported sources and formats",

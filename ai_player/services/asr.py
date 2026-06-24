@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -9,7 +13,7 @@ from typing import Any
 
 import requests
 
-from ai_player.core.config import AppConfig
+from ai_player.core.config import RUNTIME_DIR, AppConfig
 from ai_player.core.redaction import compact_redacted_text
 
 ASSEMBLYAI_API_BASE = "https://api.assemblyai.com"
@@ -189,16 +193,250 @@ def transcribe_asr(
     language: str | None,
     local_transcriber: Callable[[], tuple[list[object], object]],
     session: requests.Session | None = None,
+    cache_details: dict[str, object] | None = None,
 ) -> tuple[list[object], object]:
     provider = effective_asr_provider(config, language=language)
+    cached = _read_asr_cache(config, audio_path, provider=provider, language=language, details=cache_details)
+    if cached is not None:
+        return cached
+
     if provider not in ONLINE_ASR_PROVIDERS:
-        return local_transcriber()
+        result = local_transcriber()
+        _write_asr_cache(config, audio_path, result, provider=provider, language=language, details=cache_details)
+        return result
     try:
-        return transcribe_online_asr(config, audio_path, language=language, session=session, provider=provider)
+        result = transcribe_online_asr(config, audio_path, language=language, session=session, provider=provider)
+        _write_asr_cache(config, audio_path, result, provider=provider, language=language, details=cache_details)
+        return result
     except Exception:
         if bool(getattr(config, "asr_fallback_to_whisper", True)):
-            return local_transcriber()
+            fallback_provider = LOCAL_ASR_PROVIDER
+            cached = _read_asr_cache(
+                config,
+                audio_path,
+                provider=fallback_provider,
+                language=language,
+                details=cache_details,
+            )
+            if cached is not None:
+                return cached
+            result = local_transcriber()
+            _write_asr_cache(
+                config,
+                audio_path,
+                result,
+                provider=fallback_provider,
+                language=language,
+                details=cache_details,
+            )
+            return result
         raise
+
+
+_ASR_CACHE_LOCK = threading.Lock()
+_ASR_CACHE_SCHEMA_VERSION = 1
+_ASR_CACHE_STATS = {"hits": 0, "misses": 0, "writes": 0}
+
+
+def clear_asr_transcript_cache() -> None:
+    cache_dir = _asr_cache_dir()
+    with _ASR_CACHE_LOCK:
+        if cache_dir.exists():
+            for path in cache_dir.glob("*.json"):
+                try:
+                    path.unlink()
+                except OSError:
+                    continue
+        for key in _ASR_CACHE_STATS:
+            _ASR_CACHE_STATS[key] = 0
+
+
+def asr_transcript_cache_stats() -> dict[str, int]:
+    with _ASR_CACHE_LOCK:
+        return {**_ASR_CACHE_STATS, "entries": _asr_cache_entry_count()}
+
+
+def _read_asr_cache(
+    config: AppConfig,
+    audio_path: Path,
+    *,
+    provider: str,
+    language: str | None,
+    details: dict[str, object] | None,
+) -> tuple[list[object], object] | None:
+    if details is None or not _asr_cache_enabled():
+        return None
+    cache_path = _asr_cache_path(config, audio_path, provider=provider, language=language, details=details)
+    if cache_path is None:
+        return None
+    try:
+        with _ASR_CACHE_LOCK:
+            data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        with _ASR_CACHE_LOCK:
+            _ASR_CACHE_STATS["misses"] += 1
+        return None
+    if data.get("schema_version") != _ASR_CACHE_SCHEMA_VERSION:
+        with _ASR_CACHE_LOCK:
+            _ASR_CACHE_STATS["misses"] += 1
+        return None
+    segments = [_segment_from_cache(item) for item in data.get("segments") or [] if isinstance(item, dict)]
+    info_data = data.get("info") if isinstance(data.get("info"), dict) else {}
+    with _ASR_CACHE_LOCK:
+        _ASR_CACHE_STATS["hits"] += 1
+    return segments, SimpleNamespace(
+        language=_text(info_data.get("language")),
+        language_probability=_optional_seconds_value(info_data.get("language_probability")),
+        provider=_text(info_data.get("provider") or provider),
+        from_cache=True,
+    )
+
+
+def _write_asr_cache(
+    config: AppConfig,
+    audio_path: Path,
+    result: tuple[list[object], object],
+    *,
+    provider: str,
+    language: str | None,
+    details: dict[str, object] | None,
+) -> None:
+    if details is None or not _asr_cache_enabled():
+        return
+    segments, info = result
+    payload = {
+        "schema_version": _ASR_CACHE_SCHEMA_VERSION,
+        "provider": provider,
+        "language": language,
+        "segments": [_segment_to_cache(segment) for segment in segments],
+        "info": {
+            "language": _text(getattr(info, "language", language)),
+            "language_probability": _optional_seconds_value(getattr(info, "language_probability", None)),
+            "provider": _text(getattr(info, "provider", provider)),
+        },
+    }
+    cache_path = _asr_cache_path(config, audio_path, provider=provider, language=language, details=details)
+    if cache_path is None:
+        return
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = cache_path.with_suffix(".tmp")
+        with _ASR_CACHE_LOCK:
+            temp_path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+            temp_path.replace(cache_path)
+            _ASR_CACHE_STATS["writes"] += 1
+    except OSError:
+        return
+
+
+def _asr_cache_enabled() -> bool:
+    return str(os.getenv("AI_PLAYER_ASR_CACHE", "1")).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _asr_cache_dir() -> Path:
+    return RUNTIME_DIR / "asr-cache"
+
+
+def _asr_cache_entry_count() -> int:
+    try:
+        return sum(1 for _path in _asr_cache_dir().glob("*.json"))
+    except OSError:
+        return 0
+
+
+def _asr_cache_path(
+    config: AppConfig,
+    audio_path: Path,
+    *,
+    provider: str,
+    language: str | None,
+    details: dict[str, object] | None,
+) -> Path | None:
+    try:
+        audio_hash = _file_digest(audio_path)
+    except OSError:
+        return None
+    fingerprint = {
+        "schema_version": _ASR_CACHE_SCHEMA_VERSION,
+        "audio_hash": audio_hash,
+        "provider": provider,
+        "language": language or "",
+        "details": details or {},
+        "config": {
+            "asr_provider": normalize_asr_provider(config.asr_provider),
+            "asr_api_base": _normalized_base_url(config.asr_api_base, ""),
+            "asr_language_hints": configured_language_hints(config),
+            "whisper_model": str(config.whisper_model),
+            "whisper_offline": bool(config.whisper_offline),
+            "whisper_device": str(config.whisper_device),
+            "whisper_compute_type": str(config.whisper_compute_type),
+            "whisper_beam_size": int(config.whisper_beam_size),
+            "whisper_vad_filter": bool(config.whisper_vad_filter),
+        },
+    }
+    encoded = json.dumps(fingerprint, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    return _asr_cache_dir() / f"{hashlib.sha256(encoded).hexdigest()}.json"
+
+
+def _file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _segment_to_cache(segment: object) -> dict[str, object]:
+    return {
+        "text": _text(getattr(segment, "text", "")),
+        "start": _seconds_value(getattr(segment, "start", 0.0), default=0.0),
+        "end": _seconds_value(getattr(segment, "end", 0.0), default=0.0),
+        "provider": _text(getattr(segment, "provider", "")),
+        "language": _text(getattr(segment, "language", "")),
+        "confidence": _optional_seconds_value(getattr(segment, "confidence", None)),
+        "speaker": _text(getattr(segment, "speaker", "")),
+        "words": [_word_to_cache(word) for word in getattr(segment, "words", ()) or ()],
+    }
+
+
+def _word_to_cache(word: object) -> dict[str, object]:
+    return {
+        "word": _text(getattr(word, "word", getattr(word, "text", ""))),
+        "start": _seconds_value(getattr(word, "start", 0.0), default=0.0),
+        "end": _seconds_value(getattr(word, "end", 0.0), default=0.0),
+        "confidence": _optional_seconds_value(
+            getattr(word, "confidence", getattr(word, "probability", None)),
+        ),
+        "language": _text(getattr(word, "language", "")),
+        "speaker": _text(getattr(word, "speaker", "")),
+        "provider": _text(getattr(word, "provider", "")),
+    }
+
+
+def _segment_from_cache(data: dict[str, object]) -> AsrSegment:
+    words = tuple(_word_from_cache(item) for item in data.get("words") or [] if isinstance(item, dict))
+    return AsrSegment(
+        text=_text(data.get("text")),
+        start=_seconds_value(data.get("start"), default=0.0),
+        end=_seconds_value(data.get("end"), default=0.0),
+        words=words,
+        provider=_text(data.get("provider")),
+        language=_text(data.get("language")) or None,
+        confidence=_optional_seconds_value(data.get("confidence")),
+        speaker=_text(data.get("speaker")) or None,
+    )
+
+
+def _word_from_cache(data: dict[str, object]) -> AsrWord:
+    return AsrWord(
+        word=_text(data.get("word")),
+        start=_seconds_value(data.get("start"), default=0.0),
+        end=_seconds_value(data.get("end"), default=0.0),
+        confidence=_optional_seconds_value(data.get("confidence")),
+        language=_text(data.get("language")) or None,
+        speaker=_text(data.get("speaker")) or None,
+        provider=_text(data.get("provider")),
+    )
 
 
 def _provider_config(config: AppConfig, provider: str) -> AppConfig:

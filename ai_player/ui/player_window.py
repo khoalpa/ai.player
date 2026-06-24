@@ -15,6 +15,7 @@ from ai_player.core.settings_store import load_app_config
 from ai_player.services.translation import (
     configured_translation_backend,
 )
+from ai_player.ui.background_task_controller import BackgroundTaskController
 from ai_player.ui.media_player import VideoPlayer
 from ai_player.ui.player_window_channel_browser import PlayerChannelBrowserMixin
 from ai_player.ui.player_window_channel_flow import PlayerChannelFlowMixin
@@ -119,7 +120,7 @@ class PlayerWindow(
         self._live_subtitle_target_text = ""
         self._live_subtitle_expires_at = 0.0
         self._live_subtitle_entries: list[tuple[float, float, str, str]] = []
-        self._background_task_details: dict[str, str] = {}
+        self._background_task_controller = BackgroundTaskController(self)
         self._clamping_to_screen = False
         self._video_url = VideoUrlController(self)
         self._runtime_warmup = RuntimeWarmupController(self)
@@ -138,6 +139,7 @@ class PlayerWindow(
         self._build_ui()
         self._retranslate_ui()
         self._player = VideoPlayer(self._video_widget, self)
+        self._player.on_playback_state_changed(lambda *_args: self._refresh_task_center())
         self._player.set_volume(self._volume_slider.value())
 
         self._timer = QTimer(self)
@@ -155,6 +157,19 @@ class PlayerWindow(
 
         self.statusBar().showMessage(self._runtime_startup_status_message())
         self._start_runtime_warmup()
+
+    @property
+    def _background_task_details(self) -> dict[str, str]:
+        controller = getattr(self, "_background_task_controller", None)
+        return controller.details if controller is not None else {}
+
+    @_background_task_details.setter
+    def _background_task_details(self, value: object) -> None:
+        controller = getattr(self, "_background_task_controller", None)
+        if controller is None:
+            self._background_task_controller = BackgroundTaskController(self)
+            controller = self._background_task_controller
+        controller.details = value
 
     @property
     def _document_mode(self) -> bool:

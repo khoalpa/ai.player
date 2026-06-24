@@ -17,6 +17,10 @@ Use this checklist before sharing a build.
 - Install the release dependency set with `.\.venv\Scripts\python.exe -m pip install -c constraints\windows-release-py310.txt -e ".[dev,packaging,offline-ai,gpu,audio-separation,audit]"`.
 - Run `.\.venv\Scripts\python.exe -m ruff check .`.
 - Run `.\.venv\Scripts\python.exe -m pytest`.
+- Run `.\.venv\Scripts\python.exe .\scripts\compare_performance_presets.py --language vi`
+  to review preset latency/quality tradeoffs before changing release defaults.
+- Run `.\.venv\Scripts\python.exe .\scripts\workflow_benchmark.py --check-baselines --baseline docs\workflow_benchmark_baselines.json`
+  to validate benchmark baseline metadata.
 - Run `.\.venv\Scripts\python.exe .\scripts\runtime_doctor.py`.
 - Review `docs\test_coverage_map.md` and note any workflow gaps that must be
   covered by manual smoke for this release.
@@ -44,8 +48,9 @@ Use this checklist before sharing a build.
 ## AI Pipeline Smoke Test
 
 - Run one short ASR pass when a Whisper model exists.
-- Run `.\.venv\Scripts\python.exe .\scripts\workflow_benchmark.py --output data\tmp\workflow-benchmark-current.json`
-  and compare with the previous profile baseline using `--baseline` when one exists.
+- Run `.\.venv\Scripts\python.exe .\scripts\workflow_benchmark.py --output data\tmp\workflow-benchmark-current.json --baseline-workflow video_short`
+  for a short-video regression check, or use `--baseline-workflow transcript` / `document`
+  for text-first workflows.
 - Run `.\.venv\Scripts\python.exe .\scripts\asr_regression.py --max-wer 0.35` when the local Vietnamese sample set is present.
 - Run one translation with the selected translator.
 - Run one TTS voice test with the selected provider.

@@ -538,6 +538,7 @@ class DubbingExportWorker(QThread):
             source_audio,
             language=language,
             local_transcriber=transcribe_local,
+            cache_details={"word_timestamps": False},
         )
 
     def _transcribe_model_with_fallback(
@@ -1259,6 +1260,7 @@ class StagedDubbingExportWorker(DubbingExportWorker):
             source_audio,
             language=language,
             local_transcriber=transcribe_local,
+            cache_details={"workflow": "staged_export", "word_timestamps": True},
         )
 
     def _source_cues_from_segments(self, segments: list[object], source_language: str | None) -> list[TranscriptCue]:

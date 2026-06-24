@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from ai_player.core.i18n import ui_text
 from ai_player.core.redaction import compact_redacted_text
+from ai_player.services.ffmpeg import run_ffmpeg, run_ffprobe
 
 
 class VideoSourceError(RuntimeError):
@@ -88,6 +91,7 @@ def resolve_video_source(
     cancel_callback=None,
     *,
     full_cache: bool = True,
+    cache_dir: str | Path | None = None,
     language_id: str | None = None,
 ) -> VideoSource:
     url = value.strip()
@@ -100,7 +104,15 @@ def resolve_video_source(
         raise VideoSourceError(ui_text("video_error_telegram_private_url", language_id))
 
     if _should_resolve_with_ytdlp(url):
-        return _resolve_page_url(url, playback_quality, full_cache, progress_callback, cancel_callback, language_id)
+        return _resolve_page_url(
+            url,
+            playback_quality,
+            full_cache,
+            progress_callback,
+            cancel_callback,
+            language_id,
+            cache_dir=cache_dir,
+        )
 
     return VideoSource(input_url=url, playback_url=url, title=url, is_resolved=False)
 
@@ -185,6 +197,8 @@ def _resolve_page_url(
     progress_callback=None,
     cancel_callback=None,
     language_id: str | None = None,
+    *,
+    cache_dir: str | Path | None = None,
 ) -> VideoSource:
     try:
         import yt_dlp
@@ -193,7 +207,7 @@ def _resolve_page_url(
 
     provider = _provider_name(url)
     quality = _normalize_playback_quality(playback_quality)
-    cache_dir = _source_cache_dir(provider, quality) if full_cache else None
+    source_cache_dir = _source_cache_dir(provider, quality, cache_root=cache_dir) if full_cache else None
 
     def check_cancelled() -> None:
         if cancel_callback is not None and cancel_callback():
@@ -206,7 +220,7 @@ def _resolve_page_url(
                 "status": "starting",
                 "provider": provider,
                 "quality": quality,
-                "cache_dir": str(cache_dir or ""),
+                "cache_dir": str(source_cache_dir or ""),
                 "url": url,
             }
         )
@@ -225,7 +239,7 @@ def _resolve_page_url(
                 "filename": data.get("filename") or data.get("tmpfilename") or "",
                 "provider": provider,
                 "quality": quality,
-                "cache_dir": str(cache_dir or ""),
+                "cache_dir": str(source_cache_dir or ""),
                 "url": url,
             }
         )
@@ -244,11 +258,11 @@ def _resolve_page_url(
     allowed_extractors = _allowed_extractors(provider)
     if allowed_extractors:
         options["allowed_extractors"] = allowed_extractors
-    if full_cache and cache_dir is not None:
+    if full_cache and source_cache_dir is not None:
         options.update(
             {
                 "merge_output_format": "mp4",
-                "outtmpl": str(cache_dir / "%(extractor_key)s-%(id)s-%(format_id)s-%(height)sp.%(ext)s"),
+                "outtmpl": str(source_cache_dir / "%(extractor_key)s-%(id)s-%(format_id)s-%(height)sp.%(ext)s"),
                 "continuedl": True,
                 "overwrites": False,
                 "progress_hooks": [progress_hook],
@@ -266,8 +280,22 @@ def _resolve_page_url(
     except VideoSourceError:
         raise
     except Exception as exc:
+        detail = _clean_download_error(exc)
+        if "Unable to find embedded media URL" in detail:
+            fallback_source = _resolve_vlxx_wrapped_hls(
+                url,
+                provider,
+                quality,
+                cache_dir=cache_dir,
+                progress_callback=progress_callback,
+                cancel_callback=cancel_callback,
+                language_id=language_id,
+            )
+            if fallback_source is not None:
+                return fallback_source
+            raise VideoSourceError(ui_text("video_error_usable_media_missing", language_id, provider=provider)) from exc
         raise VideoSourceError(
-            ui_text("video_error_download_failed", language_id, provider=provider, detail=_clean_download_error(exc))
+            ui_text("video_error_download_failed", language_id, provider=provider, detail=detail)
         ) from exc
 
     if not full_cache:
@@ -285,11 +313,14 @@ def _resolve_page_url(
             height=height,
         )
 
-    if cache_dir is None:
-        cache_dir = _source_cache_dir(provider, quality)
-    local_path = _downloaded_file_path(info, cache_dir)
+    if source_cache_dir is None:
+        source_cache_dir = _source_cache_dir(provider, quality, cache_root=cache_dir)
+    local_path = _downloaded_file_path(info, source_cache_dir)
     if not local_path:
         raise VideoSourceError(ui_text("video_error_downloaded_file_missing", language_id, provider=provider))
+    if not _video_file_has_audio(local_path):
+        _remove_cached_file(local_path)
+        raise VideoSourceError(ui_text("video_error_no_audio_stream", language_id, provider=provider))
 
     if progress_callback is not None:
         progress_callback(
@@ -297,7 +328,7 @@ def _resolve_page_url(
                 "status": "cached",
                 "provider": provider,
                 "quality": quality,
-                "cache_dir": str(cache_dir or ""),
+                "cache_dir": str(source_cache_dir or ""),
                 "filename": local_path,
                 "url": url,
             }
@@ -482,14 +513,287 @@ def _normalize_extra_ytdlp_host(value: str) -> str:
     return text.strip(".")
 
 
-def _source_cache_dir(provider: str, playback_quality: str = "720p") -> Path:
+def default_video_cache_root() -> Path:
+    return Path(tempfile.gettempdir()) / "ai-player-sources"
+
+
+def _source_cache_dir(provider: str, playback_quality: str = "720p", *, cache_root: str | Path | None = None) -> Path:
     safe_provider = re.sub(r"[^a-z0-9_-]+", "-", provider.lower()).strip("-") or "url"
     safe_quality = re.sub(r"[^a-z0-9_-]+", "-", _normalize_playback_quality(playback_quality)).strip("-") or "720p"
-    root = Path(tempfile.gettempdir()) / "ai-player-sources"
+    root = _video_cache_root(cache_root)
     _cleanup_cache_root(root)
     path = root / safe_provider / safe_quality
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _resolve_vlxx_wrapped_hls(
+    url: str,
+    provider: str,
+    quality: str,
+    *,
+    cache_dir: str | Path | None = None,
+    progress_callback=None,
+    cancel_callback=None,
+    language_id: str | None = None,
+) -> VideoSource | None:
+    if not _is_vlxx_url(url):
+        return None
+    try:
+        import requests
+    except ImportError:
+        return None
+
+    def check_cancelled() -> None:
+        if cancel_callback is not None and cancel_callback():
+            raise VideoSourceCancelled(ui_text("video_error_open_cancelled", language_id))
+
+    video_id = _vlxx_video_id(url)
+    source_cache_dir = _source_cache_dir(provider, quality, cache_root=cache_dir)
+    output_path = source_cache_dir / f"VLXX-{video_id}-wrapped-hls.mp4"
+    if output_path.exists() and _video_file_has_audio(output_path):
+        return VideoSource(
+            input_url=url,
+            playback_url=str(output_path),
+            title=video_id,
+            provider=provider,
+            is_resolved=True,
+        )
+    _remove_cached_file(output_path)
+
+    session = requests.Session()
+    headers = _browser_headers(url)
+    try:
+        check_cancelled()
+        webpage = session.get(url, headers=headers, timeout=30).text
+        player_urls = _vlxx_player_urls(url, video_id, webpage, session, headers)
+        for player_url in player_urls:
+            check_cancelled()
+            player_headers = _browser_headers(player_url, referer=url)
+            player_page = session.get(player_url, headers=player_headers, timeout=30).text
+            manifest_urls = _vlxx_manifest_urls(player_url, player_page)
+            title = _html_title(player_page) or _html_title(webpage) or video_id
+            for manifest_url in manifest_urls:
+                check_cancelled()
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "status": "downloading",
+                            "provider": provider,
+                            "quality": quality,
+                            "cache_dir": str(source_cache_dir),
+                            "filename": str(output_path),
+                            "url": url,
+                        }
+                    )
+                if _download_wrapped_hls(
+                    manifest_url,
+                    output_path,
+                    session,
+                    _browser_headers(manifest_url, referer=player_url),
+                    progress_callback=progress_callback,
+                    cancel_callback=cancel_callback,
+                    provider=provider,
+                    quality=quality,
+                    cache_dir=source_cache_dir,
+                    source_url=url,
+                ):
+                    if _video_file_has_audio(output_path):
+                        width, height = _video_dimensions_from_file(output_path)
+                        return VideoSource(
+                            input_url=url,
+                            playback_url=str(output_path),
+                            title=title,
+                            provider=provider,
+                            is_resolved=True,
+                            width=width,
+                            height=height,
+                        )
+                    _remove_cached_file(output_path)
+    except VideoSourceCancelled:
+        raise
+    except Exception:
+        _remove_cached_file(output_path)
+        return None
+    return None
+
+
+def _download_wrapped_hls(
+    manifest_url: str,
+    output_path: Path,
+    session,
+    headers: dict,
+    *,
+    progress_callback=None,
+    cancel_callback=None,
+    provider: str = "",
+    quality: str = "",
+    cache_dir: Path | None = None,
+    source_url: str = "",
+) -> bool:
+    playlist = session.get(manifest_url, headers=headers, timeout=30).text
+    segment_urls = _hls_segment_urls(manifest_url, playlist)
+    if not segment_urls:
+        return False
+
+    temp_ts = output_path.with_suffix(".part.ts")
+    temp_mp4 = output_path.with_suffix(".part.mp4")
+    _remove_cached_file(temp_ts)
+    _remove_cached_file(temp_mp4)
+    downloaded_bytes = 0
+    try:
+        with temp_ts.open("wb") as output:
+            for index, segment_url in enumerate(segment_urls, start=1):
+                if cancel_callback is not None and cancel_callback():
+                    raise VideoSourceCancelled()
+                response = session.get(segment_url, headers=headers, timeout=60)
+                response.raise_for_status()
+                payload = response.content
+                offset = _mpeg_ts_payload_offset(payload)
+                if offset < 0:
+                    return False
+                output.write(payload[offset:])
+                downloaded_bytes += len(payload)
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "status": "downloading",
+                            "downloaded_bytes": downloaded_bytes,
+                            "total_bytes": max(downloaded_bytes, len(segment_urls)),
+                            "eta": max(0, len(segment_urls) - index),
+                            "provider": provider,
+                            "quality": quality,
+                            "cache_dir": str(cache_dir or ""),
+                            "filename": str(output_path),
+                            "url": source_url,
+                        }
+                    )
+        run_ffmpeg(
+            [
+                "-y",
+                "-i",
+                temp_ts,
+                "-map",
+                "0:v:0?",
+                "-map",
+                "0:a:0?",
+                "-c",
+                "copy",
+                "-bsf:a",
+                "aac_adtstoasc",
+                temp_mp4,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        shutil.move(str(temp_mp4), output_path)
+        return output_path.exists()
+    finally:
+        _remove_cached_file(temp_ts)
+        _remove_cached_file(temp_mp4)
+
+
+def _is_vlxx_url(url: str) -> bool:
+    return _url_host(urlparse(url)).startswith("vlxx.")
+
+
+def _vlxx_video_id(url: str) -> str:
+    matched = re.search(r"/(\d+)/?(?:[?#].*)?$", url)
+    if matched:
+        return matched.group(1)
+    path = urlparse(url).path.rstrip("/")
+    return Path(path).name or "vlxx"
+
+
+def _vlxx_player_urls(page_url: str, video_id: str, webpage: str, session, headers: dict) -> list[str]:
+    escaped_video_id = re.escape(video_id)
+    server_ids = dict.fromkeys(
+        re.findall(rf"""(?i)\bserver\s*\(\s*(\d+)\s*,\s*{escaped_video_id}\s*\)""", webpage)
+        + re.findall(r"""(?i)\bdata-sv=["'](\d+)["']""", webpage)
+        + ["1", "2"]
+    )
+    urls = []
+    for server_id in server_ids:
+        response = session.post(
+            urljoin(page_url, "/ajax.php"),
+            data={"vlxx_server": "1", "id": video_id, "server": server_id},
+            headers={**headers, "X-Requested-With": "XMLHttpRequest"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        try:
+            ajax_data = response.json()
+        except ValueError:
+            ajax_data = {}
+        player_html = str(ajax_data.get("player") or response.text) if isinstance(ajax_data, dict) else response.text
+        urls.extend(_iframe_urls(page_url, player_html))
+    return list(dict.fromkeys(urls))
+
+
+def _vlxx_manifest_urls(player_url: str, player_page: str) -> list[str]:
+    urls = re.findall(r"""https?:\\/\\/[^"']+?\.vl(?:[?#][^"']*)?(?=["'])""", player_page)
+    urls.extend(re.findall(r"""https?://[^\s"'<>\\]+?\.vl(?:[?#][^\s"'<>\\]+)?(?=[\s"'<>]|$)""", player_page))
+    return list(dict.fromkeys(_clean_url(player_url, url) for url in urls if _clean_url(player_url, url)))
+
+
+def _iframe_urls(page_url: str, html: str) -> list[str]:
+    urls = []
+    for match in re.finditer(r"""(?is)<iframe[^>]+(?:src|data-src)=["'](?P<url>[^"']+)["']""", html):
+        cleaned = _clean_url(page_url, match.group("url"))
+        if cleaned:
+            urls.append(cleaned)
+    return urls
+
+
+def _hls_segment_urls(playlist_url: str, playlist: str) -> list[str]:
+    urls = []
+    for line in playlist.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        cleaned = _clean_url(playlist_url, line)
+        if cleaned:
+            urls.append(cleaned)
+    return urls
+
+
+def _mpeg_ts_payload_offset(payload: bytes) -> int:
+    for offset in range(min(512, len(payload))):
+        if payload[offset] != 0x47 or offset + 188 * 5 >= len(payload):
+            continue
+        if all(payload[offset + 188 * index] == 0x47 for index in range(6)):
+            return offset
+    return -1
+
+
+def _clean_url(page_url: str, value: str | None) -> str | None:
+    if not value:
+        return None
+    cleaned = str(value).replace("\\/", "/").strip()
+    absolute_url = urljoin(page_url, cleaned)
+    return absolute_url if is_supported_video_url(absolute_url) else None
+
+
+def _browser_headers(url: str, *, referer: str | None = None) -> dict:
+    return {
+        "Referer": referer or url,
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/125 Safari/537.36"
+        ),
+    }
+
+
+def _html_title(html: str) -> str:
+    matched = re.search(r"(?is)<title[^>]*>(.*?)</title>", html)
+    if not matched:
+        return ""
+    return re.sub(r"\s+", " ", matched.group(1)).strip()
+
+
+def _video_cache_root(cache_root: str | Path | None = None) -> Path:
+    text = str(cache_root or "").strip()
+    return Path(text).expanduser() / "ai-player-sources" if text else default_video_cache_root()
 
 
 def _cleanup_cache_root(
@@ -560,6 +864,66 @@ def _downloaded_file_path(info: dict, cache_dir: Path) -> str:
             if path.is_file() and path.suffix.lower() not in {".part", ".ytdl"}:
                 return str(path)
     return ""
+
+
+def _video_file_has_audio(path: str | Path) -> bool:
+    try:
+        completed = run_ffprobe(
+            [
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=index",
+                "-of",
+                "csv=p=0",
+                path,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError:
+        return True
+    return completed.returncode == 0 and bool(str(completed.stdout or "").strip())
+
+
+def _video_dimensions_from_file(path: str | Path) -> tuple[int, int]:
+    try:
+        completed = run_ffprobe(
+            [
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0:s=x",
+                path,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError:
+        return 0, 0
+    match = re.search(r"(\d+)x(\d+)", str(completed.stdout or ""))
+    if not match:
+        return 0, 0
+    return int(match.group(1)), int(match.group(2))
+
+
+def _remove_cached_file(path: str | Path) -> None:
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _clean_download_error(value: object) -> str:

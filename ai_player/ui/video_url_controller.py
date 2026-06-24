@@ -18,7 +18,15 @@ class VideoUrlController:
         self._owner = owner
         self._worker: VideoSourceWorker | None = None
 
-    def start(self, url: str, playback_quality: str, *, full_cache: bool, language_id: str | None = None) -> bool:
+    def start(
+        self,
+        url: str,
+        playback_quality: str,
+        *,
+        full_cache: bool,
+        cache_dir: str = "",
+        language_id: str | None = None,
+    ) -> bool:
         if self.is_opening():
             return False
         self.set_opening_controls(False)
@@ -26,6 +34,7 @@ class VideoUrlController:
             url,
             playback_quality,
             full_cache=full_cache,
+            cache_dir=cache_dir,
             language_id=language_id,
             parent=self._owner,
         )

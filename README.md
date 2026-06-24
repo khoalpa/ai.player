@@ -13,6 +13,8 @@ AI Player là ứng dụng Windows dùng PySide6 để xem video, đọc tài li
 - Mở `.pptx`, `.docx`, `.pdf`, `.txt`, `.md`, `.rtf`, `.csv`, `.json`, trích nội dung thành transcript và phát như một timeline.
 - Export audio `.wav`, video `.mp4` đã lồng tiếng, transcript và video review chất lượng cao cho tài liệu.
 - Có Runtime Doctor trong CLI/UI để kiểm tra Python package, FFmpeg, Tesseract, GPU runtime, model/cache và thiết bị capture.
+- Có tab `Tác vụ` để theo dõi tải model, warmup, cache URL, export, provider preview và các lỗi gần đây ở một nơi.
+- Có cache workflow cho ASR, text/translation cleanup và TTS để chạy lại cùng nội dung nhanh hơn; có thể xem/xóa cache từ UI.
 - Giao diện có gói ngôn ngữ `vi`/`en`, preset hiệu năng và tab quản lý model offline.
 
 ## Yêu Cầu
@@ -119,9 +121,28 @@ Output được ghi vào `dist\portable\AI Player Lite`. Gói Lite không bundle
 2. Chọn preset trong tab `Cơ bản`: `Quick preview`, `Offline lite`, `Balanced` hoặc `Quality / Export`.
 3. Chọn nguồn audio/transcript, ngôn ngữ nguồn/đích, provider dịch và provider TTS.
 4. Bấm `Lồng tiếng` để phát gần thời gian thực.
-5. Bấm `Export` để xuất transcript, audio, video hoặc bản review chất lượng cao.
+5. Theo dõi tab `Tác vụ` nếu app đang tải/cache URL, warmup runtime, export hoặc chạy provider preview.
+6. Bấm `Export` để xuất transcript, audio, video hoặc bản review chất lượng cao.
 
 Trong app, bấm nút `?` để mở `Hướng dẫn sử dụng`. Hướng dẫn này tự đi theo ngôn ngữ giao diện và hiển thị cả cấu hình hiện tại để dễ biết thiết lập nào đang làm chậm hoặc ảnh hưởng chất lượng.
+
+## Theo Dõi Tác Vụ Và Cache
+
+Tab `Tác vụ` gom các việc nền để dễ biết app đang bận ở đâu:
+
+- `Đang chạy`: warmup runtime, tải model, cache URL, chuẩn bị media, dubbing/export, provider preview.
+- `Cache`: số lần dùng lại/ghi cache ASR, text/translation cleanup, TTS và URL đã tải về.
+- `Lỗi gần đây`: lỗi gần đây để thử lại, đổi provider hoặc giảm thiết lập nặng.
+
+Các cache workflow giúp lặp lại cùng nguồn nhanh hơn, nhất là khi chỉnh dịch/TTS hoặc export lại. Nếu kết quả cũ bị sai, đổi model/provider hoặc muốn đo benchmark sạch, dùng mục `Cache` trong tab `Tác vụ` để xóa riêng ASR, Text, TTS hoặc xóa tất cả.
+
+Mặc định các cache ASR, text workflow và TTS được bật. Có thể tắt bằng biến môi trường:
+
+```powershell
+$env:AI_PLAYER_ASR_CACHE="0"
+$env:AI_PLAYER_WORKFLOW_TEXT_CACHE="0"
+$env:AI_PLAYER_TTS_CACHE="0"
+```
 
 ## Chọn Nhanh Theo Mục Tiêu
 
@@ -141,6 +162,8 @@ Trong app, bấm nút `?` để mở `Hướng dẫn sử dụng`. Hướng dẫ
 | URL web không mở | Bật cache video URL, giảm chất lượng phát, hoặc dùng URL media trực tiếp nếu có. |
 | Dịch/đọc sai thuật ngữ | Bật giữ thuật ngữ và chọn file thuật ngữ; kiểm tra lại ngôn ngữ nguồn trước khi chạy. |
 | App xử lý quá chậm | Tránh mở nhiều cửa sổ cùng lúc, dùng Edge TTS khi cần nhanh, hoặc giảm model/thiết lập local nặng trên CPU. |
+| Kết quả lặp lại không đổi sau khi chỉnh model/provider | Xóa cache workflow liên quan trong tab `Tác vụ`, rồi chạy lại. |
+| Không rõ app đang làm gì | Mở tab `Tác vụ`; nếu một tác vụ nền bị kẹt lâu, dùng `Dừng tất cả` rồi thử lại với preset nhẹ hơn. |
 
 ## Nguồn Và Định Dạng Hỗ Trợ
 
@@ -224,6 +247,10 @@ $env:AI_PLAYER_GUI_LANGUAGE="vi"                 # vi, en
 $env:AI_PLAYER_PERFORMANCE_PRESET="balanced"     # low_latency, offline_lite, balanced, quality
 $env:AI_PLAYER_AUDIO_SOURCE="original"           # original, system, microphone, system_microphone, transcript, document_editor, subtitle
 $env:AI_PLAYER_TRANSCRIPT_PATH="D:\path\subtitles.srt"
+$env:AI_PLAYER_ASR_CACHE="1"
+$env:AI_PLAYER_WORKFLOW_TEXT_CACHE="1"
+$env:AI_PLAYER_WORKFLOW_TEXT_CACHE_ENTRIES="4096"
+$env:AI_PLAYER_TTS_CACHE="1"
 
 $env:AI_PLAYER_WHISPER_MODEL="models\asr\faster-whisper-base"
 $env:AI_PLAYER_WHISPER_DEVICE="auto"             # auto, cpu, cuda
@@ -285,10 +312,13 @@ Benchmark/tiện ích:
 
 ```powershell
 .\.venv\Scripts\python.exe .\scripts\workflow_benchmark.py
+.\.venv\Scripts\python.exe .\scripts\workflow_benchmark.py --check-baselines --baseline .\docs\workflow_benchmark_baselines.json
 .\.venv\Scripts\python.exe .\scripts\workflow_benchmark.py --baseline data\tmp\previous-workflow-benchmark.json --max-regression-percent 35
 .\.venv\Scripts\python.exe .\scripts\compare_performance_presets.py
 .\scripts\backup_local.ps1
 ```
+
+Trong UI, mục `Sức khỏe workflow` ở tab `Tác vụ` đọc baseline trong `docs\workflow_benchmark_baselines.json` và kết quả benchmark local gần nhất để báo workflow nào đang chậm hơn ngưỡng.
 
 ## Cấu Trúc Dự Án
 

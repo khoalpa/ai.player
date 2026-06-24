@@ -251,6 +251,7 @@ class MeetingWorker(QThread):
             audio_path,
             language=language,
             local_transcriber=transcribe_local,
+            cache_details={"word_timestamps": False},
         )
 
     def _process_chunk(

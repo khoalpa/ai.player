@@ -171,6 +171,7 @@ class AppConfig:
     video_aspect_ratio: str = "16:9"
     playback_video_quality: str = "720p"
     video_url_full_cache: bool = False
+    video_cache_dir: str = ""
     video_url_recent_urls: tuple[str, ...] = ()
     audio_source: str = "original"
     capture_backend: str = "auto"
@@ -302,6 +303,7 @@ _APP_CONFIG_ENV_FIELDS = {
     "video_aspect_ratio": ("AI_PLAYER_VIDEO_ASPECT_RATIO", "str"),
     "playback_video_quality": ("AI_PLAYER_PLAYBACK_VIDEO_QUALITY", "str"),
     "video_url_full_cache": ("AI_PLAYER_VIDEO_URL_FULL_CACHE", "bool"),
+    "video_cache_dir": ("AI_PLAYER_VIDEO_CACHE_DIR", "str"),
     "audio_source": ("AI_PLAYER_AUDIO_SOURCE", "str"),
     "capture_backend": ("AI_PLAYER_CAPTURE_BACKEND", "str"),
     "capture_system_device": ("AI_PLAYER_CAPTURE_SYSTEM_DEVICE", "str"),

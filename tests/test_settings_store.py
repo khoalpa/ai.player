@@ -572,6 +572,18 @@ def test_save_app_config_splits_runtime_local_settings(tmp_path, monkeypatch) ->
     assert config.vieneu_tts_python == r"D:\venv\Scripts\python.exe"
 
 
+def test_save_and_load_app_config_round_trips_video_cache_dir(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+
+    settings_store.save_app_config(AppConfig(video_cache_dir=r"D:\media-cache"))
+    settings_data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    config = settings_store.load_app_config(AppConfig())
+
+    assert settings_data["video_cache_dir"] == r"D:\media-cache"
+    assert config.video_cache_dir == r"D:\media-cache"
+
+
 def test_load_app_config_prefers_split_files_over_legacy_settings(tmp_path, monkeypatch) -> None:
     settings_file = tmp_path / "settings.json"
     settings_file.write_text(

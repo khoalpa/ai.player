@@ -47,6 +47,25 @@ def test_workflow_benchmark_regression_compare_accepts_small_drift() -> None:
     assert workflow_benchmark.compare_timing_regressions(current, baseline, max_regression_percent=35.0) == []
 
 
+def test_workflow_benchmark_loads_named_baselines() -> None:
+    baselines = workflow_benchmark.load_workflow_baselines()
+
+    assert set(baselines) == {"document", "transcript", "video_short"}
+    assert baselines["video_short"]["timings"]["asr_seconds"] > 0
+
+
+def test_workflow_benchmark_named_baseline_rejects_unknown() -> None:
+    try:
+        workflow_benchmark.load_named_workflow_baseline(
+            workflow_benchmark.DEFAULT_BASELINE_FILE,
+            "missing",
+        )
+    except ValueError as exc:
+        assert "video_short" in str(exc)
+    else:
+        raise AssertionError("Expected unknown benchmark workflow to fail")
+
+
 def test_workflow_benchmark_does_not_force_exit_for_cpu(monkeypatch) -> None:
     called = {"exit": False}
     monkeypatch.setattr(workflow_benchmark.os, "_exit", lambda _code: called.__setitem__("exit", True))

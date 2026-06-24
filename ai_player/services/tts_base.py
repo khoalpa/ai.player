@@ -46,6 +46,7 @@ class NoTTSProvider(BaseTTSProvider):
 ONLINE_TTS_PROVIDERS = {"azure_tts", "google_tts", "amazon_polly"}
 _TTS_CACHE_LOCK = threading.Lock()
 _TTS_CACHE_KEY_LOCKS: dict[Path, threading.Lock] = {}
+_TTS_CACHE_STATS = {"hits": 0, "misses": 0, "writes": 0}
 _NON_SPEECH_TTS_TOKENS = {
     "a",
     "aa",
@@ -281,9 +282,11 @@ class CachedTTSProvider(BaseTTSProvider):
         cache_lock = _tts_cache_lock_for(cache_path)
         with cache_lock:
             if cache_path.exists() and cache_path.stat().st_size > 0:
+                _record_tts_cache_stat("hits")
                 shutil.copyfile(cache_path, output_path)
                 return
 
+            _record_tts_cache_stat("misses")
             self._inner.synthesize(text, output_path, voice=voice)
             if not output_path.exists() or output_path.stat().st_size <= 0:
                 return
@@ -294,6 +297,7 @@ class CachedTTSProvider(BaseTTSProvider):
                 return
             shutil.copyfile(output_path, temp_cache_path)
             temp_cache_path.replace(cache_path)
+            _record_tts_cache_stat("writes")
 
     def close(self) -> None:
         self._inner.close()
@@ -331,6 +335,39 @@ def _strip_non_latin_source_script(value: str) -> str:
 
 def _tts_cache_enabled() -> bool:
     return str(os.getenv("AI_PLAYER_TTS_CACHE", "1")).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def tts_cache_stats() -> dict[str, int]:
+    with _TTS_CACHE_LOCK:
+        return {**_TTS_CACHE_STATS, "entries": _tts_cache_entry_count()}
+
+
+def clear_tts_cache() -> None:
+    cache_dir = RUNTIME_DIR / "tts-cache"
+    with _TTS_CACHE_LOCK:
+        if cache_dir.exists():
+            for path in cache_dir.glob("*"):
+                if not path.is_file():
+                    continue
+                try:
+                    path.unlink()
+                except OSError:
+                    continue
+        for key in _TTS_CACHE_STATS:
+            _TTS_CACHE_STATS[key] = 0
+
+
+def _record_tts_cache_stat(name: str) -> None:
+    with _TTS_CACHE_LOCK:
+        if name in _TTS_CACHE_STATS:
+            _TTS_CACHE_STATS[name] += 1
+
+
+def _tts_cache_entry_count() -> int:
+    try:
+        return sum(1 for path in (RUNTIME_DIR / "tts-cache").glob("*") if path.is_file())
+    except OSError:
+        return 0
 
 
 def _tts_cache_lock_for(cache_path: Path) -> threading.Lock:

@@ -13,7 +13,7 @@ Build AI Player internal:
 ```powershell
 .\scripts\build_internal.ps1 `
   -PrivateYtdlpPluginPackage D:\project\ai-player-adult-extractors `
-  -ExtraYtdlpHosts "missav.ai,missav.com,missav.ws,supjav.com,javmost.com,javmost.cx,javgg.net,javgg.to,r18.com,javlibrary.com,javhd.com,livejasmin.com,buomtv.*,*.buomtv.*"
+  -ExtraYtdlpHosts "missav.ai,missav.com,missav.ws,supjav.com,javmost.com,javmost.cx,javgg.net,javgg.to,r18.com,javlibrary.com,javhd.com,livejasmin.com,vlxx.*,*.vlxx.*,buomtv.*,*.buomtv.*"
 ```
 
 Run the source/dev app with the private host list:

@@ -16,6 +16,7 @@ import requests
 from ai_player.core.config import AppConfig
 from ai_player.core.optional_imports import block_unneeded_transformers_optional_imports
 from ai_player.core.redaction import compact_redacted_text, redact_secrets, redacted_json_text
+from ai_player.services.workflow_cache import get_text_result, put_text_result
 
 
 class TranscriptCleanupError(RuntimeError):
@@ -69,6 +70,16 @@ class CleanupContext:
     previous_text: str = ""
 
 
+@dataclass(frozen=True)
+class CleanupRuntimeKey:
+    mode: str
+    provider: str
+    model: str
+    api_base: str
+    api_key: str
+    timeout_seconds: int
+
+
 _PROTECTED_TERMS = (
     ProtectedTerm(
         "NLLB",
@@ -113,6 +124,16 @@ class TranscriptCleaner:
                 return clean_text
             clean_text = _normalize_protected_terms(clean_text)
             context = CleanupContext(source_language=source_language, previous_text=self._previous_text)
+            cached = get_text_result(
+                "transcript_cleanup",
+                _cleanup_runtime_key(self._config),
+                clean_text,
+                source_language=source_language,
+                context=context.previous_text,
+            )
+            if cached is not None:
+                self._previous_text = cached
+                return cached
             try:
                 result = _clean_with_provider(clean_text, context, self._config)
                 self.last_error = ""
@@ -120,6 +141,14 @@ class TranscriptCleaner:
                 self._record_failure(exc)
                 result = clean_text
             result = _safe_cleanup_output(clean_text, result)
+            result = put_text_result(
+                "transcript_cleanup",
+                _cleanup_runtime_key(self._config),
+                clean_text,
+                result,
+                source_language=source_language,
+                context=context.previous_text,
+            )
             self._previous_text = result
             return result
 
@@ -136,6 +165,9 @@ class TranscriptCleaner:
                 index, text = indexed[0]
                 clean_texts[index] = self.clean(text, source_language)
                 return clean_texts
+            cached_texts = self._cached_clean_many(clean_texts, indexed, source_language)
+            if cached_texts is not None:
+                return cached_texts
 
             context = CleanupContext(source_language=source_language, previous_text=self._previous_text)
             try:
@@ -150,9 +182,18 @@ class TranscriptCleaner:
             if len(result) != len(indexed):
                 self._record_failure(TranscriptCleanupBatchError("Cleanup batch returned an unexpected item count."))
                 return self._clean_many_individually(clean_texts, indexed, source_language)
+            previous_text = context.previous_text
             for (index, original), cleaned in zip(indexed, result, strict=False):
-                clean_texts[index] = _safe_cleanup_output(original, cleaned)
+                clean_texts[index] = put_text_result(
+                    "transcript_cleanup",
+                    _cleanup_runtime_key(self._config),
+                    original,
+                    _safe_cleanup_output(original, cleaned),
+                    source_language=source_language,
+                    context=previous_text,
+                )
                 self._previous_text = clean_texts[index]
+                previous_text = clean_texts[index]
             return clean_texts
 
     def _clean_many_individually(
@@ -171,6 +212,32 @@ class TranscriptCleaner:
             return
         self._warned_failure = True
         LOGGER.warning("Transcript cleanup failed; using original transcript text. Error: %s", exc)
+
+    def _cached_clean_many(
+        self,
+        clean_texts: list[str],
+        indexed: list[tuple[int, str]],
+        source_language: str | None,
+    ) -> list[str] | None:
+        runtime_key = _cleanup_runtime_key(self._config)
+        previous_text = self._previous_text
+        cached_updates: list[tuple[int, str]] = []
+        for index, original in indexed:
+            cached = get_text_result(
+                "transcript_cleanup",
+                runtime_key,
+                original,
+                source_language=source_language,
+                context=previous_text,
+            )
+            if cached is None:
+                return None
+            cached_updates.append((index, cached))
+            previous_text = cached
+        for index, cached in cached_updates:
+            clean_texts[index] = cached
+        self._previous_text = previous_text
+        return clean_texts
 
 
 def _clean_with_provider(text: str, context: CleanupContext, config: AppConfig) -> str:
@@ -194,6 +261,18 @@ def _call_cleanup_provider(prompt: str, provider: str, config: AppConfig) -> str
     if provider == "local":
         return _call_headless_local(prompt, config)
     return _call_ollama(prompt, config)
+
+
+def _cleanup_runtime_key(config: AppConfig) -> CleanupRuntimeKey:
+    provider = _cleanup_provider(config.transcript_cleanup_provider)
+    return CleanupRuntimeKey(
+        mode=_cleanup_mode(config.transcript_cleanup_mode),
+        provider=provider,
+        model=_cleanup_model(config, provider),
+        api_base=_cleanup_api_base(config, provider),
+        api_key=str(getattr(config, "transcript_cleanup_api_key", "") or ""),
+        timeout_seconds=_timeout_seconds(config.transcript_cleanup_timeout_seconds),
+    )
 
 
 def _build_prompt(text: str, context: CleanupContext, config: AppConfig) -> str:

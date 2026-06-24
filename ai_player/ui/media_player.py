@@ -91,3 +91,8 @@ class VideoPlayer(QObject):
         if self._disposed:
             return False
         return self._player.playbackState() == QMediaPlayer.PlayingState
+
+    def on_playback_state_changed(self, callback) -> None:
+        if self._disposed:
+            return
+        self._player.playbackStateChanged.connect(callback)

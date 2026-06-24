@@ -27,10 +27,14 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
+    QWidget,
 )
 
 from ai_player.core.config import AppConfig
 from ai_player.core.redaction import redact_secrets
+from ai_player.services.asr import asr_transcript_cache_stats
+from ai_player.services.tts_base import tts_cache_stats
+from ai_player.services.workflow_cache import workflow_text_cache_stats
 from ai_player.ui.export_progress_dialog import ExportProgressDialog
 from ai_player.ui.player_window_utils import repair_mojibake as _repair_mojibake
 from ai_player.ui.player_window_utils import safe_native_dubbing_config as _safe_native_dubbing_config
@@ -83,29 +87,33 @@ class PlayerExportMixin:
         intro = QLabel(self._tr("export_workflow_intro"), dialog)
         intro.setWordWrap(True)
         layout.addWidget(intro)
+        layout.addWidget(QLabel(self._tr("export_workflow_step_output"), dialog))
         options = QListWidget(dialog)
         first_available_row = -1
+        preferred_row = -1
+        preferred_action = self._preferred_export_workflow_action()
         for row, option in enumerate(self._export_workflow_options()):
             state = (
                 self._tr("export_workflow_available")
                 if option["available"]
                 else self._tr("export_workflow_unavailable")
             )
-            item = QListWidgetItem(
-                f"{state} - {self._tr(option['title_key'])}\n"
-                f"{self._tr(option['detail_key'])}\n"
-                f"{option['reason']}"
-            )
+            item = QListWidgetItem(f"{state} - {self._tr(option['title_key'])}")
+            item.setToolTip(f"{self._tr(option['detail_key'])}\n{option['reason']}")
             item.setData(Qt.ItemDataRole.UserRole, option)
             if not option["available"]:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
             elif first_available_row < 0:
                 first_available_row = row
+            if option["available"] and option.get("action") == preferred_action:
+                preferred_row = row
             options.addItem(item)
-        options.setCurrentRow(first_available_row if first_available_row >= 0 else 0)
+        selected_row = preferred_row if preferred_row >= 0 else first_available_row if first_available_row >= 0 else 0
+        options.setCurrentRow(selected_row)
         layout.addWidget(options)
 
         form = QFormLayout()
+        form.addRow(QLabel(self._tr("export_workflow_step_quality"), dialog))
         quality_combo = QComboBox(dialog)
         source_quality = getattr(self, "_export_video_quality_combo", None)
         if source_quality is not None:
@@ -115,14 +123,25 @@ class PlayerExportMixin:
             quality_index = quality_combo.findData(selected_quality)
             quality_combo.setCurrentIndex(quality_index if quality_index >= 0 else 0)
         form.addRow(self._tr("export_workflow_quality"), quality_combo)
-        range_hint = QLabel(self._tr("export_workflow_range_next"), dialog)
-        range_hint.setWordWrap(True)
-        form.addRow(self._tr("export_workflow_range"), range_hint)
-        artifact_hint = QLabel(self._tr("export_workflow_artifacts_next"), dialog)
-        artifact_hint.setWordWrap(True)
-        form.addRow(self._tr("export_workflow_artifacts"), artifact_hint)
         layout.addLayout(form)
 
+        advanced_check = QCheckBox(self._tr("export_workflow_show_advanced"), dialog)
+        advanced_check.setToolTip(self._tr("export_workflow_show_advanced_tooltip"))
+        layout.addWidget(advanced_check)
+        advanced_panel = QWidget(dialog)
+        advanced_form = QFormLayout(advanced_panel)
+        advanced_form.setContentsMargins(0, 0, 0, 0)
+        range_hint = QLabel(self._tr("export_workflow_range_next"), dialog)
+        range_hint.setWordWrap(True)
+        advanced_form.addRow(self._tr("export_workflow_range"), range_hint)
+        artifact_hint = QLabel(self._tr("export_workflow_artifacts_next"), dialog)
+        artifact_hint.setWordWrap(True)
+        advanced_form.addRow(self._tr("export_workflow_artifacts"), artifact_hint)
+        advanced_panel.setVisible(False)
+        advanced_check.toggled.connect(advanced_panel.setVisible)
+        layout.addWidget(advanced_panel)
+
+        layout.addWidget(QLabel(self._tr("export_workflow_step_run"), dialog))
         hint = QLabel(self._export_workflow_hint(), dialog)
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -160,6 +179,22 @@ class PlayerExportMixin:
             self._export_staged_dubbing()
         elif action == "document":
             self._export_high_quality_review()
+
+    def _run_contextual_export(self) -> None:
+        action = self._preferred_export_workflow_action()
+        options = {str(option.get("action")): option for option in self._export_workflow_options()}
+        option = options.get(action)
+        if not option or not option.get("available"):
+            self._show_export_workflow()
+            return
+        if action == "transcript":
+            self._save_transcript()
+        elif action == "video":
+            self._export_dubbed_media("video")
+        elif action == "document":
+            self._export_high_quality_review()
+        else:
+            self._show_export_workflow()
 
     def _export_workflow_options(self) -> list[dict[str, object]]:
         transcript_ready = bool(
@@ -243,16 +278,36 @@ class PlayerExportMixin:
             return self._tr("export_workflow_ready_detail")
         return self._tr(blocked_key)
 
+    def _preferred_export_workflow_action(self) -> str:
+        if self._document_mode and self._document_pages:
+            return "document"
+        if self._video_path:
+            return "video"
+        if self._transcript.toPlainText().strip():
+            return "transcript"
+        return ""
+
     def _export_workflow_hint(self) -> str:
+        cache_hint = self._export_workflow_cache_hint()
         if self._export_worker is not None:
             return self._tr("msg_export_running")
         if self._document_mode:
-            return self._tr("export_workflow_hint_document")
+            return self._join_export_hints(self._tr("export_workflow_hint_document"), cache_hint)
         if self._video_path:
-            return self._tr("export_workflow_hint_video")
+            return self._join_export_hints(self._tr("export_workflow_hint_video"), cache_hint)
         if self._transcript.toPlainText().strip():
-            return self._tr("export_workflow_hint_transcript")
-        return self._tr("export_workflow_hint_empty")
+            return self._join_export_hints(self._tr("export_workflow_hint_transcript"), cache_hint)
+        return self._join_export_hints(self._tr("export_workflow_hint_empty"), cache_hint)
+
+    def _export_workflow_cache_hint(self) -> str:
+        stats = (asr_transcript_cache_stats(), workflow_text_cache_stats(), tts_cache_stats())
+        if sum(int(item.get("hits", 0)) for item in stats) <= 0:
+            return ""
+        return self._tr("export_workflow_cache_reuse")
+
+    @staticmethod
+    def _join_export_hints(*parts: str) -> str:
+        return "\n".join(part for part in parts if str(part or "").strip())
 
     def _export_dubbed_media(self, export_kind: str) -> None:
         if self._selected_audio_source() == "document_editor" and not self._document_mode:

@@ -23,6 +23,12 @@ from ai_player.ui.player_window_utils import PERFORMANCE_PRESETS
 
 READINESS_PROFILES = (
     {
+        "key": "auto",
+        "preset": "balanced",
+        "title": "first_run_profile_auto",
+        "detail": "first_run_profile_auto_detail",
+    },
+    {
         "key": "quick",
         "preset": "low_latency",
         "title": "first_run_profile_quick",
@@ -54,7 +60,7 @@ class PlayerReadinessMixin:
     def _readiness_tab(self) -> QWidget:
         tab = QWidget()
         self._readiness_tab_widget = tab
-        self._readiness_selected_profile = "quick"
+        self._readiness_selected_profile = "auto"
         self._readiness_profile_buttons: dict[str, QPushButton] = {}
 
         layout = QVBoxLayout(tab)
@@ -107,20 +113,30 @@ class PlayerReadinessMixin:
         for index, (workflow_key, title_key, detail_key, icon, callback) in enumerate(workflow_specs):
             button = self._make_button(title_key, self.style().standardIcon(icon))
             button.setObjectName("workflowCardButton")
-            button.setText(f"{self._tr(title_key)}\n{self._tr(detail_key)}")
+            button.setText(self._tr(title_key))
+            button.setToolTip(self._readiness_button_tooltip(title_key, detail_key))
             button.setProperty("i18n_key", "")
             button.setProperty("workflow_title_key", title_key)
             button.setProperty("workflow_detail_key", detail_key)
             button.setMinimumHeight(64)
             button.setCursor(Qt.PointingHandCursor)
-            button.clicked.connect(lambda _checked=False, key=workflow_key, cb=callback: self._start_workflow(key, cb))
+            button.clicked.connect(
+                lambda _checked=False, key=workflow_key, cb=callback: self._start_goal_workflow(key, cb)
+            )
             self._fit_readiness_button(button)
             workflow_grid.addWidget(button, index // 2, index % 2)
             self._readiness_workflow_buttons[title_key] = button
         layout.addLayout(workflow_grid)
 
         layout.addWidget(self._section_title("first_run_profile_group"))
+        self._readiness_profile_toggle = QPushButton(self._tr("first_run_profile_change"))
+        self._readiness_profile_toggle.setCheckable(True)
+        self._readiness_profile_toggle.setProperty("i18n_key", "first_run_profile_change")
+        layout.addWidget(self._readiness_profile_toggle)
+        profile_panel = QWidget(tab)
+        self._readiness_profile_panel = profile_panel
         profile_grid = QGridLayout()
+        profile_panel.setLayout(profile_grid)
         profile_grid.setHorizontalSpacing(8)
         profile_grid.setVerticalSpacing(8)
         profile_grid.setColumnStretch(0, 1)
@@ -134,14 +150,19 @@ class PlayerReadinessMixin:
             button.setMinimumHeight(56)
             self._fit_readiness_button(button)
             button.setProperty("readiness_profile", profile["key"])
+            button.setProperty("readiness_profile_title_key", str(profile["title"]))
+            button.setProperty("readiness_profile_detail_key", str(profile["detail"]))
+            button.setToolTip(self._readiness_button_tooltip(str(profile["title"]), str(profile["detail"])))
             button.clicked.connect(
                 lambda _checked=False, profile_key=str(profile["key"]): self._readiness_select_profile(profile_key)
             )
             self._readiness_profile_group.addButton(button)
             self._readiness_profile_buttons[str(profile["key"])] = button
             profile_grid.addWidget(button, index // 2, index % 2)
-        self._readiness_profile_buttons["quick"].setChecked(True)
-        layout.addLayout(profile_grid)
+        self._readiness_profile_buttons["auto"].setChecked(True)
+        profile_panel.setVisible(False)
+        self._readiness_profile_toggle.toggled.connect(profile_panel.setVisible)
+        layout.addWidget(profile_panel)
 
         self._readiness_recommendation = QLabel("")
         self._readiness_recommendation.setWordWrap(True)
@@ -286,7 +307,10 @@ class PlayerReadinessMixin:
         return tab
 
     def _readiness_profile_button_text(self, profile: dict[str, object]) -> str:
-        return f"{self._tr(str(profile['title']))}\n{self._tr(str(profile['detail']))}"
+        return self._tr(str(profile["title"]))
+
+    def _readiness_button_tooltip(self, title_key: str, detail_key: str) -> str:
+        return f"{self._tr(title_key)}\n{self._tr(detail_key)}"
 
     def _readiness_button_grid(self, buttons: tuple[QPushButton, ...], *, columns: int) -> QWidget:
         row = QWidget()
@@ -317,15 +341,20 @@ class PlayerReadinessMixin:
     def _refresh_readiness_profile_text(self) -> None:
         if not hasattr(self, "_readiness_profile_buttons"):
             return
+        toggle = getattr(self, "_readiness_profile_toggle", None)
+        if toggle is not None:
+            toggle.setText(self._tr("first_run_profile_change"))
         for profile in READINESS_PROFILES:
             button = self._readiness_profile_buttons.get(str(profile["key"]))
             if button is not None:
                 button.setText(self._readiness_profile_button_text(profile))
+                button.setToolTip(self._readiness_button_tooltip(str(profile["title"]), str(profile["detail"])))
         for button in getattr(self, "_readiness_workflow_buttons", {}).values():
             title_key = str(button.property("workflow_title_key") or "")
             detail_key = str(button.property("workflow_detail_key") or "")
             if title_key and detail_key:
-                button.setText(f"{self._tr(title_key)}\n{self._tr(detail_key)}")
+                button.setText(self._tr(title_key))
+                button.setToolTip(self._readiness_button_tooltip(title_key, detail_key))
 
     def _refresh_readiness_status(self) -> None:
         if not hasattr(self, "_readiness_status"):
@@ -407,7 +436,7 @@ class PlayerReadinessMixin:
                 return
 
     def _readiness_profile(self) -> dict[str, object]:
-        selected = str(getattr(self, "_readiness_selected_profile", "quick") or "quick")
+        selected = str(getattr(self, "_readiness_selected_profile", "auto") or "auto")
         return next((profile for profile in READINESS_PROFILES if profile["key"] == selected), READINESS_PROFILES[0])
 
     def _readiness_profile_config(self) -> AppConfig:

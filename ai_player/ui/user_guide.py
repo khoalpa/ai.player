@@ -122,6 +122,8 @@ class UserGuideMixin:
         {html_list(text["quick_items"], ordered=True)}
         <h2>{html.escape(text["slow_title"])}</h2>
         {html_list(text["slow_items"])}
+        <h2>{html.escape(text["task_center_title"])}</h2>
+        {html_list(text["task_center_items"])}
         <h2>{html.escape(text["troubleshooting_title"])}</h2>
         <table class="troubleshooting-table">
             <tr>

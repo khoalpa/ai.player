@@ -263,6 +263,11 @@ class PlayerSettingsMixin:
             return self._video_url_full_cache_check.isChecked()
         return self._config.video_url_full_cache
 
+    def _selected_video_cache_dir(self) -> str:
+        if hasattr(self, "_video_cache_dir_edit"):
+            return self._video_cache_dir_edit.text().strip()
+        return self._config.video_cache_dir
+
     def _selected_source_language(self) -> str:
         return self._source_language_combo.currentData() or "auto"
 
@@ -919,6 +924,7 @@ class PlayerSettingsMixin:
             video_aspect_ratio=self._selected_video_aspect_ratio(),
             playback_video_quality=self._selected_playback_video_quality(),
             video_url_full_cache=self._selected_video_url_full_cache(),
+            video_cache_dir=self._selected_video_cache_dir(),
             video_url_recent_urls=self._video_url_recent_urls_for_settings(),
             audio_source=self._selected_audio_source(),
             capture_backend=self._selected_capture_backend(),
@@ -1526,8 +1532,6 @@ class PlayerSettingsMixin:
             self._transcript_segment_target_edit.setPlaceholderText(self._tr("transcript_segment_target_placeholder"))
         if hasattr(self, "_transcript_path_edit"):
             self._transcript_path_edit.setPlaceholderText(self._tr("transcript_file_placeholder"))
-        if hasattr(self, "_open_video_with_subtitle_action"):
-            self._open_video_with_subtitle_action.setText(self._tr("open_video_with_subtitle"))
         if hasattr(self, "_refresh_header_menu_text"):
             self._refresh_header_menu_text()
         if hasattr(self, "_refresh_media_start_launcher_text"):

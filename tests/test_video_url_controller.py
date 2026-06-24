@@ -29,12 +29,14 @@ class _FakeWorker:
         playback_quality: str,
         *,
         full_cache: bool = True,
+        cache_dir: str = "",
         language_id: str | None = None,
         parent=None,
     ) -> None:
         self.url = url
         self.playback_quality = playback_quality
         self.full_cache = full_cache
+        self.cache_dir = cache_dir
         self.language_id = language_id
         self.parent = parent
         self.progress_changed = _FakeSignal()
@@ -93,12 +95,19 @@ def test_video_url_controller_starts_and_finishes_worker(monkeypatch) -> None:
     owner = _FakeOwner()
     controller = VideoUrlController(owner)
 
-    assert controller.start("https://example.test/video.mp4", "720p", full_cache=False, language_id="en")
+    assert controller.start(
+        "https://example.test/video.mp4",
+        "720p",
+        full_cache=False,
+        cache_dir="D:/cache",
+        language_id="en",
+    )
 
     worker = _FakeWorker.instances[0]
     assert worker.url == "https://example.test/video.mp4"
     assert worker.playback_quality == "720p"
     assert worker.full_cache is False
+    assert worker.cache_dir == "D:/cache"
     assert worker.language_id == "en"
     assert worker.started is True
     assert owner._open_url_button.enabled is False

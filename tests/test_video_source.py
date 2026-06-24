@@ -359,6 +359,33 @@ def test_resolve_page_url_cleans_ytdlp_color_codes(monkeypatch) -> None:
     assert "[0;31m" not in message
 
 
+def test_resolve_page_url_reports_missing_usable_media(monkeypatch) -> None:
+    class FakeYoutubeDL:
+        def __init__(self, _options):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _url, download):
+            assert download is False
+            raise RuntimeError("ERROR: [vlxx] demo: Unable to find embedded media URL")
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", SimpleNamespace(YoutubeDL=FakeYoutubeDL))
+    monkeypatch.setattr(video_source, "_has_plugin_ytdlp_extractor", lambda _value: True)
+    monkeypatch.setattr(video_source, "_resolve_vlxx_wrapped_hls", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(video_source.VideoSourceError) as exc_info:
+        video_source.resolve_video_source("https://vlxx.example/video/demo", full_cache=False, language_id="en")
+
+    message = str(exc_info.value)
+    assert "usable audio/video stream" in message
+    assert "Unable to find embedded media URL" not in message
+
+
 def test_clean_download_error_removes_bare_ansi_codes() -> None:
     message = video_source._clean_download_error("[][0;31mERROR:[][0m [youtube] demo: unavailable")
 
@@ -412,3 +439,81 @@ def test_cleanup_cache_root_removes_old_files(tmp_path) -> None:
     video_source._cleanup_cache_root(tmp_path, max_age_seconds=1, max_bytes=1024)
 
     assert not old_file.exists()
+
+
+def test_source_cache_dir_uses_custom_root(tmp_path) -> None:
+    cache_dir = video_source._source_cache_dir("Example Provider", "best", cache_root=tmp_path)
+
+    assert cache_dir == tmp_path / "ai-player-sources" / "example-provider" / "best"
+    assert cache_dir.is_dir()
+
+
+def test_resolve_page_url_uses_custom_cache_dir(monkeypatch, tmp_path) -> None:
+    captured_options = {}
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            captured_options.update(options)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _url, download):
+            assert download is True
+            downloaded = tmp_path / "ai-player-sources" / "youtube" / "720p" / "demo.mp4"
+            downloaded.parent.mkdir(parents=True, exist_ok=True)
+            downloaded.write_text("video", encoding="utf-8")
+            return {
+                "id": "demo",
+                "title": "Demo",
+                "requested_downloads": [{"filepath": str(downloaded)}],
+            }
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", SimpleNamespace(YoutubeDL=FakeYoutubeDL))
+    monkeypatch.setattr(video_source, "_video_file_has_audio", lambda _path: True)
+
+    source = video_source.resolve_video_source("https://youtu.be/demo", full_cache=True, cache_dir=tmp_path)
+
+    assert source.playback_url == str(tmp_path / "ai-player-sources" / "youtube" / "720p" / "demo.mp4")
+    assert str(tmp_path / "ai-player-sources" / "youtube" / "720p") in captured_options["outtmpl"]
+
+
+def test_resolve_page_url_rejects_cached_file_without_audio(monkeypatch, tmp_path) -> None:
+    downloaded = tmp_path / "ai-player-sources" / "youtube" / "720p" / "demo.mp4"
+
+    class FakeYoutubeDL:
+        def __init__(self, _options):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _url, download):
+            assert download is True
+            downloaded.parent.mkdir(parents=True, exist_ok=True)
+            downloaded.write_text("video", encoding="utf-8")
+            return {
+                "id": "demo",
+                "title": "Demo",
+                "requested_downloads": [{"filepath": str(downloaded)}],
+            }
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", SimpleNamespace(YoutubeDL=FakeYoutubeDL))
+    monkeypatch.setattr(video_source, "_video_file_has_audio", lambda _path: False)
+
+    with pytest.raises(video_source.VideoSourceError) as exc_info:
+        video_source.resolve_video_source(
+            "https://youtu.be/demo",
+            full_cache=True,
+            cache_dir=tmp_path,
+            language_id="en",
+        )
+
+    assert "no audio stream" in str(exc_info.value)
+    assert not downloaded.exists()

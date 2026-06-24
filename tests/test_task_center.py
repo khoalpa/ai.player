@@ -4,7 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from ai_player.services.workflow_cache import clear_workflow_text_cache, get_text_result, put_text_result
 from ai_player.ui import task_center
+from ai_player.ui.background_task_controller import BackgroundTaskController
 from ai_player.ui.player_window import PlayerWindow
 
 
@@ -42,6 +44,14 @@ class _VideoUrl:
         return self._opening
 
 
+class _PlayingPlayer:
+    def __init__(self, playing: bool) -> None:
+        self._playing = playing
+
+    def is_playing(self) -> bool:
+        return self._playing
+
+
 def _task(tasks, name: str):
     return next(item for item in tasks if item.name == name)
 
@@ -53,6 +63,27 @@ def test_task_center_formats_idle_state() -> None:
 
     assert tasks == ()
     assert task_center.format_background_tasks(tasks, idle_text="Idle") == "Idle"
+
+
+def test_background_task_controller_records_and_clears_details() -> None:
+    events = []
+    refreshes = []
+
+    class Owner:
+        def _record_task_center_event(self, name, detail) -> None:
+            events.append((name, detail))
+
+        def _refresh_task_center(self) -> None:
+            refreshes.append("refresh")
+
+    controller = BackgroundTaskController(Owner())
+
+    controller.set_detail("Export", "  Rendering   audio  ", log_detail="Started export")
+    controller.clear_detail("Export")
+
+    assert controller.details == {}
+    assert events == [("Export", "Started export")]
+    assert refreshes == ["refresh"]
 
 
 def test_task_center_collects_active_controllers_and_workers() -> None:
@@ -148,14 +179,57 @@ def test_task_center_dashboard_logs_and_lists_active_tasks(qapp) -> None:
         window._set_background_task_detail("Realtime dubbing", "Mock segment 1")
         window._refresh_task_center()
 
-        assert window._task_center_table.item(0, 0).text() == "Realtime dubbing"
-        assert window._task_center_table.item(0, 2).text() == "Mock segment 1"
+        assert window._task_center_table.item(0, 0).text() == window._tr("task_center_group_running")
+        assert window._task_center_table.item(1, 0).text() == "Realtime dubbing"
+        assert window._task_center_table.item(2, 1).text() == window._tr("task_center_timeline_process")
+        assert window._task_center_table.item(2, 2).text() == "Mock segment 1"
         assert "Realtime dubbing: Mock segment 1" in window._task_center_log_view.toPlainText()
         assert window._task_center_stop_button.isEnabled()
         window._dub_worker = None
         window._settings_save_timer.stop()
     finally:
+        window._dub_worker = None
         window.close()
+
+
+def test_task_drawer_hides_active_tasks_while_video_is_playing(qapp) -> None:
+    window = PlayerWindow()
+    original_player = window._player
+    try:
+        window._dub_worker = _RunningWorker(True)
+        window._player = _PlayingPlayer(True)
+        window._refresh_task_center()
+
+        assert window._task_drawer.isHidden()
+
+        window._player = _PlayingPlayer(False)
+        window._refresh_task_center()
+
+        assert not window._task_drawer.isHidden()
+        window._settings_save_timer.stop()
+    finally:
+        window._dub_worker = None
+        window._player = original_player
+        window.close()
+
+
+def test_task_center_shows_cache_activity_without_enabling_stop_all(qapp) -> None:
+    clear_workflow_text_cache()
+    put_text_result("translation", {"model": "demo"}, "hello", "xin chao", source_language="en")
+    assert get_text_result("translation", {"model": "demo"}, "hello", source_language="en") == "xin chao"
+    window = PlayerWindow()
+    try:
+        window._refresh_task_center()
+
+        names = [window._task_center_table.item(row, 0).text() for row in range(window._task_center_table.rowCount())]
+        assert window._tr("task_center_cache_name") in names
+        assert not window._task_center_stop_button.isEnabled()
+        row = names.index(window._tr("task_center_cache_name"))
+        assert "text" in window._task_center_table.item(row, 2).text()
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+        clear_workflow_text_cache()
 
 
 def test_task_center_dashboard_can_log_historical_detail_separately(qapp) -> None:
@@ -171,7 +245,7 @@ def test_task_center_dashboard_can_log_historical_detail_separately(qapp) -> Non
         window._refresh_task_center()
 
         assert window._background_task_details["Runtime preloading"] == "Preloading Whisper..."
-        assert window._task_center_table.item(0, 2).text() == "Preloading Whisper..."
+        assert window._task_center_table.item(2, 2).text() == "Preloading Whisper..."
         assert "Runtime preloading: Started preloading Whisper..." in window._task_center_log_view.toPlainText()
         window._runtime_warmup = original_runtime_warmup
         window._settings_save_timer.stop()

@@ -12,6 +12,7 @@ import pytest
 
 from ai_player.core.config import AppConfig
 from ai_player.services import transcript_cleanup
+from ai_player.services.workflow_cache import clear_workflow_text_cache
 
 REGRESSION_CASES = json.loads(
     (Path(__file__).parent / "fixtures" / "transcript_cleanup_regression.json").read_text(encoding="utf-8")
@@ -77,6 +78,29 @@ def test_clean_many_uses_batch_json_response(monkeypatch) -> None:
     assert cleaner.clean_many(["xin chao", "tam biet"], "vi") == ["Xin chào", "Tạm biệt"]
     assert len(prompts) == 1
     assert "JSON array" in prompts[0]
+
+
+def test_clean_many_reuses_cached_contextual_results(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_call(prompt: str, provider: str, config: AppConfig) -> str:
+        calls.append(prompt)
+        return '["xin chao", "tam biet"]'
+
+    clear_workflow_text_cache()
+    monkeypatch.setattr(transcript_cleanup, "_call_cleanup_provider", fake_call)
+    config = AppConfig(transcript_cleanup_mode="light", transcript_cleanup_provider="ollama")
+
+    assert transcript_cleanup.TranscriptCleaner(config).clean_many(["xin chao", "tam biet"], "vi") == [
+        "xin chao",
+        "tam biet",
+    ]
+    assert transcript_cleanup.TranscriptCleaner(config).clean_many(["xin chao", "tam biet"], "vi") == [
+        "xin chao",
+        "tam biet",
+    ]
+
+    assert len(calls) == 1
 
 
 def test_clean_many_falls_back_when_batch_shape_is_wrong(monkeypatch) -> None:
