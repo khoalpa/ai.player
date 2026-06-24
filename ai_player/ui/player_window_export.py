@@ -5,7 +5,7 @@ import math
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -48,21 +48,26 @@ from ai_player.workers.staged_export_utils import StagedExportPaths
 class PlayerExportMixin:
     def _show_export_menu(self) -> None:
         menu = QMenu(self)
+        export_workflow = QAction(self._tr("export_workflow_title"), self)
         save_transcript = QAction(self._tr("export_menu_save_transcript"), self)
         export_audio = QAction(self._tr("export_menu_audio"), self)
         export_video = QAction(self._tr("export_menu_dubbed_video"), self)
         export_staged = QAction(self._tr("export_menu_staged_dubbing"), self)
         export_review = QAction(self._tr("export_menu_document_video"), self)
+        export_workflow.setToolTip(self._tr("export_workflow_intro"))
         save_transcript.setToolTip(self._tr("export_menu_save_transcript"))
         export_audio.setToolTip(self._tr("export_menu_audio"))
         export_video.setToolTip(self._tr("export_menu_dubbed_video"))
         export_staged.setToolTip(self._tr("export_menu_staged_dubbing"))
         export_review.setToolTip(self._tr("export_menu_document_video"))
+        export_workflow.triggered.connect(self._show_export_workflow)
         save_transcript.triggered.connect(self._save_transcript)
         export_audio.triggered.connect(lambda: self._export_dubbed_media("audio"))
         export_video.triggered.connect(lambda: self._export_dubbed_media("video"))
         export_staged.triggered.connect(self._export_staged_dubbing)
         export_review.triggered.connect(self._export_high_quality_review)
+        menu.addAction(export_workflow)
+        menu.addSeparator()
         menu.addAction(save_transcript)
         menu.addSeparator()
         menu.addAction(export_audio)
@@ -70,6 +75,184 @@ class PlayerExportMixin:
         menu.addAction(export_staged)
         menu.addAction(export_review)
         menu.exec(self._export_button.mapToGlobal(self._export_button.rect().bottomLeft()))
+
+    def _show_export_workflow(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._tr("export_workflow_title"))
+        layout = QVBoxLayout(dialog)
+        intro = QLabel(self._tr("export_workflow_intro"), dialog)
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        options = QListWidget(dialog)
+        first_available_row = -1
+        for row, option in enumerate(self._export_workflow_options()):
+            state = (
+                self._tr("export_workflow_available")
+                if option["available"]
+                else self._tr("export_workflow_unavailable")
+            )
+            item = QListWidgetItem(
+                f"{state} - {self._tr(option['title_key'])}\n"
+                f"{self._tr(option['detail_key'])}\n"
+                f"{option['reason']}"
+            )
+            item.setData(Qt.ItemDataRole.UserRole, option)
+            if not option["available"]:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+            elif first_available_row < 0:
+                first_available_row = row
+            options.addItem(item)
+        options.setCurrentRow(first_available_row if first_available_row >= 0 else 0)
+        layout.addWidget(options)
+
+        form = QFormLayout()
+        quality_combo = QComboBox(dialog)
+        source_quality = getattr(self, "_export_video_quality_combo", None)
+        if source_quality is not None:
+            for index in range(source_quality.count()):
+                quality_combo.addItem(source_quality.itemText(index), source_quality.itemData(index))
+            selected_quality = self._selected_export_video_quality()
+            quality_index = quality_combo.findData(selected_quality)
+            quality_combo.setCurrentIndex(quality_index if quality_index >= 0 else 0)
+        form.addRow(self._tr("export_workflow_quality"), quality_combo)
+        range_hint = QLabel(self._tr("export_workflow_range_next"), dialog)
+        range_hint.setWordWrap(True)
+        form.addRow(self._tr("export_workflow_range"), range_hint)
+        artifact_hint = QLabel(self._tr("export_workflow_artifacts_next"), dialog)
+        artifact_hint.setWordWrap(True)
+        form.addRow(self._tr("export_workflow_artifacts"), artifact_hint)
+        layout.addLayout(form)
+
+        hint = QLabel(self._export_workflow_hint(), dialog)
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            dialog,
+        )
+        run_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        run_button.setText(self._tr("staged_export_run"))
+
+        def update_run_state(*_args) -> None:
+            item = options.currentItem()
+            option = item.data(Qt.ItemDataRole.UserRole) if item is not None else {}
+            run_button.setEnabled(bool(option.get("available")))
+
+        options.currentItemChanged.connect(update_run_state)
+        update_run_state()
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        item = options.currentItem()
+        option = item.data(Qt.ItemDataRole.UserRole) if item is not None else {}
+        if source_quality is not None:
+            self._set_combo_data(source_quality, quality_combo.currentData())
+        action = option.get("action") if isinstance(option, dict) else ""
+        if action == "transcript":
+            self._save_transcript()
+        elif action == "audio":
+            self._export_dubbed_media("audio")
+        elif action == "video":
+            self._export_dubbed_media("video")
+        elif action == "staged":
+            self._export_staged_dubbing()
+        elif action == "document":
+            self._export_high_quality_review()
+
+    def _export_workflow_options(self) -> list[dict[str, object]]:
+        transcript_ready = bool(
+            self._transcript_text(self._selected_transcript_view(), self._selected_transcript_type())
+        )
+        worker_idle = self._export_worker is None
+        video_ready = bool(self._video_path)
+        document_ready = bool(self._document_mode and self._document_pages)
+        document_transcript_ready = bool(
+            getattr(self, "_transcript_path_edit", None) and self._transcript_path_edit.text().strip()
+        )
+        audio_source = self._selected_audio_source()
+        media_source_supported = audio_source not in {"system", "microphone", "system_microphone", "subtitle"}
+        staged_source_supported = audio_source == "original"
+
+        def available(base: bool) -> bool:
+            return worker_idle and base
+
+        return [
+            {
+                "action": "transcript",
+                "title_key": "export_menu_save_transcript",
+                "detail_key": "export_workflow_transcript_detail",
+                "available": available(transcript_ready),
+                "reason": self._export_workflow_reason(worker_idle, transcript_ready, "msg_no_transcript_save"),
+            },
+            {
+                "action": "audio",
+                "title_key": "export_menu_audio",
+                "detail_key": "export_workflow_audio_detail",
+                "available": available(video_ready and not self._document_mode and media_source_supported),
+                "reason": self._export_workflow_reason(
+                    worker_idle,
+                    video_ready and not self._document_mode and media_source_supported,
+                    "export_workflow_reason_audio",
+                ),
+            },
+            {
+                "action": "video",
+                "title_key": "export_menu_dubbed_video",
+                "detail_key": "export_workflow_video_detail",
+                "available": available(
+                    (video_ready and not self._document_mode and media_source_supported)
+                    or (document_ready and document_transcript_ready)
+                ),
+                "reason": self._export_workflow_reason(
+                    worker_idle,
+                    (video_ready and not self._document_mode and media_source_supported)
+                    or (document_ready and document_transcript_ready),
+                    "export_workflow_reason_video",
+                ),
+            },
+            {
+                "action": "staged",
+                "title_key": "export_menu_staged_dubbing",
+                "detail_key": "export_workflow_staged_detail",
+                "available": available(video_ready and not self._document_mode and staged_source_supported),
+                "reason": self._export_workflow_reason(
+                    worker_idle,
+                    video_ready and not self._document_mode and staged_source_supported,
+                    "export_workflow_reason_staged",
+                ),
+            },
+            {
+                "action": "document",
+                "title_key": "export_menu_document_video",
+                "detail_key": "export_workflow_document_detail",
+                "available": available(document_ready and document_transcript_ready),
+                "reason": self._export_workflow_reason(
+                    worker_idle,
+                    document_ready and document_transcript_ready,
+                    "export_workflow_reason_document",
+                ),
+            },
+        ]
+
+    def _export_workflow_reason(self, worker_idle: bool, ready: bool, blocked_key: str) -> str:
+        if not worker_idle:
+            return self._tr("msg_export_running")
+        if ready:
+            return self._tr("export_workflow_ready_detail")
+        return self._tr(blocked_key)
+
+    def _export_workflow_hint(self) -> str:
+        if self._export_worker is not None:
+            return self._tr("msg_export_running")
+        if self._document_mode:
+            return self._tr("export_workflow_hint_document")
+        if self._video_path:
+            return self._tr("export_workflow_hint_video")
+        if self._transcript.toPlainText().strip():
+            return self._tr("export_workflow_hint_transcript")
+        return self._tr("export_workflow_hint_empty")
 
     def _export_dubbed_media(self, export_kind: str) -> None:
         if self._selected_audio_source() == "document_editor" and not self._document_mode:

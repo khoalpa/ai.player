@@ -755,6 +755,104 @@ class PlayerSettingsMixin:
             required=speaker_gender_required,
             has_value=bool(self._speaker_gender_api_key_edit.text().strip()),
         )
+        self._refresh_model_status_strip()
+
+    def _refresh_model_status_strip(self) -> None:
+        labels = getattr(self, "_model_status_labels", None)
+        if not labels:
+            return
+        asr_provider = self._selected_asr_provider()
+        self._set_model_status_pill(
+            "model_status_asr",
+            self._tr("model_status_asr"),
+            self._provider_status_text(
+                provider=asr_provider,
+                required=is_online_asr_provider(asr_provider),
+                has_value=bool(self._asr_api_key_edit.text().strip()),
+            ),
+        )
+        translator = self._translator_combo.currentData()
+        self._set_model_status_pill(
+            "model_status_translation",
+            self._tr("model_status_translation"),
+            self._provider_status_text(
+                provider=translator,
+                required=is_online_translation_provider(translator),
+                has_value=bool(self._translator_api_key_edit.text().strip()),
+            ),
+        )
+        tts_provider = normalize_tts_provider(self._selected_tts_provider())
+        self._set_model_status_pill(
+            "model_status_tts",
+            self._tr("model_status_tts"),
+            self._provider_status_text(
+                provider=tts_provider,
+                required=is_online_tts_provider(tts_provider),
+                has_value=bool(self._tts_api_key_edit.text().strip()),
+            ),
+        )
+        ocr_provider = normalize_ocr_provider(self._selected_ocr_provider())
+        ocr_required = is_online_ocr_provider(ocr_provider) and (
+            ocr_provider != "ocr_space" or bool(self._ocr_api_key_edit.text().strip())
+        )
+        self._set_model_status_pill(
+            "model_status_ocr",
+            self._tr("model_status_ocr"),
+            self._provider_status_text(
+                provider=ocr_provider,
+                required=ocr_required,
+                has_value=bool(self._ocr_api_key_edit.text().strip()),
+                demo=is_online_ocr_provider(ocr_provider) and ocr_provider == "ocr_space" and not ocr_required,
+            ),
+        )
+        cleanup_provider = self._selected_transcript_cleanup_provider()
+        cleanup_required = self._selected_transcript_cleanup_mode() != "off" and cleanup_provider in {
+            "openai",
+            "groq",
+            "gemini",
+            "openrouter",
+            "huggingface",
+        }
+        self._set_model_status_pill(
+            "model_status_cleanup",
+            self._tr("model_status_cleanup"),
+            self._provider_status_text(
+                provider=cleanup_provider,
+                required=cleanup_required,
+                has_value=bool(self._transcript_cleanup_api_key_edit.text().strip()),
+                disabled=self._selected_transcript_cleanup_mode() == "off",
+            ),
+        )
+
+    def _provider_status_text(
+        self,
+        *,
+        provider: object,
+        required: bool,
+        has_value: bool,
+        demo: bool = False,
+        disabled: bool = False,
+    ) -> tuple[str, str]:
+        provider_text = str(provider or self._tr("auto")).replace("_", " ")
+        if disabled:
+            return self._tr("model_status_disabled").format(provider=provider_text), "muted"
+        if demo:
+            return self._tr("model_status_demo").format(provider=provider_text), "warn"
+        if required and not has_value:
+            return self._tr("model_status_missing_key").format(provider=provider_text), "warn"
+        if required:
+            return self._tr("model_status_online_ready").format(provider=provider_text), "ok"
+        return self._tr("model_status_local_ready").format(provider=provider_text), "ok"
+
+    def _set_model_status_pill(self, key: str, title: str, status: tuple[str, str]) -> None:
+        label = getattr(self, "_model_status_labels", {}).get(key)
+        if label is None:
+            return
+        detail, status_kind = status
+        label.setText(f"{title}\n{detail}")
+        label.setProperty("status", status_kind)
+        label.style().unpolish(label)
+        label.style().polish(label)
 
     def _set_api_key_status(
         self,
@@ -1052,8 +1150,20 @@ class PlayerSettingsMixin:
         self._sync_asr_controls()
         self._sync_ocr_controls()
         self._sync_vieneu_advanced_controls()
+        self._refresh_preset_inspector()
         self._save_settings()
         self.statusBar().showMessage(self._tr("status_preset_applied"))
+
+    def _refresh_preset_inspector(self) -> None:
+        label = getattr(self, "_preset_inspector", None)
+        if label is None:
+            return
+        preset_id = self._selected_performance_preset()
+        key = f"preset_inspector_{preset_id}"
+        text = self._tr(key)
+        if text == key:
+            text = self._tr("preset_inspector_default")
+        label.setText(text)
 
     def _connect_settings_autosave(self) -> None:
         self._online_provider_consent_values: set[tuple[str, str]] = set()
@@ -1399,12 +1509,35 @@ class PlayerSettingsMixin:
             self._set_control_tooltip(self._document_view, placeholder_key)
         if hasattr(self, "_transcript"):
             self._transcript.setPlaceholderText(self._tr("transcript_placeholder"))
+        if hasattr(self, "_transcript_segment_table"):
+            self._transcript_segment_table.setHorizontalHeaderLabels(
+                [
+                    self._tr("transcript_segment_index"),
+                    self._tr("transcript_segment_content"),
+                    self._tr("transcript_segment_status"),
+                ]
+            )
+            self._refresh_transcript_segment_table()
+        if hasattr(self, "_refresh_transcript_status_strip"):
+            self._refresh_transcript_status_strip()
+        if hasattr(self, "_sync_transcript_segment_banner"):
+            self._sync_transcript_segment_banner()
+        if hasattr(self, "_transcript_segment_target_edit"):
+            self._transcript_segment_target_edit.setPlaceholderText(self._tr("transcript_segment_target_placeholder"))
         if hasattr(self, "_transcript_path_edit"):
             self._transcript_path_edit.setPlaceholderText(self._tr("transcript_file_placeholder"))
         if hasattr(self, "_open_video_with_subtitle_action"):
             self._open_video_with_subtitle_action.setText(self._tr("open_video_with_subtitle"))
+        if hasattr(self, "_refresh_header_menu_text"):
+            self._refresh_header_menu_text()
+        if hasattr(self, "_refresh_media_start_launcher_text"):
+            self._refresh_media_start_launcher_text()
+        if hasattr(self, "_refresh_next_action_panel"):
+            self._refresh_next_action_panel()
         if hasattr(self, "_preserve_terms_check"):
             self._set_preserve_terms_tooltip()
+        if hasattr(self, "_refresh_preset_inspector"):
+            self._refresh_preset_inspector()
         if hasattr(self, "_transcript_view_combo"):
             self._transcript_view_combo.setAccessibleName(self._tr("show_transcript"))
         if hasattr(self, "_transcript_type_combo"):

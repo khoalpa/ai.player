@@ -67,6 +67,59 @@ class PlayerReadinessMixin:
         summary.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         layout.addWidget(summary)
 
+        layout.addWidget(self._section_title("first_run_workflow_group"))
+        workflow_grid = QGridLayout()
+        workflow_grid.setHorizontalSpacing(8)
+        workflow_grid.setVerticalSpacing(8)
+        workflow_grid.setColumnStretch(0, 1)
+        workflow_grid.setColumnStretch(1, 1)
+        workflow_specs = (
+            (
+                "video",
+                "first_run_workflow_video",
+                "first_run_workflow_video_detail",
+                QStyle.StandardPixmap.SP_DirOpenIcon,
+                self._open_video,
+            ),
+            (
+                "url",
+                "first_run_workflow_url",
+                "first_run_workflow_url_detail",
+                QStyle.StandardPixmap.SP_BrowserReload,
+                self._open_video_url,
+            ),
+            (
+                "document",
+                "first_run_workflow_document",
+                "first_run_workflow_document_detail",
+                QStyle.StandardPixmap.SP_FileIcon,
+                self._open_document,
+            ),
+            (
+                "meeting",
+                "first_run_workflow_meeting",
+                "first_run_workflow_meeting_detail",
+                QStyle.StandardPixmap.SP_MediaPlay,
+                self._toggle_meeting,
+            ),
+        )
+        self._readiness_workflow_buttons: dict[str, QPushButton] = {}
+        for index, (workflow_key, title_key, detail_key, icon, callback) in enumerate(workflow_specs):
+            button = self._make_button(title_key, self.style().standardIcon(icon))
+            button.setObjectName("workflowCardButton")
+            button.setText(f"{self._tr(title_key)}\n{self._tr(detail_key)}")
+            button.setProperty("i18n_key", "")
+            button.setProperty("workflow_title_key", title_key)
+            button.setProperty("workflow_detail_key", detail_key)
+            button.setMinimumHeight(64)
+            button.setCursor(Qt.PointingHandCursor)
+            button.clicked.connect(lambda _checked=False, key=workflow_key, cb=callback: self._start_workflow(key, cb))
+            self._fit_readiness_button(button)
+            workflow_grid.addWidget(button, index // 2, index % 2)
+            self._readiness_workflow_buttons[title_key] = button
+        layout.addLayout(workflow_grid)
+
+        layout.addWidget(self._section_title("first_run_profile_group"))
         profile_grid = QGridLayout()
         profile_grid.setHorizontalSpacing(8)
         profile_grid.setVerticalSpacing(8)
@@ -178,22 +231,30 @@ class PlayerReadinessMixin:
             "open_video",
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
         )
-        self._readiness_video_button.clicked.connect(self._open_video)
+        self._readiness_video_button.clicked.connect(
+            lambda _checked=False: self._start_workflow("video", self._open_video)
+        )
         self._readiness_url_button = self._make_button(
             "open_url",
             self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
         )
-        self._readiness_url_button.clicked.connect(self._open_video_url)
+        self._readiness_url_button.clicked.connect(
+            lambda _checked=False: self._start_workflow("url", self._open_video_url)
+        )
         self._readiness_document_button = self._make_button(
             "open_document",
             self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon),
         )
-        self._readiness_document_button.clicked.connect(self._open_document)
+        self._readiness_document_button.clicked.connect(
+            lambda _checked=False: self._start_workflow("document", self._open_document)
+        )
         self._readiness_meeting_button = self._make_button(
             "meeting_start_label",
             self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
         )
-        self._readiness_meeting_button.clicked.connect(self._toggle_meeting)
+        self._readiness_meeting_button.clicked.connect(
+            lambda _checked=False: self._start_workflow("meeting", self._toggle_meeting)
+        )
         layout.addWidget(
             self._readiness_button_grid(
                 (
@@ -260,6 +321,11 @@ class PlayerReadinessMixin:
             button = self._readiness_profile_buttons.get(str(profile["key"]))
             if button is not None:
                 button.setText(self._readiness_profile_button_text(profile))
+        for button in getattr(self, "_readiness_workflow_buttons", {}).values():
+            title_key = str(button.property("workflow_title_key") or "")
+            detail_key = str(button.property("workflow_detail_key") or "")
+            if title_key and detail_key:
+                button.setText(f"{self._tr(title_key)}\n{self._tr(detail_key)}")
 
     def _refresh_readiness_status(self) -> None:
         if not hasattr(self, "_readiness_status"):
@@ -334,6 +400,9 @@ class PlayerReadinessMixin:
             return
         for index in range(self._settings_tabs.count()):
             if self._settings_tab_contains(self._settings_tabs.widget(index), content):
+                set_visible = getattr(self._settings_tabs, "setTabVisible", None)
+                if callable(set_visible):
+                    set_visible(index, True)
                 self._settings_tabs.setCurrentIndex(index)
                 return
 

@@ -120,6 +120,101 @@ def test_player_window_constructs_offscreen(qapp) -> None:
         window.close()
 
 
+def test_export_workflow_options_track_available_outputs(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        options = {str(option["action"]): option for option in window._export_workflow_options()}
+
+        assert options["transcript"]["available"] is False
+        assert options["audio"]["available"] is False
+        assert options["video"]["available"] is False
+        assert options["staged"]["available"] is False
+        assert options["document"]["available"] is False
+
+        window._set_transcript_text("Hello\nXin chao", source_only=False)
+        options = {str(option["action"]): option for option in window._export_workflow_options()}
+
+        assert options["transcript"]["available"] is True
+        assert options["audio"]["available"] is False
+
+        window._video_path = "demo.mp4"
+        window._set_combo_data(window._audio_source_combo, "original")
+        options = {str(option["action"]): option for option in window._export_workflow_options()}
+
+        assert options["audio"]["available"] is True
+        assert options["video"]["available"] is True
+        assert options["staged"]["available"] is True
+        assert options["document"]["available"] is False
+
+        window._set_combo_data(window._audio_source_combo, "system")
+        options = {str(option["action"]): option for option in window._export_workflow_options()}
+
+        assert options["audio"]["available"] is False
+        assert options["video"]["available"] is False
+        assert options["staged"]["available"] is False
+
+        window._document_mode = True
+        window._document_pages = [
+            DocumentPage(
+                number=1,
+                title="Document",
+                text="Document page",
+                start_seconds=0,
+                duration_seconds=1,
+            )
+        ]
+        window._transcript_path_edit.setText("document.srt")
+        options = {str(option["action"]): option for option in window._export_workflow_options()}
+
+        assert options["video"]["available"] is True
+        assert options["document"]["available"] is True
+        assert options["audio"]["available"] is False
+        assert options["staged"]["available"] is False
+
+        window._export_worker = object()
+        options = {str(option["action"]): option for option in window._export_workflow_options()}
+
+        assert all(option["available"] is False for option in options.values())
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_simple_sidebar_tracks_workflow_context(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        tabs = window._settings_tabs
+
+        def visible_tabs() -> set[int]:
+            return {index for index in range(tabs.count()) if tabs.isTabVisible(index)}
+
+        window._set_simple_sidebar_mode(True)
+        qapp.processEvents()
+
+        assert tabs.tabBar().isHidden()
+        assert visible_tabs() == {1, 2, 3, 6}
+        assert not window._settings_group_buttons["settings_group_workflow"].isHidden()
+        assert window._settings_group_buttons["settings_group_start"].isHidden()
+
+        window._start_workflow("meeting", lambda: None)
+        qapp.processEvents()
+
+        assert visible_tabs() == {1, 2, 6}
+        assert tabs.currentIndex() == 2
+        assert window._current_workflow_context == "meeting"
+        assert window._tr("first_run_workflow_meeting") in window.statusBar().currentMessage()
+
+        window._set_simple_sidebar_mode(False)
+        qapp.processEvents()
+
+        assert not tabs.tabBar().isHidden()
+        assert visible_tabs() == {1, 2, 6, 7}
+        assert all(not button.isHidden() for button in window._settings_group_buttons.values())
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
 def test_telegram_video_dialog_keeps_duplicate_titles_distinct(qapp) -> None:
     videos = [
         SimpleNamespace(title="same title", post_id="101"),

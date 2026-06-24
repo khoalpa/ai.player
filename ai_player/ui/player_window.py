@@ -132,7 +132,7 @@ class PlayerWindow(
         self._settings_save_timer.setInterval(600)
         self._settings_save_timer.timeout.connect(self._save_settings)
 
-        self._transcript_segments: list[tuple[str, str]] = []
+        self._transcript_segments: list[dict | tuple[str, str]] = []
 
         self._apply_theme()
         self._build_ui()

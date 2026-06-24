@@ -111,6 +111,8 @@ class PlayerTaskCenterMixin:
         self._task_center_retry_button.setToolTip(retry_label)
         self._refresh_task_center_log()
         self._refresh_global_task_status(tasks)
+        if hasattr(self, "_refresh_next_action_panel"):
+            self._refresh_next_action_panel()
 
     def _refresh_global_task_status(self, tasks=None) -> None:
         button = getattr(self, "_task_status_button", None)
@@ -123,6 +125,7 @@ class PlayerTaskCenterMixin:
             button.setText(self._tr("task_status_idle"))
             button.setToolTip(self._tr("task_status_tooltip"))
             button.setProperty("activeTasks", "false")
+            self._refresh_task_drawer_summary(self._tr("task_drawer_idle"), active=False)
         else:
             count = len(active)
             first = active[0]
@@ -132,8 +135,37 @@ class PlayerTaskCenterMixin:
             button.setText(self._tr("task_status_active").format(count=count))
             button.setToolTip(f"{first.name}: {detail}" if detail else first.name)
             button.setProperty("activeTasks", "true")
+            summary = self._tr("task_drawer_running").format(
+                count=count,
+                task=first.name,
+                detail=detail or first.status,
+            )
+            self._refresh_task_drawer_summary(summary, active=True)
         button.style().unpolish(button)
         button.style().polish(button)
+
+    def _refresh_task_drawer_summary(self, text: str, *, active: bool) -> None:
+        drawer = getattr(self, "_task_drawer", None)
+        if drawer is not None:
+            drawer.setProperty("activeTasks", "true" if active else "false")
+            style = drawer.style()
+            style.unpolish(drawer)
+            style.polish(drawer)
+            if active:
+                drawer.setVisible(True)
+                self._task_drawer_user_open = False
+            elif not getattr(self, "_task_drawer_user_open", False):
+                drawer.hide()
+        summary = getattr(self, "_task_drawer_summary", None)
+        if summary is not None:
+            summary.setText(text)
+            summary.setProperty("i18n_key", "task_drawer_idle" if not active else "")
+        stop_button = getattr(self, "_task_drawer_stop_button", None)
+        if stop_button is not None:
+            stop_button.setEnabled(active)
+        retry_button = getattr(self, "_task_drawer_retry_button", None)
+        if retry_button is not None:
+            retry_button.setEnabled(getattr(self, "_task_center_retry_action", None) is not None)
 
     def _set_task_center_row(self, row: int, name: str, status: str, detail: str) -> None:
         values = (name, status, detail)

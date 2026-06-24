@@ -242,12 +242,26 @@ class PlayerUiMixin:
                 font-size: 8.5pt;
                 font-weight: 600;
                 padding: 5px 8px;
-                max-width: 126px;
+                max-width: 156px;
             }
             QPushButton#taskStatusButton[activeTasks="true"] {
                 background: #fff7e8;
                 border-color: #e9b75d;
                 color: #7a4b00;
+            }
+            QFrame#taskDrawer {
+                background: #f7f9fb;
+                border: 1px solid #d8dee7;
+                border-radius: 8px;
+            }
+            QFrame#taskDrawer[activeTasks="true"] {
+                background: #fff7e8;
+                border-color: #e9b75d;
+            }
+            QLabel#taskDrawerSummary {
+                color: #172033;
+                font-size: 9pt;
+                font-weight: 600;
             }
             QFrame#videoPanel {
                 background: #ffffff;
@@ -336,6 +350,80 @@ class PlayerUiMixin:
                 color: #172033;
                 font-size: 8.5pt;
             }
+            QLabel#presetInspector {
+                background: #f7f9fb;
+                border: 1px solid #d8dee7;
+                border-radius: 8px;
+                color: #56657a;
+                font-size: 8.5pt;
+                padding: 7px 9px;
+            }
+            QFrame#mediaStartPanel {
+                background: rgba(255, 255, 255, 238);
+                border: 1px solid #d8dee7;
+                border-radius: 8px;
+            }
+            QLabel#mediaStartTitle {
+                color: #101828;
+                font-size: 16pt;
+                font-weight: 750;
+            }
+            QLabel#mediaStartSubtitle {
+                color: #56657a;
+                font-size: 9pt;
+            }
+            QLabel#mediaStartSetupTitle {
+                color: #56657a;
+                font-size: 8.5pt;
+                font-weight: 650;
+                padding-top: 2px;
+            }
+            QPushButton#mediaStartWorkflowButton {
+                background: #f7f9fb;
+                border-color: #c6d0dc;
+                color: #172033;
+                font-weight: 600;
+                padding: 10px 12px;
+                text-align: left;
+            }
+            QPushButton#mediaStartWorkflowButton:hover {
+                background: #eef6f4;
+                border-color: #6fa79f;
+                color: #0b514b;
+            }
+            QPushButton#mediaStartProfileButton {
+                background: #ffffff;
+                border: 1px solid #c6d0dc;
+                border-radius: 7px;
+                color: #56657a;
+                font-size: 8.5pt;
+                font-weight: 600;
+                padding: 5px 8px;
+            }
+            QPushButton#mediaStartProfileButton:hover {
+                background: #f7f9fb;
+                border-color: #8c99aa;
+                color: #172033;
+            }
+            QPushButton#mediaStartProfileButton:checked {
+                background: #e6f3f1;
+                border-color: #146c63;
+                color: #0b514b;
+            }
+            QPushButton#workflowCardButton {
+                background: #f7f9fb;
+                border: 1px solid #d8dee7;
+                border-radius: 8px;
+                color: #172033;
+                font-weight: 600;
+                padding: 8px 10px;
+                text-align: left;
+            }
+            QPushButton#workflowCardButton:hover {
+                background: #eef6f4;
+                border-color: #6fa79f;
+                color: #0b514b;
+            }
             QFrame#telegramChannelView, QWidget#telegramChannelSidePanel {
                 background: #ffffff;
             }
@@ -385,6 +473,106 @@ class PlayerUiMixin:
                 padding: 10px;
                 selection-background-color: #146c63;
             }
+            QTableWidget#transcriptSegmentTable {
+                background: #ffffff;
+                border: 1px solid #d8dee7;
+                border-radius: 8px;
+                gridline-color: #e7ecf2;
+                selection-background-color: #e6f3f1;
+                selection-color: #172033;
+            }
+            QTableWidget#transcriptSegmentTable::item {
+                padding: 5px;
+            }
+            QLabel#inlineBanner {
+                background: #fff8e6;
+                border: 1px solid #e9c46a;
+                border-radius: 8px;
+                color: #604300;
+                padding: 7px 9px;
+                font-weight: 600;
+            }
+            QFrame#transcriptStatusStrip {
+                background: #f7f9fb;
+                border: 1px solid #d8dee7;
+                border-radius: 8px;
+            }
+            QLabel#transcriptStatusPill {
+                background: #ffffff;
+                border: 1px solid #d8dee7;
+                border-radius: 7px;
+                color: #56657a;
+                font-size: 8.5pt;
+                font-weight: 650;
+                padding: 6px 8px;
+            }
+            QLabel#transcriptStatusPill[status="ok"] {
+                border-color: #9ed3bd;
+                color: #145338;
+            }
+            QLabel#transcriptStatusPill[status="warn"] {
+                border-color: #e9b75d;
+                color: #7a4b00;
+            }
+            QLabel#transcriptStatusPill[status="muted"] {
+                color: #56657a;
+            }
+            QFrame#nextActionPanel, QFrame#transcriptEmptyPanel {
+                background: #f7f9fb;
+                border: 1px solid #d8dee7;
+                border-radius: 8px;
+            }
+            QFrame#transcriptEmptyPanel {
+                background: #ffffff;
+            }
+            QLabel#nextActionTitle {
+                color: #101828;
+                font-size: 9.5pt;
+                font-weight: 750;
+            }
+            QLabel#nextActionDetail {
+                color: #56657a;
+                font-size: 8.5pt;
+            }
+            QPushButton#nextActionButton, QPushButton#nextActionPrimaryButton {
+                background: #ffffff;
+                border: 1px solid #c6d0dc;
+                border-radius: 7px;
+                color: #172033;
+                font-size: 8.5pt;
+                font-weight: 600;
+                padding: 5px 7px;
+            }
+            QPushButton#nextActionPrimaryButton {
+                background: #146c63;
+                border-color: #146c63;
+                color: #ffffff;
+                font-size: 9pt;
+                padding: 7px 10px;
+            }
+            QPushButton#nextActionButton:hover, QPushButton#nextActionPrimaryButton:hover {
+                background: #eef6f4;
+                border-color: #6fa79f;
+                color: #0b514b;
+            }
+            QFrame#transcriptSegmentEditor {
+                background: #f7f9fb;
+                border: 1px solid #d8dee7;
+                border-radius: 8px;
+            }
+            QPushButton#transcriptSegmentButton {
+                min-height: 30px;
+                padding: 6px 8px;
+                font-size: 8.5pt;
+            }
+            QTextEdit#transcriptSegmentSource,
+            QTextEdit#transcriptSegmentTarget {
+                background: #ffffff;
+                border: 1px solid #d8dee7;
+                border-radius: 7px;
+                padding: 6px;
+                selection-background-color: #146c63;
+            }
             QTextEdit#documentView {
                 background: #ffffff;
                 color: #172033;
@@ -422,6 +610,41 @@ class PlayerUiMixin:
             QPushButton#settingsNavButton:checked {
                 background: #ffffff;
                 color: #0b514b;
+            }
+            QFrame#modelStatusStrip {
+                background: #f7f9fb;
+                border: 1px solid #d8dee7;
+                border-radius: 8px;
+            }
+            QFrame#settingsSectionCard {
+                background: #ffffff;
+                border: 1px solid #d8dee7;
+                border-radius: 8px;
+            }
+            QToolButton#settingsSectionToggle {
+                color: #146c63;
+                border: 0;
+                padding: 2px;
+            }
+            QLabel#modelStatusPill {
+                background: #ffffff;
+                border: 1px solid #d8dee7;
+                border-radius: 7px;
+                color: #172033;
+                font-size: 8.5pt;
+                font-weight: 600;
+                padding: 6px 8px;
+            }
+            QLabel#modelStatusPill[status="ok"] {
+                border-color: #9ed3bd;
+                color: #145338;
+            }
+            QLabel#modelStatusPill[status="warn"] {
+                border-color: #e9b75d;
+                color: #7a4b00;
+            }
+            QLabel#modelStatusPill[status="muted"] {
+                color: #56657a;
             }
             QTabBar::tab {
                 background: #eef2f6;

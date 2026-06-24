@@ -70,6 +70,9 @@ class VideoUrlController:
         button = getattr(self._owner, "_open_url_button", None)
         if button is not None:
             button.setEnabled(enabled)
+        sync_menu = getattr(self._owner, "_sync_open_source_menu_enabled", None)
+        if callable(sync_menu):
+            sync_menu()
 
 
 def video_url_failure_is_unrecoverable(detail: object) -> bool:

@@ -219,6 +219,8 @@ class PlayerSourceMixin:
         self.statusBar().showMessage(
             self._tr("status_video_subtitle_attached").format(path=subtitle_path, count=len(entries))
         )
+        if hasattr(self, "_refresh_next_action_panel"):
+            self._refresh_next_action_panel()
         return True
 
     def _open_document(self, *_args) -> None:
@@ -302,6 +304,8 @@ class PlayerSourceMixin:
             self._open_file_button.setEnabled(enabled)
         if hasattr(self, "_open_document_button"):
             self._open_document_button.setEnabled(enabled)
+        if hasattr(self, "_sync_open_source_menu_enabled"):
+            self._sync_open_source_menu_enabled()
 
     def _open_video_url(self, *_args) -> None:
         dialog = _VideoUrlDialog(
@@ -1445,6 +1449,8 @@ class PlayerSourceMixin:
     def _set_telegram_opening_controls(self, enabled: bool, *, keep_browser_tools: bool = False) -> None:
         if hasattr(self, "_open_url_button"):
             self._open_url_button.setEnabled(enabled)
+        if hasattr(self, "_sync_open_source_menu_enabled"):
+            self._sync_open_source_menu_enabled()
         for widget_name in (
             "_telegram_channel_refresh_button",
             "_telegram_channel_remote_search_button",
@@ -1738,6 +1744,8 @@ class PlayerSourceMixin:
         self._invalidate_subtitle_entries()
         self._queue_save_settings()
         self.statusBar().showMessage(self._tr("status_selected_transcript").format(path=path))
+        if hasattr(self, "_refresh_next_action_panel"):
+            self._refresh_next_action_panel()
 
     def _audio_source_changed(self, *_args) -> None:
         self._sync_audio_source_controls()
@@ -1753,6 +1761,8 @@ class PlayerSourceMixin:
         is_transcript = self._selected_audio_source() == "transcript"
         self._transcript_path_edit.setEnabled(is_transcript)
         self._transcript_file_button.setEnabled(is_transcript)
+        if hasattr(self, "_refresh_next_action_panel"):
+            self._refresh_next_action_panel()
 
     def _enter_document_editor_source(self) -> None:
         if self._document_editor_active:

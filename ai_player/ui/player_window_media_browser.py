@@ -27,6 +27,9 @@ class PlayerMediaBrowserMixin:
     def _sync_media_browser_state(self) -> None:
         self._sync_media_home_button()
         self._sync_media_browser_address()
+        sync_start = getattr(self, "_sync_media_start_overlay", None)
+        if callable(sync_start):
+            sync_start()
 
     def _open_media_home(self) -> None:
         if not hasattr(self, "_video_placeholder"):

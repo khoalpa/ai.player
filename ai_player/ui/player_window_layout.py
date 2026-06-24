@@ -7,14 +7,19 @@ from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, QUrl
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QPalette, QShortcut, QTextDocument
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -61,6 +66,7 @@ from ai_player.services.tts_base import available_tts_providers, available_viene
 from ai_player.services.video_source import is_supported_browser_video_url
 from ai_player.ui.player_window_media import DEFAULT_SIDEBAR_PANEL_SIZES
 from ai_player.ui.player_window_media_browser import DEFAULT_MEDIA_HOME_URL, build_media_browser_buttons
+from ai_player.ui.player_window_readiness import READINESS_PROFILES
 from ai_player.ui.player_window_settings_tabs import (
     build_advanced_settings_tab,
     build_basic_settings_tab,
@@ -691,10 +697,12 @@ class PlayerLayoutMixin:
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
         )
         self._open_file_button.setObjectName("sourceButton")
-        self._open_file_button.clicked.connect(self._open_video)
+        self._open_file_button.clicked.connect(lambda _checked=False: self._start_workflow("video", self._open_video))
         self._set_control_tooltip(self._open_file_button, "open_video_tooltip")
         self._open_video_with_subtitle_action = QAction(self._tr("open_video_with_subtitle"), self)
-        self._open_video_with_subtitle_action.triggered.connect(self._open_video_with_subtitle)
+        self._open_video_with_subtitle_action.triggered.connect(
+            lambda _checked=False: self._start_workflow("video", self._open_video_with_subtitle)
+        )
         self._open_file_button.addAction(self._open_video_with_subtitle_action)
         self._open_file_button.setContextMenuPolicy(Qt.ActionsContextMenu)
         self._open_url_button = self._make_button(
@@ -702,19 +710,62 @@ class PlayerLayoutMixin:
             self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
         )
         self._open_url_button.setObjectName("sourceButton")
-        self._open_url_button.clicked.connect(self._open_video_url)
+        self._open_url_button.clicked.connect(lambda _checked=False: self._start_workflow("url", self._open_video_url))
         self._open_document_button = self._make_button(
             "open_document",
             self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon),
         )
         self._open_document_button.setObjectName("sourceButton")
-        self._open_document_button.clicked.connect(self._open_document)
+        self._open_document_button.clicked.connect(
+            lambda _checked=False: self._start_workflow("document", self._open_document)
+        )
+
+        self._source_menu = QMenu(self)
+        self._open_video_action = QAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
+            self._tr("open_video"),
+            self,
+        )
+        self._open_video_action.triggered.connect(
+            lambda _checked=False: self._start_workflow("video", self._open_video)
+        )
+        self._open_url_action = QAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
+            self._tr("open_url"),
+            self,
+        )
+        self._open_url_action.triggered.connect(
+            lambda _checked=False: self._start_workflow("url", self._open_video_url)
+        )
+        self._open_document_action = QAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon),
+            self._tr("open_document"),
+            self,
+        )
+        self._open_document_action.triggered.connect(
+            lambda _checked=False: self._start_workflow("document", self._open_document)
+        )
+        self._source_menu.addAction(self._open_video_action)
+        self._source_menu.addAction(self._open_video_with_subtitle_action)
+        self._source_menu.addAction(self._open_url_action)
+        self._source_menu.addAction(self._open_document_action)
+        self._open_source_button = self._make_button(
+            "open_source",
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
+        )
+        self._open_source_button.setObjectName("sourceButton")
+        self._open_source_button.setToolTip(self._tr("open_source_tooltip"))
+        self._open_source_button.setProperty("i18n_tooltip_key", "open_source_tooltip")
+        self._open_source_button.setMenu(self._source_menu)
+
         self._meeting_button = self._make_button(
             "start",
             self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
         )
         self._meeting_button.setObjectName("primaryButton")
-        self._meeting_button.clicked.connect(self._toggle_meeting)
+        self._meeting_button.clicked.connect(
+            lambda _checked=False: self._start_workflow("meeting", self._toggle_meeting)
+        )
         self._ui_language_combo = QComboBox()
         self._compact_combo(self._ui_language_combo)
         self._ui_language_combo.setMinimumContentsLength(10)
@@ -727,7 +778,9 @@ class PlayerLayoutMixin:
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton),
         )
         self._export_button.setObjectName("primaryButton")
-        self._export_button.clicked.connect(self._show_export_menu)
+        self._export_button.clicked.connect(
+            lambda _checked=False: self._start_workflow("export", self._show_export_workflow)
+        )
         self._video_fullscreen_button = self._icon_button(QStyle.StandardPixmap.SP_TitleBarMaxButton, "fullscreen")
         self._video_fullscreen_button.setToolTip(self._tr("fullscreen_tooltip"))
         self._video_fullscreen_button.setProperty("i18n_tooltip_key", "fullscreen_tooltip")
@@ -768,6 +821,68 @@ class PlayerLayoutMixin:
         )
         self._right_panel_toggle_button.clicked.connect(self._toggle_sidebar_panel)
 
+        self._simple_sidebar_enabled = True
+        self._tools_menu = QMenu(self)
+        self._simple_sidebar_action = QAction(self._tr("simple_sidebar_mode"), self)
+        self._simple_sidebar_action.setCheckable(True)
+        self._simple_sidebar_action.setChecked(True)
+        self._simple_sidebar_action.toggled.connect(self._set_simple_sidebar_mode)
+        self._fullscreen_action = QAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMaxButton),
+            self._tr("fullscreen"),
+            self,
+        )
+        self._fullscreen_action.triggered.connect(self._toggle_video_fullscreen)
+        self._toggle_sidebar_action = QAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarShadeButton),
+            self._tr("panel_hide"),
+            self,
+        )
+        self._toggle_sidebar_action.triggered.connect(self._toggle_sidebar_panel)
+        self._sidebar_wider_action = QAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowLeft),
+            self._tr("sidebar_wider"),
+            self,
+        )
+        self._sidebar_wider_action.triggered.connect(self._expand_sidebar_panel)
+        self._sidebar_narrower_action = QAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowRight),
+            self._tr("sidebar_narrower"),
+            self,
+        )
+        self._sidebar_narrower_action.triggered.connect(self._collapse_sidebar_panel)
+        self._reset_layout_action = QAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogResetButton),
+            self._tr("reset"),
+            self,
+        )
+        self._reset_layout_action.triggered.connect(self._reset_app)
+        self._help_action = QAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton),
+            self._tr("help"),
+            self,
+        )
+        self._help_action.triggered.connect(self._show_user_guide)
+        self._tools_menu.addAction(self._simple_sidebar_action)
+        self._tools_menu.addSeparator()
+        for action in (
+            self._fullscreen_action,
+            self._toggle_sidebar_action,
+            self._sidebar_wider_action,
+            self._sidebar_narrower_action,
+            self._reset_layout_action,
+            self._help_action,
+        ):
+            self._tools_menu.addAction(action)
+        self._tools_menu_button = self._make_button(
+            "tools_menu",
+            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
+        )
+        self._tools_menu_button.setObjectName("sourceButton")
+        self._tools_menu_button.setToolTip(self._tr("tools_menu_tooltip"))
+        self._tools_menu_button.setProperty("i18n_tooltip_key", "tools_menu_tooltip")
+        self._tools_menu_button.setMenu(self._tools_menu)
+
         source_bar = QFrame()
         source_bar.setObjectName("sourceBar")
         self._source_bar = source_bar
@@ -782,13 +897,11 @@ class PlayerLayoutMixin:
         self._task_status_button = QPushButton(self._tr("task_status_idle"))
         self._task_status_button.setObjectName("taskStatusButton")
         self._task_status_button.setMinimumWidth(0)
-        self._task_status_button.setMaximumWidth(126)
+        self._task_status_button.setMaximumWidth(156)
         self._task_status_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self._task_status_button.setCursor(Qt.PointingHandCursor)
         self._task_status_button.setToolTip(self._tr("task_status_tooltip"))
-        self._task_status_button.clicked.connect(
-            lambda: self._select_settings_tab_for_widget(self._task_center_tab_widget)
-        )
+        self._task_status_button.clicked.connect(self._toggle_task_drawer)
         source_layout.addWidget(self._task_status_button)
 
         source_actions = QFrame()
@@ -797,9 +910,7 @@ class PlayerLayoutMixin:
         source_actions_layout = QHBoxLayout(source_actions)
         source_actions_layout.setContentsMargins(3, 3, 3, 3)
         source_actions_layout.setSpacing(3)
-        source_actions_layout.addWidget(self._open_file_button)
-        source_actions_layout.addWidget(self._open_url_button)
-        source_actions_layout.addWidget(self._open_document_button)
+        source_actions_layout.addWidget(self._open_source_button)
         source_layout.addWidget(source_actions)
 
         primary_actions = QFrame()
@@ -818,27 +929,16 @@ class PlayerLayoutMixin:
         tools_layout = QHBoxLayout(tools)
         tools_layout.setContentsMargins(3, 3, 3, 3)
         tools_layout.setSpacing(2)
-        tools_layout.addWidget(self._video_fullscreen_button)
-        tools_layout.addWidget(self._panel_toggle_button)
-        tools_layout.addWidget(self._panel_expand_button)
-        tools_layout.addWidget(self._panel_collapse_button)
-        tools_layout.addWidget(self._layout_reset_button)
-        tools_layout.addWidget(self._help_button)
+        tools_layout.addWidget(self._tools_menu_button)
         source_layout.addWidget(tools)
         source_layout.addWidget(self._ui_language_combo)
         self._header_controls = (
-            self._video_fullscreen_button,
-            self._panel_expand_button,
-            self._panel_collapse_button,
-            self._layout_reset_button,
-            self._help_button,
-            self._open_file_button,
-            self._open_url_button,
-            self._open_document_button,
+            self._open_source_button,
             self._meeting_button,
             self._export_button,
             self._ui_language_combo,
             self._task_status_button,
+            self._tools_menu_button,
             self._header_action_group,
             self._header_primary_group,
             self._header_tool_group,
@@ -1078,13 +1178,17 @@ class PlayerLayoutMixin:
         self._media_stack.addWidget(self._telegram_channel_view)
         self._media_stack.setCurrentWidget(self._video_placeholder)
         self._media_stack.installEventFilter(self)
+        self._media_start_overlay = self._media_start_panel()
         self._media_frame = QFrame()
         self._media_frame.setObjectName("mediaFrame")
         self._media_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._media_frame.installEventFilter(self)
-        media_frame_layout = QVBoxLayout(self._media_frame)
+        media_frame_layout = QGridLayout(self._media_frame)
         media_frame_layout.setContentsMargins(0, 0, 0, 0)
-        media_frame_layout.addWidget(self._media_stack)
+        media_frame_layout.setSpacing(0)
+        media_frame_layout.addWidget(self._media_stack, 0, 0)
+        media_frame_layout.addWidget(self._media_start_overlay, 0, 0, Qt.AlignmentFlag.AlignCenter)
+        self._media_start_overlay.raise_()
         self._subtitle_overlay = SubtitleOverlayLabel()
         self._subtitle_overlay.setWindowFlags(
             Qt.Tool
@@ -1114,6 +1218,9 @@ class PlayerLayoutMixin:
         self._fullscreen_escape_shortcut = QShortcut(QKeySequence("Esc"), self)
         self._fullscreen_escape_shortcut.setContext(Qt.ApplicationShortcut)
         self._fullscreen_escape_shortcut.activated.connect(self._handle_escape_shortcut)
+        self._command_palette_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
+        self._command_palette_shortcut.setContext(Qt.ApplicationShortcut)
+        self._command_palette_shortcut.activated.connect(self._show_command_palette)
 
         self._play_button = self._icon_button(QStyle.StandardPixmap.SP_MediaPlay, "play")
         self._play_button.clicked.connect(self._play)
@@ -1824,16 +1931,20 @@ class PlayerLayoutMixin:
         preset_layout.setSpacing(8)
         preset_layout.addWidget(self._field_label("preset"))
         preset_layout.addWidget(self._performance_preset_combo, 1)
+        self._preset_inspector = QLabel("")
+        self._preset_inspector.setObjectName("presetInspector")
+        self._preset_inspector.setWordWrap(True)
 
         basic_source_grid = QGridLayout()
         basic_source_grid.setHorizontalSpacing(8)
         basic_source_grid.setVerticalSpacing(7)
         basic_source_grid.addWidget(preset_row, 0, 0, 1, 2)
-        basic_source_grid.addWidget(self._audio_source_panel(), 1, 0, 1, 2)
-        basic_source_grid.addWidget(self._field_label("source_language"), 2, 0)
-        basic_source_grid.addWidget(self._source_language_combo, 2, 1)
-        basic_source_grid.addWidget(self._field_label("target_language"), 3, 0)
-        basic_source_grid.addWidget(self._target_language_combo, 3, 1)
+        basic_source_grid.addWidget(self._preset_inspector, 1, 0, 1, 2)
+        basic_source_grid.addWidget(self._audio_source_panel(), 2, 0, 1, 2)
+        basic_source_grid.addWidget(self._field_label("source_language"), 3, 0)
+        basic_source_grid.addWidget(self._source_language_combo, 3, 1)
+        basic_source_grid.addWidget(self._field_label("target_language"), 4, 0)
+        basic_source_grid.addWidget(self._target_language_combo, 4, 1)
 
         basic_voice_grid = QGridLayout()
         basic_voice_grid.setHorizontalSpacing(8)
@@ -2178,6 +2289,7 @@ class PlayerLayoutMixin:
         self._sync_source_filter_controls()
         self._sync_transcript_cleanup_controls()
         self._sync_vieneu_advanced_controls()
+        self._refresh_preset_inspector()
         self._apply_control_tooltips()
         self._performance_preset_combo.currentIndexChanged.connect(self._apply_selected_performance_preset)
         self._connect_settings_autosave()
@@ -2196,6 +2308,8 @@ class PlayerLayoutMixin:
         root.setContentsMargins(14, 12, 14, 10)
         root.setSpacing(10)
         root.addWidget(source_bar)
+        self._task_drawer = self._task_drawer_panel()
+        root.addWidget(self._task_drawer)
         root.addWidget(self._splitter, 1)
 
         container = QWidget()
@@ -2209,10 +2323,390 @@ class PlayerLayoutMixin:
             url_changed.connect(lambda *_args: self._sync_media_browser_state())
         self._sync_media_browser_state()
         self._sync_panel_visibility_buttons()
+        self._sync_media_start_overlay()
+        self._set_simple_sidebar_mode(True)
+        if hasattr(self, "_refresh_next_action_panel"):
+            self._refresh_next_action_panel()
 
     def _toggle_display_options(self, visible: bool) -> None:
         if hasattr(self, "_display_options_panel"):
             self._display_options_panel.setVisible(bool(visible))
+
+    def _toggle_task_drawer(self) -> None:
+        drawer = getattr(self, "_task_drawer", None)
+        if drawer is None:
+            self._select_settings_tab_for_widget(self._task_center_tab_widget)
+            return
+        self._task_drawer_user_open = not drawer.isVisible()
+        drawer.setVisible(self._task_drawer_user_open)
+        if drawer.isVisible() and hasattr(self, "_refresh_task_center"):
+            self._refresh_task_center()
+
+    def _task_drawer_panel(self) -> QFrame:
+        drawer = QFrame()
+        drawer.setObjectName("taskDrawer")
+        drawer.hide()
+        layout = QHBoxLayout(drawer)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(8)
+        self._task_drawer_summary = QLabel(self._tr("task_drawer_idle"))
+        self._task_drawer_summary.setObjectName("taskDrawerSummary")
+        self._task_drawer_summary.setProperty("i18n_key", "task_drawer_idle")
+        self._task_drawer_summary.setWordWrap(True)
+        self._task_drawer_summary.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        layout.addWidget(self._task_drawer_summary, 1)
+        self._task_drawer_stop_button = self._make_button(
+            "task_center_stop_all",
+            self.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop),
+        )
+        self._task_drawer_stop_button.clicked.connect(self._stop_task_center_tasks)
+        self._task_drawer_retry_button = self._make_button(
+            "task_center_retry",
+            self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
+        )
+        self._task_drawer_retry_button.clicked.connect(self._retry_task_center_action)
+        self._task_drawer_open_button = self._make_button(
+            "task_drawer_open_center",
+            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
+        )
+        self._task_drawer_open_button.clicked.connect(self._open_task_center_from_drawer)
+        layout.addWidget(self._task_drawer_stop_button)
+        layout.addWidget(self._task_drawer_retry_button)
+        layout.addWidget(self._task_drawer_open_button)
+        return drawer
+
+    def _open_task_center_from_drawer(self) -> None:
+        if hasattr(self, "_task_drawer"):
+            self._task_drawer.hide()
+        self._task_drawer_user_open = False
+        self._select_settings_tab_for_widget(self._task_center_tab_widget)
+
+    def _show_command_palette(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._tr("command_palette_title"))
+        layout = QVBoxLayout(dialog)
+        prompt = QLabel(self._tr("command_palette_prompt"), dialog)
+        prompt.setWordWrap(True)
+        layout.addWidget(prompt)
+        actions = QListWidget(dialog)
+        for key, action_id in (
+            ("open_video", "open_video"),
+            ("open_url", "open_url"),
+            ("open_document", "open_document"),
+            ("meeting_start_label", "meeting"),
+            ("export_workflow_title", "export"),
+            ("task_center_tab", "tasks"),
+            ("models_tab", "models"),
+            ("runtime_tab", "runtime"),
+        ):
+            item = QListWidgetItem(self._tr(key))
+            item.setData(Qt.ItemDataRole.UserRole, action_id)
+            actions.addItem(item)
+        actions.setCurrentRow(0)
+        actions.itemDoubleClicked.connect(lambda *_args: dialog.accept())
+        layout.addWidget(actions)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        item = actions.currentItem()
+        action_id = item.data(Qt.ItemDataRole.UserRole) if item is not None else ""
+        self._run_command_palette_action(str(action_id or ""))
+
+    def _run_command_palette_action(self, action_id: str) -> None:
+        if action_id == "open_video":
+            self._start_workflow("video", self._open_video)
+        elif action_id == "open_url":
+            self._start_workflow("url", self._open_video_url)
+        elif action_id == "open_document":
+            self._start_workflow("document", self._open_document)
+        elif action_id == "meeting":
+            self._start_workflow("meeting", self._toggle_meeting)
+        elif action_id == "export":
+            self._start_workflow("export", self._show_export_workflow)
+        elif action_id == "tasks":
+            self._select_settings_tab_for_widget(self._task_center_tab_widget)
+        elif action_id == "models":
+            self._select_settings_tab_for_widget(self._models_tab_widget)
+        elif action_id == "runtime":
+            self._select_settings_tab_for_widget(self._runtime_tab_widget)
+
+    def _refresh_header_menu_text(self) -> None:
+        action_texts = (
+            ("_open_video_action", "open_video"),
+            ("_open_url_action", "open_url"),
+            ("_open_document_action", "open_document"),
+            ("_open_video_with_subtitle_action", "open_video_with_subtitle"),
+            ("_simple_sidebar_action", "simple_sidebar_mode"),
+            ("_fullscreen_action", "fullscreen"),
+            ("_toggle_sidebar_action", "panel_hide"),
+            ("_sidebar_wider_action", "sidebar_wider"),
+            ("_sidebar_narrower_action", "sidebar_narrower"),
+            ("_reset_layout_action", "reset"),
+            ("_help_action", "help"),
+        )
+        for action_name, key in action_texts:
+            action = getattr(self, action_name, None)
+            if action is not None:
+                action.setText(self._tr(key))
+
+    def _start_workflow(self, workflow: str, action) -> None:
+        self._apply_workflow_sidebar_context(workflow)
+        if callable(action):
+            action()
+        if hasattr(self, "_refresh_next_action_panel"):
+            self._refresh_next_action_panel()
+
+    def _apply_workflow_sidebar_context(self, workflow: str) -> None:
+        tabs = getattr(self, "_settings_tabs", None)
+        if tabs is None:
+            return
+        workflow_key = str(workflow or "").strip().lower()
+        if getattr(self, "_simple_sidebar_enabled", True):
+            contexts = {
+                "video": ({2, 6, 3, 1}, 2),
+                "url": ({2, 6, 3, 1}, 2),
+                "document": ({2, 6, 3, 1}, 2),
+                "meeting": ({2, 6, 1}, 2),
+                "export": ({2, 6, 1}, 2),
+            }
+        else:
+            contexts = {
+                "video": ({2, 3, 5, 6, 1}, 2),
+                "url": ({2, 3, 5, 6, 1}, 2),
+                "document": ({2, 6, 3, 5, 1}, 2),
+                "meeting": ({2, 1, 6, 7}, 2),
+                "export": ({2, 5, 6, 1}, 2),
+            }
+        visible_indexes, current_index = contexts.get(workflow_key, (set(range(tabs.count())), tabs.currentIndex()))
+        self._set_sidebar_tab_visibility(visible_indexes)
+        if hasattr(self, "_settings_scroll") and self._settings_scroll.isHidden():
+            self._set_sidebar_panel_visible(True)
+        if 0 <= current_index < tabs.count():
+            tabs.setCurrentIndex(current_index)
+        self._current_workflow_context = workflow_key
+        title_key = {
+            "video": "first_run_workflow_video",
+            "url": "first_run_workflow_url",
+            "document": "first_run_workflow_document",
+            "meeting": "first_run_workflow_meeting",
+            "export": "export_workflow_title",
+        }.get(workflow_key, "settings_group_workflow")
+        self.statusBar().showMessage(self._tr("status_workflow_context").format(workflow=self._tr(title_key)))
+
+    def _set_simple_sidebar_mode(self, enabled: bool) -> None:
+        self._simple_sidebar_enabled = bool(enabled)
+        action = getattr(self, "_simple_sidebar_action", None)
+        if action is not None and action.isChecked() != self._simple_sidebar_enabled:
+            action.setChecked(self._simple_sidebar_enabled)
+        tab_bar = getattr(self._settings_tabs, "tabBar", lambda: None)()
+        if tab_bar is not None:
+            tab_bar.setVisible(not self._simple_sidebar_enabled)
+        workflow = str(getattr(self, "_current_workflow_context", "") or "")
+        if workflow:
+            self._apply_workflow_sidebar_context(workflow)
+            return
+        visible = {1, 2, 3, 6} if self._simple_sidebar_enabled else set(range(self._settings_tabs.count()))
+        self._set_sidebar_tab_visibility(visible)
+        if self._settings_tabs.currentIndex() not in visible:
+            self._settings_tabs.setCurrentIndex(2 if 2 in visible else 0)
+
+    def _set_sidebar_tab_visibility(self, visible_indexes: set[int]) -> None:
+        tabs = getattr(self, "_settings_tabs", None)
+        if tabs is None:
+            return
+        set_visible = getattr(tabs, "setTabVisible", None)
+        if callable(set_visible):
+            for index in range(tabs.count()):
+                set_visible(index, index in visible_indexes)
+        self._sync_simple_sidebar_nav()
+
+    def _sync_simple_sidebar_nav(self) -> None:
+        buttons = getattr(self, "_settings_group_buttons", {})
+        if not buttons:
+            return
+        simple = getattr(self, "_simple_sidebar_enabled", True)
+        for key, button in buttons.items():
+            if button is None:
+                continue
+            simple_groups = {
+                "settings_group_workflow",
+                "settings_group_transcript",
+                "settings_group_models",
+            }
+            button.setVisible(not simple or key in simple_groups)
+
+    def _sync_open_source_menu_enabled(self) -> None:
+        pairs = (
+            ("_open_file_button", "_open_video_action"),
+            ("_open_file_button", "_open_video_with_subtitle_action"),
+            ("_open_url_button", "_open_url_action"),
+            ("_open_document_button", "_open_document_action"),
+        )
+        any_enabled = False
+        for button_name, action_name in pairs:
+            button = getattr(self, button_name, None)
+            action = getattr(self, action_name, None)
+            enabled = bool(button is None or button.isEnabled())
+            any_enabled = any_enabled or enabled
+            if action is not None:
+                action.setEnabled(enabled)
+        source_button = getattr(self, "_open_source_button", None)
+        if source_button is not None:
+            source_button.setEnabled(any_enabled)
+
+    def _media_start_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("mediaStartPanel")
+        panel.setMaximumWidth(880)
+        panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(14)
+        title = QLabel(self._tr("media_start_title"))
+        title.setObjectName("mediaStartTitle")
+        title.setProperty("i18n_key", "media_start_title")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setWordWrap(True)
+        layout.addWidget(title)
+        subtitle = QLabel(self._tr("media_start_subtitle"))
+        subtitle.setObjectName("mediaStartSubtitle")
+        subtitle.setProperty("i18n_key", "media_start_subtitle")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(10)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        self._media_start_workflow_buttons = {}
+        for index, (workflow_key, title_key, detail_key, tooltip_key, icon, callback) in enumerate(
+            (
+                (
+                    "video",
+                    "first_run_workflow_video",
+                    "first_run_workflow_video_detail",
+                    "open_video_tooltip",
+                    QStyle.StandardPixmap.SP_DirOpenIcon,
+                    self._open_video,
+                ),
+                (
+                    "url",
+                    "first_run_workflow_url",
+                    "first_run_workflow_url_detail",
+                    "open_url",
+                    QStyle.StandardPixmap.SP_BrowserReload,
+                    self._open_video_url,
+                ),
+                (
+                    "document",
+                    "first_run_workflow_document",
+                    "first_run_workflow_document_detail",
+                    "open_document",
+                    QStyle.StandardPixmap.SP_FileIcon,
+                    self._open_document,
+                ),
+                (
+                    "meeting",
+                    "first_run_workflow_meeting",
+                    "first_run_workflow_meeting_detail",
+                    "meeting_start_label",
+                    QStyle.StandardPixmap.SP_MediaPlay,
+                    self._toggle_meeting,
+                ),
+            )
+        ):
+            button = self._make_button(title_key, self.style().standardIcon(icon))
+            button.setObjectName("mediaStartWorkflowButton")
+            button.setProperty("i18n_key", "")
+            button.setProperty("workflow_title_key", title_key)
+            button.setProperty("workflow_detail_key", detail_key)
+            button.setMinimumHeight(74)
+            button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            button.setToolTip(self._tr(tooltip_key))
+            button.setProperty("i18n_tooltip_key", tooltip_key)
+            button.clicked.connect(lambda _checked=False, key=workflow_key, cb=callback: self._start_workflow(key, cb))
+            grid.addWidget(button, index // 2, index % 2)
+            self._media_start_workflow_buttons[title_key] = button
+        layout.addLayout(grid)
+
+        setup_title = QLabel(self._tr("media_start_setup_title"))
+        setup_title.setObjectName("mediaStartSetupTitle")
+        setup_title.setProperty("i18n_key", "media_start_setup_title")
+        setup_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(setup_title)
+
+        profile_row = QWidget()
+        profile_layout = QHBoxLayout(profile_row)
+        profile_layout.setContentsMargins(0, 0, 0, 0)
+        profile_layout.setSpacing(8)
+        self._media_start_profile_group = QButtonGroup(profile_row)
+        self._media_start_profile_group.setExclusive(True)
+        self._media_start_profile_buttons = {}
+        for profile in READINESS_PROFILES:
+            profile_key = str(profile["key"])
+            button = QPushButton(self._tr(str(profile["title"])))
+            button.setObjectName("mediaStartProfileButton")
+            button.setCheckable(True)
+            button.setMinimumHeight(34)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setProperty("launcher_profile", profile_key)
+            button.setProperty("launcher_profile_title_key", str(profile["title"]))
+            button.clicked.connect(
+                lambda _checked=False, key=profile_key: self._apply_media_start_profile(key)
+            )
+            self._media_start_profile_group.addButton(button)
+            self._media_start_profile_buttons[profile_key] = button
+            profile_layout.addWidget(button)
+        layout.addWidget(profile_row)
+        self._refresh_media_start_launcher_text()
+        return panel
+
+    def _apply_media_start_profile(self, profile_key: str) -> None:
+        if hasattr(self, "_readiness_select_profile"):
+            self._readiness_select_profile(profile_key)
+        else:
+            self._readiness_selected_profile = profile_key
+        if hasattr(self, "_apply_readiness_profile"):
+            self._apply_readiness_profile()
+        self._sync_media_start_profile_buttons()
+
+    def _refresh_media_start_launcher_text(self) -> None:
+        for button in getattr(self, "_media_start_workflow_buttons", {}).values():
+            title_key = str(button.property("workflow_title_key") or "")
+            detail_key = str(button.property("workflow_detail_key") or "")
+            if title_key and detail_key:
+                button.setText(f"{self._tr(title_key)}\n{self._tr(detail_key)}")
+        for button in getattr(self, "_media_start_profile_buttons", {}).values():
+            title_key = str(button.property("launcher_profile_title_key") or "")
+            if title_key:
+                button.setText(self._tr(title_key))
+        self._sync_media_start_profile_buttons()
+
+    def _sync_media_start_profile_buttons(self) -> None:
+        selected = str(getattr(self, "_readiness_selected_profile", "quick") or "quick")
+        for profile_key, button in getattr(self, "_media_start_profile_buttons", {}).items():
+            button.setChecked(profile_key == selected)
+
+    def _sync_media_start_overlay(self) -> None:
+        overlay = getattr(self, "_media_start_overlay", None)
+        media_stack = getattr(self, "_media_stack", None)
+        placeholder = getattr(self, "_video_placeholder", None)
+        if overlay is None or media_stack is None or placeholder is None:
+            return
+        show = media_stack.currentWidget() is placeholder
+        url_getter = getattr(placeholder, "url", None)
+        if callable(url_getter):
+            show = show and url_getter().toString() == DEFAULT_MEDIA_HOME_URL
+        overlay.setVisible(show)
+        if show:
+            overlay.raise_()
 
     def _apply_control_tooltips(self) -> None:
         tooltips = (
