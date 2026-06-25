@@ -62,3 +62,23 @@ def test_public_build_rejects_internal_plugin_environment() -> None:
     assert "-AllowInternalPlugins" in internal_build_script
     assert "AI_PLAYER_INCLUDE_EXTRA_YTDLP_PLUGINS" in spec
     assert "AI_PLAYER_INCLUDE_PRIVATE_TELEGRAM_PLUGIN" in spec
+
+
+def test_release_verify_runs_required_short_gate_and_ordered_builds() -> None:
+    script = (PROJECT_ROOT / "scripts" / "release_verify.ps1").read_text(encoding="utf-8")
+    checklist = (PROJECT_ROOT / "docs" / "release_checklist.md").read_text(encoding="utf-8")
+
+    assert "[ValidateSet(\"Lite\", \"OfflineCpu\", \"Gpu\")]" in script
+    assert "data\\tmp\\release-verify" in script
+    assert "check_release_worktree.ps1" in script
+    assert '"ruff", "check", "."' in script
+    assert '"pytest", "-q"' in script
+    assert '"pip", "check"' in script
+    assert "runtime_doctor.py" in script
+    assert "workflow_smoke_check.py" in script
+    assert "tests\\test_release_smoke.py" in script
+    assert '$BuildOrder = @("Lite", "OfflineCpu", "Gpu")' in script
+    assert "build_portable.ps1" in script
+    assert "smoke_launch_app.ps1" in script
+    assert "release_verify.ps1" in checklist
+    assert "workflow_smoke_baseline.json" in checklist

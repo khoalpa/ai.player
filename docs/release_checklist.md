@@ -17,8 +17,13 @@ Use this checklist before sharing a build.
 - Install the release dependency set with `.\.venv\Scripts\python.exe -m pip install -c constraints\windows-release-py310.txt -e ".[dev,packaging,offline-ai,gpu,audio-separation,audit]"`.
 - Run `.\.venv\Scripts\python.exe -m ruff check .`.
 - Run `.\.venv\Scripts\python.exe -m pytest`.
+- Run `.\scripts\release_verify.ps1` for the short release gate and generated
+  logs under `data\tmp\release-verify\`.
 - Run `.\.venv\Scripts\python.exe .\scripts\compare_performance_presets.py --language vi`
   to review preset latency/quality tradeoffs before changing release defaults.
+- Run `.\.venv\Scripts\python.exe .\scripts\workflow_smoke_check.py --output data\tmp\workflow-smoke-current.json`
+  to verify committed smoke fixtures still match the ASR/translation/TTS/export
+  baseline expectations in `docs\workflow_smoke_baseline.json`.
 - Run `.\.venv\Scripts\python.exe .\scripts\workflow_benchmark.py --check-baselines --baseline docs\workflow_benchmark_baselines.json`
   to validate benchmark baseline metadata.
 - Run `.\.venv\Scripts\python.exe .\scripts\runtime_doctor.py`.
@@ -67,6 +72,11 @@ Use this checklist before sharing a build.
 - Build with `.\scripts\build_portable.ps1`. The script runs
   `.\scripts\check_release_worktree.ps1 -FailOnModified` by default and should
   fail if source/plugin files are untracked or tracked files are modified.
+- For ordered local verification builds, run
+  `.\scripts\release_verify.ps1 -BuildProfiles Lite` first, then rerun with
+  `-BuildProfiles OfflineCpu` or `-BuildProfiles Gpu` only after the Lite
+  artifact passes smoke. Passing multiple profiles builds them in Lite,
+  Offline CPU, then GPU order.
 - Use `.\scripts\build_portable.ps1 -SkipReleaseWorktreeCheck` only for local
   development builds that will not be shared.
 - List available signing certificates with `.\scripts\build_portable.ps1 -ListCodeSigningCerts`.
