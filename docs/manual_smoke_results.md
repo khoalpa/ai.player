@@ -2,6 +2,24 @@
 
 Use this file to keep a short, build-specific record before sharing a Windows build.
 
+## 2026-06-25 Lite Release Verification With Profile Summary
+
+- Source baseline: current working tree after typed export runtime errors,
+  expanded AI workflow smoke baselines, and per-profile release summaries were
+  added.
+- Lite profile: `.\scripts\release_verify.ps1 -SkipPytest -BuildProfiles Lite`
+  passed. Summary: `data\tmp\release-verify\20260625-144304\summary.json`.
+- Profile summary: `data\tmp\release-verify\20260625-144304\profile-lite-summary.json`
+  recorded scope `UI/document/URL/Edge TTS`, artifact path, app path, and
+  build/launch logs.
+- Gate coverage in that run: release worktree check, `ruff`, `pip check`,
+  Runtime Doctor, deterministic workflow smoke, release smoke tests, portable
+  build, and 8-second portable launch smoke.
+- Follow-up full test run: `.\.venv\Scripts\pytest.exe -q` passed.
+- Code signing: no certificate was provided, so the portable bundle remains
+  unsigned. Prepare a code-signing certificate and rerun with `-RequireSignature`
+  before broad public distribution.
+
 ## 2026-06-25 Offline CPU And GPU Release Verification
 
 - Source baseline: current working tree after release verification profile
