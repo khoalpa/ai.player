@@ -23,6 +23,29 @@ if (-not $Python) {
 New-Item -ItemType Directory -Force -Path $RunRoot | Out-Null
 Push-Location $ProjectRoot
 try {
+    function Get-StepSummary {
+        return @($Steps | ForEach-Object { $_ })
+    }
+
+    function Write-ReleaseSummary {
+        param(
+            [string]$Status,
+            [string]$ErrorMessage = "",
+            [object[]]$BuildProfileList = @()
+        )
+
+        $Summary = [ordered]@{
+            status = $Status
+            run_root = $RunRoot
+            build_profiles = @($BuildProfileList)
+            steps = Get-StepSummary
+        }
+        if ($ErrorMessage) {
+            $Summary["error"] = $ErrorMessage
+        }
+        $Summary | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $SummaryPath -Encoding UTF8
+    }
+
     function Invoke-ReleaseStep {
         param(
             [string]$Name,
@@ -118,22 +141,10 @@ try {
         Invoke-PortableBuild $Profile
     }
 
-    $Summary = [ordered]@{
-        status = "passed"
-        run_root = $RunRoot
-        build_profiles = $SelectedBuilds
-        steps = @($Steps)
-    }
-    $Summary | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $SummaryPath -Encoding UTF8
+    Write-ReleaseSummary -Status "passed" -BuildProfileList $SelectedBuilds
     Write-Output "Release verification passed. Summary: $SummaryPath"
 } catch {
-    $Summary = [ordered]@{
-        status = "failed"
-        run_root = $RunRoot
-        error = "$_"
-        steps = @($Steps)
-    }
-    $Summary | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $SummaryPath -Encoding UTF8
+    Write-ReleaseSummary -Status "failed" -ErrorMessage "$_"
     Write-Error $_
     exit 1
 } finally {
