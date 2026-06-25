@@ -270,6 +270,129 @@ class JAVHDIE(_AdultSiteBaseIE):
         return self._extract_adult_site(url, self._match_id(url))
 
 
+class NJAVIE(_AdultSiteBaseIE):
+    IE_NAME = "njav"
+    _VALID_URL = r"https?://(?:[^/]+\.)?njav\.com/(?:[a-z]{2}/)?(?:xvideos|video|videos)/(?P<id>[^/?#&]+)"
+    _IFRAME_DEPTH = 2
+
+    def _real_extract(self, url: str) -> dict:
+        video_id = self._match_id(url)
+        webpage = self._download_webpage(url, video_id, headers=self._adult_site_headers(url))
+        title = self._adult_site_title(url, webpage)
+        thumbnail = self._html_search_meta(
+            ("og:image", "twitter:image", "thumbnail"),
+            webpage,
+            "thumbnail",
+            default=None,
+        )
+        embed_url = self._njav_embed_url(url, webpage)
+        if not embed_url:
+            raise ExtractorError("Unable to find embedded player URL", expected=True)
+
+        embed_webpage = self._download_webpage(
+            embed_url,
+            video_id,
+            note="Downloading embedded player webpage",
+            headers=self._adult_site_headers(url),
+        )
+        player_url = self._njav_player_url(embed_url, embed_webpage)
+        if not player_url:
+            raise ExtractorError("Unable to find player frame URL", expected=True)
+
+        player_webpage, urlh = self._download_webpage_handle(
+            player_url,
+            video_id,
+            note="Downloading player frame webpage",
+            headers=self._adult_site_headers(embed_url),
+        )
+        final_player_url = getattr(urlh, "geturl", lambda: player_url)()
+        m3u8_url = self._njav_m3u8_url(final_player_url, player_webpage)
+        if not m3u8_url:
+            raise ExtractorError("Unable to find HLS media URL", expected=True)
+
+        headers = self._adult_site_headers(final_player_url)
+        formats = self._extract_m3u8_formats(
+            m3u8_url,
+            video_id,
+            "mp4",
+            m3u8_id="hls",
+            fatal=False,
+            headers=headers,
+        )
+        if not formats:
+            formats = [
+                {
+                    "url": m3u8_url,
+                    "format_id": "hls",
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                    "vcodec": "h264",
+                    "acodec": "aac",
+                    "http_headers": headers,
+                }
+            ]
+        return {
+            "id": video_id,
+            "title": title,
+            "thumbnail": urljoin(url, thumbnail) if thumbnail else None,
+            "age_limit": 18,
+            "formats": formats,
+        }
+
+    def _njav_embed_url(self, page_url: str, webpage: str) -> str | None:
+        embed_url = self._html_search_meta(("embedUrl",), webpage, "embed url", default=None)
+        if not embed_url:
+            embed_url = self._search_regex(
+                r'"embedUrl"\s*:\s*"([^"]+)"',
+                webpage,
+                "embed url",
+                default=None,
+            )
+        if not embed_url:
+            return None
+        return self._clean_media_url(page_url, embed_url)
+
+    def _njav_player_url(self, embed_url: str, embed_webpage: str) -> str | None:
+        player_url = self._search_regex(
+            r"""(?x)
+            videoFrame\.src\s*=\s*["'](?P<url>[^"']+)["']
+            |
+            <iframe[^>]+(?:src|data-src)=["'](?P<iframe>[^"']+)["']
+            """,
+            embed_webpage,
+            "player frame url",
+            default=None,
+            group=("url", "iframe"),
+        )
+        player_url = self._first_nonempty_match(player_url)
+        if not player_url:
+            return None
+        return self._clean_media_url(embed_url, player_url)
+
+    def _njav_m3u8_url(self, player_url: str, player_webpage: str) -> str | None:
+        m3u8_url = self._search_regex(
+            r"""(?x)
+            \bm3u8\s*:\s*["'](?P<m3u8>[^"']+)["']
+            |
+            \bfile\s*:\s*["'](?P<file>[^"']+\.m3u8(?:\?[^"']*)?)["']
+            """,
+            player_webpage,
+            "HLS media url",
+            default=None,
+            group=("m3u8", "file"),
+        )
+        m3u8_url = self._first_nonempty_match(m3u8_url)
+        if not m3u8_url:
+            return None
+        return self._clean_media_url(player_url, unescapeHTML(m3u8_url))
+
+    @staticmethod
+    def _first_nonempty_match(value: object) -> str:
+        if isinstance(value, tuple):
+            return next((str(item) for item in value if item), "")
+        return str(value or "")
+
+
 class LiveJasminIE(_AdultSiteBaseIE):
     IE_NAME = "livejasmin"
     _VALID_URL = r"https?://(?:[^/]+\.)?livejasmin\.com/(?:[a-z]{2}/)?(?P<id>[^?#]+)"
@@ -408,6 +531,7 @@ __all__ = [
     "JAVMostIE",
     "LiveJasminIE",
     "MissAVIE",
+    "NJAVIE",
     "R18IE",
     "SupJavIE",
     "VLXXIE",

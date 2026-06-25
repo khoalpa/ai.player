@@ -13,7 +13,7 @@ from urllib.parse import urljoin, urlparse
 
 from ai_player.core.i18n import ui_text
 from ai_player.core.redaction import compact_redacted_text
-from ai_player.services.ffmpeg import run_ffmpeg, run_ffprobe
+from ai_player.services.ffmpeg import ffmpeg_executable, run_ffmpeg, run_ffprobe
 
 
 class VideoSourceError(RuntimeError):
@@ -64,6 +64,7 @@ YTDLP_PAGE_HOSTS = {
     "vimeo.com",
     "dailymotion.com",
     "dai.ly",
+    "njav.com",
     "t.me",
     "telegram.me",
 }
@@ -262,6 +263,7 @@ def _resolve_page_url(
         options.update(
             {
                 "merge_output_format": "mp4",
+                "ffmpeg_location": str(Path(ffmpeg_executable()).parent),
                 "outtmpl": str(source_cache_dir / "%(extractor_key)s-%(id)s-%(format_id)s-%(height)sp.%(ext)s"),
                 "continuedl": True,
                 "overwrites": False,
@@ -367,7 +369,7 @@ def _format_selector(playback_quality: str) -> str:
             "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
             "bestvideo+bestaudio/"
             "best[ext=mp4][vcodec!=none][acodec!=none]/"
-            "best[vcodec!=none][acodec!=none]/best"
+            "best[vcodec!=none][acodec!=none]"
         )
     return (
         f"bestvideo[ext=mp4][vcodec^=avc1][height<={max_height}]+bestaudio[ext=m4a]/"
@@ -377,7 +379,7 @@ def _format_selector(playback_quality: str) -> str:
         f"best[ext=mp4][vcodec!=none][acodec!=none][height<={max_height}]/"
         f"best[vcodec!=none][acodec!=none][height<={max_height}]/"
         "best[ext=mp4][vcodec!=none][acodec!=none]/"
-        "best[vcodec!=none][acodec!=none]/best"
+        "best[vcodec!=none][acodec!=none]"
     )
 
 
@@ -405,7 +407,7 @@ def _stream_format_selector(playback_quality: str) -> str:
         f"best[vcodec!=none][acodec!=none]{height_filter}/"
         "best[ext=mp4][vcodec^=avc1][acodec!=none]/"
         "best[ext=mp4][vcodec!=none][acodec!=none]/"
-        "best[vcodec!=none][acodec!=none]/best"
+        "best[vcodec!=none][acodec!=none]"
     )
 
 

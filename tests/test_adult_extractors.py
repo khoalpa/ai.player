@@ -11,6 +11,7 @@ if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
 VLXXIE = import_module("yt_dlp_plugins.extractor.adult_sites").VLXXIE
+NJAVIE = import_module("yt_dlp_plugins.extractor.adult_sites").NJAVIE
 
 
 class _FakeHeadResponse:
@@ -25,6 +26,66 @@ def test_vlxx_ie_matches_video_urls() -> None:
     assert VLXXIE.suitable("https://vlxx.moi/video/demo-title/3170/")
     assert VLXXIE.suitable("https://www.vlxx.example/video/demo-title/3170/")
     assert not VLXXIE.suitable("https://example.com/video/demo-title/3170/")
+
+
+def test_njav_ie_matches_video_urls() -> None:
+    assert NJAVIE.suitable("https://www.njav.com/vi/xvideos/rki-729-uncensored-leak")
+    assert NJAVIE.suitable("https://njav.com/xvideos/rki-729-uncensored-leak")
+    assert not NJAVIE.suitable("https://example.com/vi/xvideos/rki-729-uncensored-leak")
+
+
+def test_njav_ie_extracts_mp4_url_from_webpage() -> None:
+    extractor = NJAVIE(YoutubeDL({"quiet": True, "no_warnings": True}))
+
+    result = extractor._extract_from_webpage(
+        "https://www.njav.com/vi/xvideos/rki-729-uncensored-leak",
+        "rki-729-uncensored-leak",
+        """
+        <html>
+          <head><meta property="og:title" content="Demo title"></head>
+          <body><script>window.videoUrl = "https:\\/\\/cdn.example.test\\/demo.mp4";</script></body>
+        </html>
+        """,
+        iframe_depth=0,
+    )
+
+    assert result["id"] == "rki-729-uncensored-leak"
+    assert result["title"] == "Demo title"
+    assert result["age_limit"] == 18
+    assert result["formats"] == [
+        {
+            "url": "https://cdn.example.test/demo.mp4",
+            "ext": "mp4",
+            "http_headers": NJAVIE._adult_site_headers(
+                "https://www.njav.com/vi/xvideos/rki-729-uncensored-leak",
+            ),
+        }
+    ]
+
+
+def test_njav_ie_follows_embed_player_and_hls_url() -> None:
+    extractor = NJAVIE(YoutubeDL({"quiet": True, "no_warnings": True}))
+    page_url = "https://www.njav.com/vi/xvideos/rki-729-uncensored-leak"
+    embed_url = extractor._njav_embed_url(
+        page_url,
+        """
+        <script type="application/ld+json">
+        {"embedUrl":"https://www.njav.com/vv/rki-729-uncensored-leak?poster=https://static.example.test/thumb.webp"}
+        </script>
+        """,
+    )
+    player_url = extractor._njav_player_url(
+        embed_url,
+        """<script>videoFrame.src = "/jm/token";</script>""",
+    )
+    m3u8_url = extractor._njav_m3u8_url(
+        "https://upload18.org/play/index/rki-729-uncensored-leak",
+        """<script>window.PLAYER_CONFIG = {m3u8: "/play/token_hash?hash=abc&amp;x=1"};</script>""",
+    )
+
+    assert embed_url == "https://www.njav.com/vv/rki-729-uncensored-leak?poster=https://static.example.test/thumb.webp"
+    assert player_url == "https://www.njav.com/jm/token"
+    assert m3u8_url == "https://upload18.org/play/token_hash?hash=abc&x=1"
 
 
 def test_vlxx_ie_extracts_mp4_url_from_webpage() -> None:

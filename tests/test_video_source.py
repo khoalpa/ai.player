@@ -27,6 +27,7 @@ def test_supported_video_url(url: str, expected: bool) -> None:
     [
         ("https://example.com/video.mp4", "direct_media", "example-com", False, True),
         ("https://youtu.be/demo", "page", "youtube", True, False),
+        ("https://www.njav.com/vi/xvideos/rki-729-uncensored-leak", "page", "njav-com", True, False),
         ("rtsp://camera.local/live", "network_stream", "rtsp", False, False),
         ("https://web.telegram.org/a/progressive/document123", "telegram_web", "telegram", False, False),
         ("https://t.me/+s91pFSI1prtmZjMx", "private_telegram", "telegram", False, False),
@@ -77,6 +78,7 @@ def test_resolve_rejects_private_telegram_url_before_ytdlp() -> None:
     [
         ("https://youtu.be/demo", True),
         ("https://youtu.be/demo.mp4", False),
+        ("https://www.njav.com/vi/xvideos/rki-729-uncensored-leak", True),
         ("https://t.me/+s91pFSI1prtmZjMx", False),
         ("https://t.me/c/123456789/42", False),
         ("https://video.example.test/watch/demo", False),
@@ -190,12 +192,18 @@ def test_format_selector_contains_quality_constraints(quality: str, needle: str)
     assert needle in video_source._format_selector(quality)
 
 
+def test_format_selector_does_not_fallback_to_video_only_best() -> None:
+    assert not video_source._format_selector("best").endswith("/best")
+    assert not video_source._format_selector("720p").endswith("/best")
+
+
 def test_stream_format_selector_prefers_single_playable_stream() -> None:
     selector = video_source._stream_format_selector("720p")
 
     assert "height<=720" in selector
     assert "acodec!=none" in selector
     assert "bestvideo" not in selector
+    assert not selector.endswith("/best")
 
 
 def test_resolve_page_url_without_full_cache_returns_stream_url(monkeypatch) -> None:
@@ -479,6 +487,7 @@ def test_resolve_page_url_uses_custom_cache_dir(monkeypatch, tmp_path) -> None:
 
     assert source.playback_url == str(tmp_path / "ai-player-sources" / "youtube" / "720p" / "demo.mp4")
     assert str(tmp_path / "ai-player-sources" / "youtube" / "720p") in captured_options["outtmpl"]
+    assert captured_options["ffmpeg_location"]
 
 
 def test_resolve_page_url_rejects_cached_file_without_audio(monkeypatch, tmp_path) -> None:
