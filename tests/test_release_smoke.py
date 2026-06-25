@@ -8,6 +8,7 @@ import pytest
 from ai_player.core.config import AppConfig
 from ai_player.services.ffmpeg import probe_duration_seconds, run_ffmpeg
 from ai_player.workers import export_worker
+from scripts import workflow_smoke_check
 
 
 class _SilentTTSProvider:
@@ -39,6 +40,16 @@ def test_packaged_vieneu_sample_asset_names_are_ascii() -> None:
 
     assert sample_names
     assert all(name.isascii() for name in sample_names)
+
+
+def test_release_smoke_tts_output_duration(tmp_path) -> None:
+    expectations = _workflow_expectations()["tts"]
+    output_path = tmp_path / "tts.wav"
+
+    _SilentTTSProvider().synthesize(str(expectations["input_text"]), output_path)
+
+    assert output_path.exists()
+    assert probe_duration_seconds(output_path) >= float(expectations["min_output_duration_seconds"])
 
 
 @pytest.mark.parametrize("export_kind", ["audio", "video"])
@@ -78,7 +89,7 @@ def test_release_smoke_exports_sample_media_with_transcript_tts(monkeypatch, qap
 
     assert failures == []
     assert output_path.exists()
-    assert probe_duration_seconds(output_path) >= 0.5
+    _assert_export_output_metrics(output_path, export_kind)
 
 
 def test_release_smoke_exports_staged_sample_media(monkeypatch, qapp, tmp_path) -> None:
@@ -124,5 +135,28 @@ def test_release_smoke_exports_staged_sample_media(monkeypatch, qapp, tmp_path) 
     assert finished == [str(tmp_path)]
     manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "complete"
-    assert probe_duration_seconds(tmp_path / "audio" / "final_mix.wav") >= 0.5
-    assert probe_duration_seconds(tmp_path / "dubbed_video.mp4") >= 0.5
+    words_payload = json.loads((tmp_path / "subtitles" / "source.words.json").read_text(encoding="utf-8"))
+    asr_expectations = _workflow_expectations()["asr"]
+    assert len(words_payload["segments"]) >= int(asr_expectations["min_segment_count"])
+    _assert_export_output_metrics(tmp_path / "audio" / "final_mix.wav", "audio")
+    _assert_export_output_metrics(tmp_path / "dubbed_video.mp4", "video")
+
+
+def _workflow_expectations() -> dict[str, dict[str, object]]:
+    baseline = workflow_smoke_check.load_smoke_baseline()
+    expectations = baseline.get("workflow_expectations")
+    assert isinstance(expectations, dict)
+    return expectations
+
+
+def _assert_export_output_metrics(path: Path, export_kind: str) -> None:
+    expectations = _workflow_expectations()["export"]
+    metrics = workflow_smoke_check.media_sample_metrics(path)
+
+    assert metrics["exists"] is True
+    assert metrics["duration_seconds"] >= float(expectations["min_output_duration_seconds"])
+    if export_kind == "audio":
+        assert metrics["has_audio_stream"] is bool(expectations["audio_export_requires_audio_stream"])
+    else:
+        assert metrics["has_audio_stream"] is bool(expectations["video_export_requires_audio_stream"])
+        assert metrics["has_video_stream"] is bool(expectations["video_export_requires_video_stream"])

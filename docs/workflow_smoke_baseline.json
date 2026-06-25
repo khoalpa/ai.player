@@ -24,7 +24,7 @@
   "workflow_expectations": {
     "asr": {
       "input_sample": "demo_video",
-      "min_segment_count": 0
+      "min_segment_count": 1
     },
     "translation": {
       "input_text": "Hello, this is an AI Player benchmark.",
@@ -41,6 +41,12 @@
       "audio_export_requires_audio_stream": true,
       "video_export_requires_audio_stream": true,
       "video_export_requires_video_stream": true
+    },
+    "document": {
+      "input_text": "Hello AI Player document smoke test.",
+      "seconds_per_segment": 3,
+      "min_segment_count": 1,
+      "min_transcript_file_size_bytes": 50
     }
   }
 }

@@ -5,6 +5,7 @@ import json
 import pytest
 
 from ai_player.services import document_reader as docs
+from scripts import workflow_smoke_check
 
 
 @pytest.mark.parametrize(("path", "expected"), [("a.pdf", True), ("a.docx", True), ("a.md", True), ("a.exe", False)])
@@ -43,6 +44,23 @@ def test_create_text_document_transcript_writes_srt(tmp_path, monkeypatch) -> No
     assert transcript.transcript_path.exists()
     assert transcript.segment_count >= 1
     assert "-->" in transcript.transcript_path.read_text(encoding="utf-8")
+
+
+def test_document_workflow_smoke_baseline(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(docs, "CONFIG_DIR", tmp_path)
+    baseline = workflow_smoke_check.load_smoke_baseline()
+    document_expectations = baseline["workflow_expectations"]["document"]
+
+    transcript = docs.create_text_document_transcript(
+        str(document_expectations["input_text"]),
+        title="Smoke",
+        seconds_per_segment=int(document_expectations["seconds_per_segment"]),
+    )
+
+    metrics = workflow_smoke_check.transcript_sample_metrics(transcript.transcript_path)
+    assert transcript.segment_count >= int(document_expectations["min_segment_count"])
+    assert metrics["segment_count"] == transcript.segment_count
+    assert metrics["file_size_bytes"] >= int(document_expectations["min_transcript_file_size_bytes"])
 
 
 def test_read_json_file_returns_text_blocks(tmp_path) -> None:
