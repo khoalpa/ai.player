@@ -9,18 +9,6 @@
       "label": "NLLB Local"
     },
     {
-      "value": "azure_translator",
-      "label": "Azure Translator"
-    },
-    {
-      "value": "google_translate",
-      "label": "Google Translate"
-    },
-    {
-      "value": "deepl",
-      "label": "DeepL"
-    },
-    {
       "value": "none",
       "label": "No translation"
     }

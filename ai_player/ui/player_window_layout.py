@@ -1556,10 +1556,26 @@ class PlayerLayoutMixin:
 
         self._translator_combo = QComboBox()
         self._compact_combo(self._translator_combo)
-        for translator in available_translation_provider_options(self._config.gui_language):
+        translation_provider_options = available_translation_provider_options(self._config.gui_language)
+        selected_translator_provider = normalize_translator_provider(self._config.translator_provider)
+        if selected_translator_provider not in {provider.id for provider in translation_provider_options}:
+            advanced_provider = next(
+                (
+                    provider
+                    for provider in available_translation_provider_options(
+                        self._config.gui_language,
+                        include_advanced=True,
+                    )
+                    if provider.id == selected_translator_provider
+                ),
+                None,
+            )
+            if advanced_provider is not None:
+                translation_provider_options.append(advanced_provider)
+        for translator in translation_provider_options:
             self._translator_combo.addItem(translator.name, translator.id)
         self._translator_combo.setCurrentIndex(
-            max(0, self._translator_combo.findData(normalize_translator_provider(self._config.translator_provider)))
+            max(0, self._translator_combo.findData(selected_translator_provider))
         )
         self._translator_combo.currentIndexChanged.connect(self._translator_changed)
         self._nllb_model_combo = QComboBox()

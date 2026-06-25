@@ -35,6 +35,7 @@ from ai_player.services.subtitle_ocr import (
     normalize_ocr_provider,
 )
 from ai_player.services.transcript_cleanup import TranscriptCleaner
+from ai_player.services.translation import normalize_translator_provider
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
 from ai_player.services.tts import create_tts_provider
 from ai_player.services.tts_base import normalize_tts_provider, tts_output_suffix
@@ -153,7 +154,15 @@ def _preview_translation(config: AppConfig) -> tuple[str, str, str, str]:
     translated = translator.translate(source, "en")
     if not str(translated).strip():
         raise ProviderPreviewError("Translator returned an empty preview.")
-    return str(config.translator_provider), str(config.local_translation_model), str(translated).strip(), ""
+    provider = normalize_translator_provider(config.translator_provider)
+    model = str(config.local_translation_model)
+    message = (
+        f"Input: {source}\n"
+        f"Provider: {provider}\n"
+        f"Model: {model or 'none'}\n"
+        f"Output: {str(translated).strip()}"
+    )
+    return provider, model, message, ""
 
 
 def _preview_tts(config: AppConfig) -> tuple[str, str, str, str]:

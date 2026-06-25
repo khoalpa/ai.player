@@ -2333,17 +2333,15 @@ def test_player_window_applies_online_lite_preset_controls(qapp) -> None:
         window._sync_api_key_statuses()
         assert window._ocr_api_key_status.property("api_status_key") == "api_key_status_saved"
 
-        window._set_combo_data(window._translator_combo, "google_translate")
-        window._translator_api_key_edit.clear()
+        assert window._translator_combo.findData("nllb_ct2") >= 0
+        assert window._translator_combo.findData("nllb") >= 0
+        assert window._translator_combo.findData("none") >= 0
+        assert window._translator_combo.findData("azure_translator") == -1
+        assert window._translator_combo.findData("google_translate") == -1
+        assert window._translator_combo.findData("deepl") == -1
         window._sync_api_key_statuses()
-        window._save_settings()
-        assert window._config.translator_provider == "google_translate"
-        assert window._translator_combo.currentData() == "google_translate"
-        assert window._translator_api_key_edit.isEnabled()
-        assert window._translator_api_key_status.property("api_status_key") == "api_key_status_missing"
-        window._translator_api_key_edit.setText("google-key")
-        window._sync_api_key_statuses()
-        assert window._translator_api_key_status.property("api_status_key") == "api_key_status_saved"
+        assert not window._translator_api_key_edit.isEnabled()
+        assert window._translator_api_key_status.property("api_status_key") == "api_key_status_not_needed"
 
         assert window._tts_provider_combo.findData("none") >= 0
         assert window._tts_provider_combo.findData("vieneu") >= 0
@@ -2469,15 +2467,10 @@ def test_player_window_keeps_api_keys_per_provider_for_online_groups(qapp, monke
 
     window = PlayerWindow()
     try:
-        window._set_combo_data(window._translator_combo, "google_translate")
-        qapp.processEvents()
-        window._translator_api_key_edit.setText("google-key")
-        window._set_combo_data(window._translator_combo, "deepl")
-        qapp.processEvents()
-        assert window._translator_api_key_edit.text() == "deepl-key"
-        window._set_combo_data(window._translator_combo, "google_translate")
-        qapp.processEvents()
-        assert window._translator_api_key_edit.text() == "google-key"
+        assert window._translator_combo.findData("google_translate") == -1
+        assert window._translator_combo.findData("deepl") == -1
+        assert window._translator_combo.currentData() in {"nllb_ct2", "nllb", "none"}
+        assert not window._translator_api_key_edit.isEnabled()
 
         assert window._tts_provider_combo.findData("azure_tts") == -1
         assert window._tts_provider_combo.findData("amazon_polly") == -1
@@ -2508,7 +2501,6 @@ def test_player_window_keeps_api_keys_per_provider_for_online_groups(qapp, monke
         assert not window._speaker_gender_api_key_edit.isEnabled()
 
         window._save_settings()
-        assert saved["translator_api_key"]["google_translate"] == "google-key"
         assert saved["translator_api_key"]["deepl"] == "deepl-key"
         assert saved["tts_api_key"]["amazon_polly"] == "aws-access"
         assert saved["tts_api_secret"]["amazon_polly"] == "aws-secret"
@@ -2534,14 +2526,14 @@ def test_player_window_online_provider_consent_rejects_and_reverts(qapp, monkeyp
     try:
         window.show()
         qapp.processEvents()
-        previous = window._translator_combo.currentData()
+        previous = window._asr_provider_combo.currentData()
 
-        window._set_combo_data(window._translator_combo, "google_translate")
+        window._set_combo_data(window._asr_provider_combo, "assemblyai")
         qapp.processEvents()
 
-        assert window._translator_combo.currentData() == previous
+        assert window._asr_provider_combo.currentData() == previous
         assert messages
-        assert "google_translate" in messages[0][1]
+        assert "assemblyai" in messages[0][1]
         assert window.statusBar().currentMessage() == window._tr("online_provider_consent_rejected")
         window._settings_save_timer.stop()
     finally:
@@ -2629,6 +2621,24 @@ def test_player_window_preserves_selected_advanced_tts_provider(qapp, monkeypatc
         assert window._tts_provider_combo.findData("azure_tts") >= 0
         assert window._tts_provider_combo.findData("google_tts") == -1
         assert window._tts_provider_combo.findData("amazon_polly") == -1
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_preserves_selected_advanced_translation_provider(qapp, monkeypatch) -> None:
+    monkeypatch.setattr(
+        player_window_module,
+        "load_app_config",
+        lambda _default: AppConfig(translator_provider="deepl", translator_api_key="deepl-key"),
+    )
+
+    window = PlayerWindow()
+    try:
+        assert window._translator_combo.currentData() == "deepl"
+        assert window._translator_combo.findData("deepl") >= 0
+        assert window._translator_combo.findData("google_translate") == -1
+        assert window._translator_combo.findData("azure_translator") == -1
         window._settings_save_timer.stop()
     finally:
         window.close()

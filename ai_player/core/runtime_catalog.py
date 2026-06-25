@@ -86,6 +86,11 @@ DEFAULT_TRANSLATION_PROVIDERS = (
     ("NLLB Local", "nllb"),
     ("No translation", "none"),
 )
+DEFAULT_ADVANCED_TRANSLATION_PROVIDERS = (
+    ("Azure Translator", "azure_translator"),
+    ("Google Translate", "google_translate"),
+    ("DeepL", "deepl"),
+)
 DEFAULT_ONLINE_SPEAKER_GENDER_MODELS: tuple[tuple[str, str], ...] = ()
 DEFAULT_ONLINE_OCR_MODELS = (
     ("HF TrOCR base handwritten", "microsoft/trocr-base-handwritten"),
@@ -128,13 +133,25 @@ def available_language_options(*, include_auto: bool, language_id: str | None = 
     return options
 
 
-def available_translation_provider_options(language_id: str | None = None) -> list[RuntimeOption]:
+def available_translation_provider_options(
+    language_id: str | None = None,
+    *,
+    include_advanced: bool = False,
+) -> list[RuntimeOption]:
     options = available_dropdown_options(
         "translation_providers",
         defaults=DEFAULT_TRANSLATION_PROVIDERS,
         language_id=language_id,
     )
-    return [RuntimeOption(option.value, option.label) for option in options]
+    runtime_options = [RuntimeOption(option.value, option.label) for option in options]
+    if include_advanced:
+        seen = {option.id for option in runtime_options}
+        runtime_options.extend(
+            RuntimeOption(value, label)
+            for label, value in DEFAULT_ADVANCED_TRANSLATION_PROVIDERS
+            if value not in seen
+        )
+    return runtime_options
 
 
 def available_dropdown_options(

@@ -21,7 +21,10 @@ def test_translation_preview_uses_configured_translator(monkeypatch) -> None:
     result = provider_preview.preview_provider("translation", AppConfig(translator_provider="none"))
 
     assert result.provider == "none"
-    assert result.message == "Ban dich mau"
+    assert "Input: Hello, this is a quick AI Player provider preview." in result.message
+    assert "Provider: none" in result.message
+    assert "Model: " in result.message
+    assert "Output: Ban dich mau" in result.message
 
 
 def test_cleanup_preview_enables_light_mode_when_cleanup_is_off(monkeypatch) -> None:

@@ -36,10 +36,15 @@ def test_available_translation_provider_options_uses_language_pack_labels() -> N
     assert [option.id for option in english] == [
         "nllb_ct2",
         "nllb",
+        "none",
+    ]
+    assert [option.id for option in catalog.available_translation_provider_options("en", include_advanced=True)] == [
+        "nllb_ct2",
+        "nllb",
+        "none",
         "azure_translator",
         "google_translate",
         "deepl",
-        "none",
     ]
     assert english[-1].name == "No translation"
     assert vietnamese[-1].name == "Không dịch"
