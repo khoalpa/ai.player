@@ -85,8 +85,6 @@ def build_models_settings_tab(
         ("cleanup_group", cleanup_grid),
     ):
         layout.addWidget(_settings_section_card(owner, title_key, section))
-    layout.addWidget(owner._section_title("provider_preview_group"))
-    layout.addWidget(owner._provider_preview_status)
     layout.addStretch(1)
     return tab
 

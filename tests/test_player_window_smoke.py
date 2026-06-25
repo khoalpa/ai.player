@@ -2611,6 +2611,17 @@ def test_player_window_cleanup_online_consent_waits_until_cleanup_is_enabled(qap
         window.close()
 
 
+def test_player_window_provider_preview_status_is_not_duplicated(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        assert window._speaker_gender_preview_status.parent() is not None
+        assert window._cleanup_preview_status.parent() is not None
+        assert window._provider_preview_status.parent() is None
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
 def test_player_window_readiness_wizard_applies_meeting_document_profile(qapp) -> None:
     window = PlayerWindow()
     try:
