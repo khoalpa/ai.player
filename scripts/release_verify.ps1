@@ -56,8 +56,15 @@ try {
         $LogPath = Join-Path $RunRoot "$Name.log"
         Write-Output "==> $Name"
         $Started = Get-Date
-        $Output = & $FilePath @Arguments 2>&1
-        $ExitCode = if ($null -ne $global:LASTEXITCODE) { $global:LASTEXITCODE } else { 0 }
+        $Output = @()
+        $ExitCode = 0
+        try {
+            $Output = & $FilePath @Arguments 2>&1
+            $ExitCode = if ($null -ne $global:LASTEXITCODE) { $global:LASTEXITCODE } else { 0 }
+        } catch {
+            $Output = @($Output) + @("$_")
+            $ExitCode = 1
+        }
         $Output | Tee-Object -FilePath $LogPath
         $Finished = Get-Date
         $Step = [ordered]@{
@@ -118,10 +125,12 @@ try {
         if ($RequireSignature) {
             $BuildArgs += "-RequireSignature"
         }
+        $BuildScript = Join-Path $ProjectRoot "scripts\build_portable.ps1"
+        $BuildCommandArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $BuildScript) + $BuildArgs
         Invoke-ReleaseStep `
             -Name "build-$($Profile.ToLowerInvariant())" `
-            -FilePath (Join-Path $ProjectRoot "scripts\build_portable.ps1") `
-            -Arguments $BuildArgs
+            -FilePath "powershell.exe" `
+            -Arguments $BuildCommandArgs
         Invoke-ReleaseStep `
             -Name "launch-$($Profile.ToLowerInvariant())" `
             -FilePath (Join-Path $ProjectRoot "scripts\smoke_launch_app.ps1") `
