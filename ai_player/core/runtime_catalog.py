@@ -98,8 +98,6 @@ DEFAULT_ONLINE_OCR_MODELS = (
 DEFAULT_ONLINE_TRANSCRIPT_CLEANUP_MODELS = (
     ("Groq Llama 3.1 8B Instant", "llama-3.1-8b-instant"),
     ("Gemini 2.5 Flash Lite", "gemini-2.5-flash-lite"),
-    ("OpenRouter Free Router", "openrouter/free"),
-    ("HF Llama 3.1 8B Instruct", "meta-llama/Llama-3.1-8B-Instruct"),
 )
 LANGUAGE_PACKS_DIR = RESOURCE_ROOT / "languages"
 LANGUAGE_PACK_FALLBACKS = ("vi", "en", "vietnamese", "english")

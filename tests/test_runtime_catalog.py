@@ -45,6 +45,18 @@ def test_available_translation_provider_options_uses_language_pack_labels() -> N
     assert vietnamese[-1].name == "Không dịch"
 
 
+def test_transcript_cleanup_provider_options_are_primary_profiles_only() -> None:
+    english = catalog.available_dropdown_options("transcript_cleanup_providers", language_id="en")
+    vietnamese = catalog.available_dropdown_options("transcript_cleanup_providers", language_id="vi")
+
+    expected = ["ollama", "local", "groq", "gemini"]
+    assert [option.value for option in english] == expected
+    assert [option.value for option in vietnamese] == expected
+    assert "openrouter" not in {option.value for option in english}
+    assert "huggingface" not in {option.value for option in english}
+    assert "openai" not in {option.value for option in english}
+
+
 @pytest.mark.parametrize(
     ("data", "value", "label"),
     [
@@ -84,6 +96,8 @@ def test_available_local_llm_options_skips_tts_gguf(monkeypatch, tmp_path) -> No
 
     assert "Qwen" in [option.name for option in options]
     assert catalog.RuntimeOption("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite") in options
+    assert catalog.RuntimeOption("openrouter/free", "OpenRouter Free Router") not in options
+    assert catalog.RuntimeOption("meta-llama/Llama-3.1-8B-Instruct", "HF Llama 3.1 8B Instruct") not in options
 
 
 def test_available_asr_models_scans_local_whisper_dirs(monkeypatch, tmp_path) -> None:

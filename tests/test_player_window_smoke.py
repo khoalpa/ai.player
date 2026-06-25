@@ -2371,6 +2371,39 @@ def test_player_window_applies_online_lite_preset_controls(qapp) -> None:
         window.close()
 
 
+def test_player_window_cleanup_ui_uses_primary_provider_profiles(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        assert window._transcript_cleanup_provider_combo.findData("local") >= 0
+        assert window._transcript_cleanup_provider_combo.findData("ollama") >= 0
+        assert window._transcript_cleanup_provider_combo.findData("groq") >= 0
+        assert window._transcript_cleanup_provider_combo.findData("gemini") >= 0
+        assert window._transcript_cleanup_provider_combo.findData("openai") == -1
+        assert window._transcript_cleanup_provider_combo.findData("openrouter") == -1
+        assert window._transcript_cleanup_provider_combo.findData("huggingface") == -1
+
+        window._set_combo_data(window._transcript_cleanup_mode_combo, "light")
+        window._set_combo_data(window._transcript_cleanup_provider_combo, "local")
+        window._transcript_cleanup_api_base_edit.setText("https://old.example/v1")
+        window._transcript_cleanup_api_key_edit.setText("old-key")
+        window._sync_transcript_cleanup_controls()
+        assert not window._transcript_cleanup_api_base_edit.isEnabled()
+        assert not window._transcript_cleanup_api_key_edit.isEnabled()
+        assert window._transcript_cleanup_api_base_edit.text() == ""
+        assert window._transcript_cleanup_api_key_edit.text() == ""
+        assert window._transcript_cleanup_api_key_status.property("api_status_key") == "api_key_status_not_needed"
+
+        window._set_combo_data(window._transcript_cleanup_provider_combo, "ollama")
+        window._transcript_cleanup_api_key_edit.setText("old-key")
+        window._sync_transcript_cleanup_controls()
+        assert window._transcript_cleanup_api_base_edit.isEnabled()
+        assert not window._transcript_cleanup_api_key_edit.isEnabled()
+        assert window._cleanup_timeout_slider.isEnabled()
+        assert window._transcript_cleanup_api_key_edit.text() == ""
+    finally:
+        window.close()
+
+
 def test_player_window_keeps_asr_api_keys_per_provider(qapp, monkeypatch) -> None:
     monkeypatch.setattr(
         player_window_settings,

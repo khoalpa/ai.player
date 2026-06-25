@@ -79,6 +79,8 @@ def _normalize_transcript_cleanup_provider(value: object) -> str:
 
 
 class PlayerSettingsMixin:
+    _PRIMARY_TRANSCRIPT_CLEANUP_API_PROVIDERS = {"ollama", "groq", "gemini"}
+    _PRIMARY_TRANSCRIPT_CLEANUP_KEY_PROVIDERS = {"groq", "gemini"}
     _ONLINE_PROVIDER_DETAIL_KEYS = {
         "asr": "runtime_privacy_detail_asr",
         "ocr": "runtime_privacy_detail_ocr",
@@ -642,12 +644,16 @@ class PlayerSettingsMixin:
         provider = self._selected_transcript_cleanup_provider()
         self._transcript_cleanup_provider_combo.setEnabled(enabled)
         self._transcript_cleanup_model_combo.setEnabled(enabled)
-        api_providers = {"ollama", "openai", "groq", "gemini", "openrouter", "huggingface"}
-        key_providers = {"openai", "groq", "gemini", "openrouter", "huggingface"}
+        api_providers = self._PRIMARY_TRANSCRIPT_CLEANUP_API_PROVIDERS
+        key_providers = self._PRIMARY_TRANSCRIPT_CLEANUP_KEY_PROVIDERS
         self._transcript_cleanup_api_base_edit.setEnabled(enabled and provider in api_providers)
         self._transcript_cleanup_api_key_edit.setEnabled(enabled and provider in key_providers)
         self._cleanup_timeout_slider.setEnabled(enabled and provider in api_providers)
         self._cleanup_timeout_value.setEnabled(enabled and provider in api_providers)
+        if provider not in api_providers and self._transcript_cleanup_api_base_edit.text():
+            self._transcript_cleanup_api_base_edit.clear()
+        if provider not in key_providers and self._transcript_cleanup_api_key_edit.text():
+            self._transcript_cleanup_api_key_edit.clear()
         self._sync_api_key_statuses()
 
     def _sync_vieneu_advanced_controls(self, *_args) -> None:
@@ -724,13 +730,7 @@ class PlayerSettingsMixin:
 
         cleanup_provider = self._selected_transcript_cleanup_provider()
         cleanup_enabled = self._selected_transcript_cleanup_mode() != "off"
-        cleanup_key_required = cleanup_enabled and cleanup_provider in {
-            "openai",
-            "groq",
-            "gemini",
-            "openrouter",
-            "huggingface",
-        }
+        cleanup_key_required = cleanup_enabled and cleanup_provider in self._PRIMARY_TRANSCRIPT_CLEANUP_KEY_PROVIDERS
         self._set_api_key_status(
             self._transcript_cleanup_api_key_status,
             required=cleanup_key_required,
@@ -811,13 +811,10 @@ class PlayerSettingsMixin:
             ),
         )
         cleanup_provider = self._selected_transcript_cleanup_provider()
-        cleanup_required = self._selected_transcript_cleanup_mode() != "off" and cleanup_provider in {
-            "openai",
-            "groq",
-            "gemini",
-            "openrouter",
-            "huggingface",
-        }
+        cleanup_required = (
+            self._selected_transcript_cleanup_mode() != "off"
+            and cleanup_provider in self._PRIMARY_TRANSCRIPT_CLEANUP_KEY_PROVIDERS
+        )
         self._set_model_status_pill(
             "model_status_cleanup",
             self._tr("model_status_cleanup"),

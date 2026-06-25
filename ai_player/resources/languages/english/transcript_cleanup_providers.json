@@ -9,24 +9,12 @@
       "label": "Local"
     },
     {
-      "value": "openai",
-      "label": "OpenAI-compatible"
-    },
-    {
       "value": "groq",
       "label": "Groq"
     },
     {
       "value": "gemini",
       "label": "Google Gemini"
-    },
-    {
-      "value": "openrouter",
-      "label": "OpenRouter Free"
-    },
-    {
-      "value": "huggingface",
-      "label": "Hugging Face"
     }
   ]
 }
