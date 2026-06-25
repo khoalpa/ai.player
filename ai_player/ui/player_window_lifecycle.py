@@ -63,22 +63,4 @@ class PlayerLifecycleMixin:
             self._clamping_to_screen = False
 
     def _stop_worker_attr(self, attr_name: str, wait_ms: int = 5000) -> bool:
-        worker = getattr(self, attr_name, None)
-        if worker is None:
-            return True
-        stop = getattr(worker, "stop", None)
-        if callable(stop):
-            stop()
-        else:
-            request_interruption = getattr(worker, "requestInterruption", None)
-            if callable(request_interruption):
-                request_interruption()
-            quit_worker = getattr(worker, "quit", None)
-            if callable(quit_worker):
-                quit_worker()
-        if hasattr(worker, "wait") and not worker.wait(wait_ms):
-            return False
-        if hasattr(worker, "deleteLater"):
-            worker.deleteLater()
-        setattr(self, attr_name, None)
-        return True
+        return self._worker_lifecycle_state.stop_owner_worker(self, attr_name, wait_ms=wait_ms)

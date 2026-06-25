@@ -330,3 +330,52 @@ def test_worker_lifecycle_state_keeps_terminal_export_from_cancelled_path() -> N
 
     assert state.finish_export(worker, terminal=True) is False
     assert state.export_worker is None
+
+
+def test_worker_lifecycle_state_stops_owner_worker_with_stop_method() -> None:
+    calls = []
+
+    class Worker:
+        def stop(self) -> None:
+            calls.append("stop")
+
+        def wait(self, wait_ms: int) -> bool:
+            calls.append(("wait", wait_ms))
+            return True
+
+        def deleteLater(self) -> None:
+            calls.append("delete")
+
+    worker = Worker()
+    owner = SimpleNamespace(_export_worker=worker)
+    state = WorkerLifecycleState()
+
+    assert state.stop_owner_worker(owner, "_export_worker", wait_ms=25) is True
+    assert owner._export_worker is None
+    assert calls == ["stop", ("wait", 25), "delete"]
+
+
+def test_worker_lifecycle_state_keeps_worker_when_wait_fails() -> None:
+    calls = []
+
+    class Worker:
+        def requestInterruption(self) -> None:
+            calls.append("interrupt")
+
+        def quit(self) -> None:
+            calls.append("quit")
+
+        def wait(self, wait_ms: int) -> bool:
+            calls.append(("wait", wait_ms))
+            return False
+
+        def deleteLater(self) -> None:
+            calls.append("delete")
+
+    worker = Worker()
+    owner = SimpleNamespace(_document_worker=worker)
+    state = WorkerLifecycleState()
+
+    assert state.stop_owner_worker(owner, "_document_worker", wait_ms=50) is False
+    assert owner._document_worker is worker
+    assert calls == ["interrupt", "quit", ("wait", 50)]

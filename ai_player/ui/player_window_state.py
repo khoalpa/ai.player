@@ -282,3 +282,32 @@ class WorkerLifecycleState:
             return False
         self.export_worker = None
         return not terminal
+
+    def stop_owner_worker(self, owner: object, attr_name: str, *, wait_ms: int = 5000) -> bool:
+        worker = getattr(owner, attr_name, None)
+        if worker is None:
+            return True
+        if not self.stop_worker(worker, wait_ms=wait_ms):
+            return False
+        setattr(owner, attr_name, None)
+        return True
+
+    @staticmethod
+    def stop_worker(worker: object, *, wait_ms: int = 5000) -> bool:
+        stop = getattr(worker, "stop", None)
+        if callable(stop):
+            stop()
+        else:
+            request_interruption = getattr(worker, "requestInterruption", None)
+            if callable(request_interruption):
+                request_interruption()
+            quit_worker = getattr(worker, "quit", None)
+            if callable(quit_worker):
+                quit_worker()
+        wait = getattr(worker, "wait", None)
+        if callable(wait) and not wait(wait_ms):
+            return False
+        delete_later = getattr(worker, "deleteLater", None)
+        if callable(delete_later):
+            delete_later()
+        return True
