@@ -58,7 +58,8 @@ try {
         -CodeSigningPfxPassword $CodeSigningPfxPassword `
         -TimestampServer $TimestampServer `
         -RequireSignature:$RequireSignature `
-        -ListCodeSigningCerts:$ListCodeSigningCerts
+        -ListCodeSigningCerts:$ListCodeSigningCerts `
+        -AllowInternalPlugins
 
     if ($ExtraYtdlpHosts -and (Test-Path $PortableLauncher)) {
         $EscapedHosts = $ExtraYtdlpHosts.Replace("%", "%%")

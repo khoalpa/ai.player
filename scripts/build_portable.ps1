@@ -7,7 +7,8 @@ param(
     [string]$TimestampServer = "http://timestamp.digicert.com",
     [switch]$RequireSignature,
     [switch]$ListCodeSigningCerts,
-    [switch]$SkipReleaseWorktreeCheck
+    [switch]$SkipReleaseWorktreeCheck,
+    [switch]$AllowInternalPlugins
 )
 
 $ErrorActionPreference = "Stop"
@@ -179,6 +180,41 @@ if ($ListCodeSigningCerts) {
     $Certificates | Format-Table -AutoSize Store, Subject, Thumbprint, NotAfter
     exit 0
 }
+
+function Test-TruthyEnvironmentValue {
+    param([string]$Value)
+
+    return $Value.Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")
+}
+
+function Assert-PublicBuildPluginScope {
+    if ($AllowInternalPlugins) {
+        return
+    }
+
+    $Blocked = New-Object System.Collections.Generic.List[string]
+    if (Test-TruthyEnvironmentValue -Value "$env:AI_PLAYER_INCLUDE_EXTRA_YTDLP_PLUGINS") {
+        $Blocked.Add("AI_PLAYER_INCLUDE_EXTRA_YTDLP_PLUGINS")
+    }
+    if (Test-TruthyEnvironmentValue -Value "$env:AI_PLAYER_INCLUDE_PRIVATE_TELEGRAM_PLUGIN") {
+        $Blocked.Add("AI_PLAYER_INCLUDE_PRIVATE_TELEGRAM_PLUGIN")
+    }
+    if ("$env:AI_PLAYER_EXTRA_YTDLP_HOSTS".Trim()) {
+        $Blocked.Add("AI_PLAYER_EXTRA_YTDLP_HOSTS")
+    }
+
+    if ($Blocked.Count -gt 0) {
+        $BlockedLines = $Blocked | ForEach-Object { "  - $_" }
+        $Message = (@(
+            "Public portable builds must not include internal/private plugin configuration.",
+            "Unset these variables, or use .\scripts\build_internal.ps1 for internal artifacts:",
+            ""
+        ) + $BlockedLines) -join [Environment]::NewLine
+        throw $Message
+    }
+}
+
+Assert-PublicBuildPluginScope
 
 if (-not $SkipReleaseWorktreeCheck) {
     $ReleaseWorktreeCheck = Join-Path $ProjectRoot "scripts\check_release_worktree.ps1"

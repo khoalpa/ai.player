@@ -88,6 +88,93 @@ def test_njav_ie_follows_embed_player_and_hls_url() -> None:
     assert m3u8_url == "https://upload18.org/play/token_hash?hash=abc&x=1"
 
 
+def test_njav_ie_real_extract_follows_embed_player_and_hls(monkeypatch) -> None:
+    extractor = NJAVIE(YoutubeDL({"quiet": True, "no_warnings": True}))
+    page_url = "https://www.njav.com/vi/xvideos/rki-729-uncensored-leak"
+    embed_url = "https://www.njav.com/vv/rki-729-uncensored-leak"
+    player_url = "https://www.njav.com/jm/token"
+    final_player_url = "https://upload18.org/play/index/rki-729-uncensored-leak"
+    hls_url = "https://upload18.org/play/token_hash?hash=abc&x=1"
+    downloaded_pages = []
+    m3u8_calls = []
+
+    class FakeUrlHandle:
+        def geturl(self) -> str:
+            return final_player_url
+
+    def fake_download_webpage(url, video_id, note=None, headers=None):
+        downloaded_pages.append((url, video_id, note, headers))
+        if url == page_url:
+            return f"""
+            <html>
+              <head>
+                <meta property="og:title" content="Demo NJAV title">
+                <meta property="og:image" content="/thumb.webp">
+              </head>
+              <body><script>{{"embedUrl":"{embed_url}"}}</script></body>
+            </html>
+            """
+        if url == embed_url:
+            return f"""<script>videoFrame.src = "{player_url}";</script>"""
+        raise AssertionError(f"Unexpected webpage URL: {url}")
+
+    def fake_download_webpage_handle(url, video_id, note=None, headers=None):
+        assert url == player_url
+        assert video_id == "rki-729-uncensored-leak"
+        assert "player frame" in note
+        assert headers == NJAVIE._adult_site_headers(embed_url)
+        return (
+            """<script>window.PLAYER_CONFIG = {m3u8: "/play/token_hash?hash=abc&amp;x=1"};</script>""",
+            FakeUrlHandle(),
+        )
+
+    def fake_extract_m3u8_formats(media_url, video_id, ext, m3u8_id, fatal, headers):
+        m3u8_calls.append(
+            {
+                "media_url": media_url,
+                "video_id": video_id,
+                "ext": ext,
+                "m3u8_id": m3u8_id,
+                "fatal": fatal,
+                "headers": headers,
+            }
+        )
+        return [{"url": media_url, "format_id": "hls-720p", "height": 720}]
+
+    monkeypatch.setattr(extractor, "_download_webpage", fake_download_webpage)
+    monkeypatch.setattr(extractor, "_download_webpage_handle", fake_download_webpage_handle)
+    monkeypatch.setattr(extractor, "_extract_m3u8_formats", fake_extract_m3u8_formats)
+
+    result = extractor._real_extract(page_url)
+
+    assert result == {
+        "id": "rki-729-uncensored-leak",
+        "title": "Demo NJAV title",
+        "thumbnail": "https://www.njav.com/thumb.webp",
+        "age_limit": 18,
+        "formats": [{"url": hls_url, "format_id": "hls-720p", "height": 720}],
+    }
+    assert downloaded_pages == [
+        (page_url, "rki-729-uncensored-leak", None, NJAVIE._adult_site_headers(page_url)),
+        (
+            embed_url,
+            "rki-729-uncensored-leak",
+            "Downloading embedded player webpage",
+            NJAVIE._adult_site_headers(page_url),
+        ),
+    ]
+    assert m3u8_calls == [
+        {
+            "media_url": hls_url,
+            "video_id": "rki-729-uncensored-leak",
+            "ext": "mp4",
+            "m3u8_id": "hls",
+            "fatal": False,
+            "headers": NJAVIE._adult_site_headers(final_player_url),
+        }
+    ]
+
+
 def test_vlxx_ie_extracts_mp4_url_from_webpage() -> None:
     extractor = VLXXIE(YoutubeDL({"quiet": True, "no_warnings": True}))
 

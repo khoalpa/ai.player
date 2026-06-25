@@ -46,3 +46,19 @@ def test_release_worktree_gate_checks_untracked_source_and_plugins() -> None:
     assert "check_release_worktree.ps1 -FailOnModified" in portable_build
     assert "-SkipReleaseWorktreeCheck" in checklist
     assert "-SkipReleaseWorktreeCheck" in portable_build
+
+
+def test_public_build_rejects_internal_plugin_environment() -> None:
+    build_script = (PROJECT_ROOT / "scripts" / "build_portable.ps1").read_text(encoding="utf-8")
+    internal_build_script = (PROJECT_ROOT / "scripts" / "build_internal.ps1").read_text(encoding="utf-8")
+    spec = (PROJECT_ROOT / "AI Player.spec").read_text(encoding="utf-8")
+
+    assert "[switch]$AllowInternalPlugins" in build_script
+    assert "Assert-PublicBuildPluginScope" in build_script
+    assert "AI_PLAYER_INCLUDE_EXTRA_YTDLP_PLUGINS" in build_script
+    assert "AI_PLAYER_INCLUDE_PRIVATE_TELEGRAM_PLUGIN" in build_script
+    assert "AI_PLAYER_EXTRA_YTDLP_HOSTS" in build_script
+    assert "Public portable builds must not include internal/private plugin configuration." in build_script
+    assert "-AllowInternalPlugins" in internal_build_script
+    assert "AI_PLAYER_INCLUDE_EXTRA_YTDLP_PLUGINS" in spec
+    assert "AI_PLAYER_INCLUDE_PRIVATE_TELEGRAM_PLUGIN" in spec
