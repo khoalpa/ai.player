@@ -49,6 +49,22 @@ try {
         $Summary | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $SummaryPath -Encoding UTF8
     }
 
+    function Join-ProcessArguments {
+        param([string[]]$Values)
+
+        $Quoted = foreach ($Value in $Values) {
+            $Text = "$Value"
+            if (-not $Text) {
+                '""'
+            } elseif ($Text -match '[\s"]') {
+                '"' + $Text.Replace('"', '\"') + '"'
+            } else {
+                $Text
+            }
+        }
+        return ($Quoted -join " ")
+    }
+
     function Invoke-ReleaseStep {
         param(
             [string]$Name,
@@ -68,9 +84,7 @@ try {
             $StartInfo.UseShellExecute = $false
             $StartInfo.RedirectStandardOutput = $true
             $StartInfo.RedirectStandardError = $true
-            foreach ($Argument in $Arguments) {
-                $StartInfo.ArgumentList.Add($Argument)
-            }
+            $StartInfo.Arguments = Join-ProcessArguments $Arguments
             $Process = [System.Diagnostics.Process]::new()
             $Process.StartInfo = $StartInfo
             if (-not $Process.Start()) {
