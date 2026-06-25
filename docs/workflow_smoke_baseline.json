@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "samples": {
+    "demo_video": {
+      "description": "Short ASR/export input fixture with both video and audio streams.",
+      "path": "samples/demo-video.mp4",
+      "required": true,
+      "min_duration_seconds": 3.8,
+      "max_duration_seconds": 4.2,
+      "min_file_size_bytes": 50000,
+      "max_file_size_bytes": 120000,
+      "has_audio_stream": true,
+      "has_video_stream": true
+    },
+    "demo_transcript": {
+      "description": "Short transcript fixture for transcript, translation, TTS, and export smoke checks.",
+      "path": "samples/demo-transcript.srt",
+      "required": true,
+      "segment_count": 2,
+      "min_file_size_bytes": 50,
+      "max_file_size_bytes": 500
+    }
+  },
+  "workflow_expectations": {
+    "asr": {
+      "input_sample": "demo_video",
+      "min_segment_count": 0
+    },
+    "translation": {
+      "input_text": "Hello, this is an AI Player benchmark.",
+      "source_language": "en"
+    },
+    "tts": {
+      "input_text": "Hello AI Player smoke test.",
+      "min_output_duration_seconds": 0.5
+    },
+    "export": {
+      "input_sample": "demo_video",
+      "input_transcript": "demo_transcript",
+      "min_output_duration_seconds": 0.5,
+      "audio_export_requires_audio_stream": true,
+      "video_export_requires_audio_stream": true,
+      "video_export_requires_video_stream": true
+    }
+  }
+}
