@@ -536,7 +536,7 @@ class PlayerExportMixin:
             if self._export_dialog is not None:
                 self._export_dialog.mark_cancelled(self._tr("status_cancel_export"))
             self._clear_background_task_detail("Export")
-        worker.deleteLater()
+        self._worker_lifecycle_state.delete_worker(worker)
 
     def _choose_export_range(self) -> ExportRange | None:
         duration_seconds = max(0.0, self._player.get_length_ms() / 1000.0)

@@ -35,6 +35,36 @@ def test_media_processing_state_tracks_worker_runtime_flags() -> None:
     assert state.source_filter_restart_pending is True
 
 
+def test_media_processing_state_controls_source_filter_worker() -> None:
+    worker = object()
+    other_worker = object()
+    state = MediaProcessingState()
+
+    state.begin_source_filter(worker, mode="fast", model="htdemucs")
+
+    assert state.source_filter_worker is worker
+    assert state.source_filter_worker_mode == "fast"
+    assert state.source_filter_worker_model == "htdemucs"
+    assert state.finish_source_filter(other_worker) is False
+    assert state.source_filter_worker is worker
+    assert state.finish_source_filter(worker) is True
+    assert state.source_filter_worker is None
+
+
+def test_media_processing_state_controls_playback_compat_worker() -> None:
+    worker = object()
+    other_worker = object()
+    state = MediaProcessingState()
+
+    state.begin_playback_compat(worker)
+
+    assert state.playback_compat_worker is worker
+    assert state.finish_playback_compat(other_worker) is False
+    assert state.playback_compat_worker is worker
+    assert state.finish_playback_compat(worker) is True
+    assert state.playback_compat_worker is None
+
+
 def test_runtime_status_state_keeps_runtime_tab_values() -> None:
     state = RuntimeStatusState(
         last_wall=1.5,
@@ -322,6 +352,44 @@ def test_worker_lifecycle_state_controls_export_worker() -> None:
     assert state.finish_export(worker, terminal=False) is True
     assert state.export_worker is None
     assert state.request_export_stop() is False
+
+
+def test_worker_lifecycle_state_controls_document_worker() -> None:
+    worker = object()
+    other_worker = object()
+    state = WorkerLifecycleState()
+
+    state.begin_document(worker)
+
+    assert state.document_worker is worker
+    assert state.finish_document(other_worker) is False
+    assert state.document_worker is worker
+    assert state.finish_document(worker) is True
+    assert state.document_worker is None
+
+
+def test_worker_lifecycle_state_controls_telegram_worker() -> None:
+    worker = object()
+    other_worker = object()
+    state = WorkerLifecycleState()
+
+    state.begin_telegram(worker)
+
+    assert state.telegram_worker is worker
+    assert state.finish_telegram(other_worker) is False
+    assert state.telegram_worker is worker
+    assert state.finish_telegram(worker) is True
+    assert state.telegram_worker is None
+
+
+def test_worker_lifecycle_state_deletes_worker_when_supported() -> None:
+    calls = []
+    worker = SimpleNamespace(deleteLater=lambda: calls.append("delete"))
+
+    WorkerLifecycleState.delete_worker(worker)
+    WorkerLifecycleState.delete_worker(object())
+
+    assert calls == ["delete"]
 
 
 def test_worker_lifecycle_state_keeps_terminal_export_from_cancelled_path() -> None:

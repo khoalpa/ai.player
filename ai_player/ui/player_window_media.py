@@ -110,20 +110,19 @@ class PlayerMediaMixin:
         mode = self._selected_source_filter_mode()
         model = self._selected_source_filter_model()
         output_path = self._source_filter_output_path(source_path, mode, model)
-        self._source_filter_worker_mode = mode
-        self._source_filter_worker_model = model
-        self._source_filter_worker = SourceAudioFilterWorker(
+        worker = SourceAudioFilterWorker(
             source_path,
             output_path,
             mode,
             model,
             self,
         )
-        self._source_filter_worker.ready.connect(self._source_audio_filter_ready)
-        self._source_filter_worker.failed.connect(self._source_audio_filter_failed)
-        self._source_filter_worker.warning.connect(self._source_audio_filter_warning)
-        self._source_filter_worker.finished.connect(self._source_audio_filter_finished)
-        self._source_filter_worker.start()
+        self._media_processing_state.begin_source_filter(worker, mode=mode, model=model)
+        worker.ready.connect(self._source_audio_filter_ready)
+        worker.failed.connect(self._source_audio_filter_failed)
+        worker.warning.connect(self._source_audio_filter_warning)
+        worker.finished.connect(lambda worker=worker: self._source_audio_filter_finished(worker))
+        worker.start()
         message = self._tr("status_source_filter_preparing")
         self._set_background_task_detail("Source voice filter", message)
         self.statusBar().showMessage(message)
@@ -163,10 +162,10 @@ class PlayerMediaMixin:
             self._set_background_task_detail("Source voice filter", detail)
             self.statusBar().showMessage(self._tr("status_source_filter_warning").format(detail=detail))
 
-    def _source_audio_filter_finished(self) -> None:
-        if self._source_filter_worker is not None:
-            self._source_filter_worker.deleteLater()
-            self._source_filter_worker = None
+    def _source_audio_filter_finished(self, worker=None) -> None:
+        worker = worker or self._source_filter_worker
+        if worker is not None and self._media_processing_state.finish_source_filter(worker):
+            self._worker_lifecycle_state.delete_worker(worker)
         if self._source_filter_restart_pending and self._video_path and self._source_filter_check.isChecked():
             self._source_filter_restart_pending = False
             self._start_source_audio_filter(self._video_path)
@@ -176,11 +175,12 @@ class PlayerMediaMixin:
             return
         output_path = self._playback_compat_output_path(source_path)
         cache_key = self._playback_compat_cache_key(source_path)
-        self._playback_compat_worker = PlaybackCompatibilityWorker(source_path, output_path, cache_key, self)
-        self._playback_compat_worker.ready.connect(self._playback_compat_ready)
-        self._playback_compat_worker.failed.connect(self._playback_compat_failed)
-        self._playback_compat_worker.finished.connect(self._playback_compat_finished)
-        self._playback_compat_worker.start()
+        worker = PlaybackCompatibilityWorker(source_path, output_path, cache_key, self)
+        self._media_processing_state.begin_playback_compat(worker)
+        worker.ready.connect(self._playback_compat_ready)
+        worker.failed.connect(self._playback_compat_failed)
+        worker.finished.connect(lambda worker=worker: self._playback_compat_finished(worker))
+        worker.start()
         message = self._tr("status_playback_compat_preparing")
         self._set_background_task_detail("Playback compatibility", message)
         self.statusBar().showMessage(message)
@@ -203,10 +203,10 @@ class PlayerMediaMixin:
             self._set_background_task_detail("Playback compatibility", detail)
             self.statusBar().showMessage(self._tr("status_playback_compat_failed").format(detail=detail))
 
-    def _playback_compat_finished(self) -> None:
-        if self._playback_compat_worker is not None:
-            self._playback_compat_worker.deleteLater()
-            self._playback_compat_worker = None
+    def _playback_compat_finished(self, worker=None) -> None:
+        worker = worker or self._playback_compat_worker
+        if worker is not None and self._media_processing_state.finish_playback_compat(worker):
+            self._worker_lifecycle_state.delete_worker(worker)
 
     @staticmethod
     def _can_filter_source_audio(source_path: str) -> bool:

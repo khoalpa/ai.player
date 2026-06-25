@@ -365,17 +365,18 @@ class PlayerSourceMixin:
         self._source_label.setText(path)
         self._set_document_opening_controls(False)
         self.statusBar().showMessage(self._tr("status_open_document_loading"))
-        self._document_worker = DocumentTranscriptWorker(
+        worker = DocumentTranscriptWorker(
             path,
             start_dubbing,
             seconds_per_segment=6,
             language_id=self._config.gui_language,
             parent=self,
         )
-        self._document_worker.ready.connect(self._document_transcript_ready)
-        self._document_worker.failed.connect(self._document_transcript_failed)
-        self._document_worker.finished.connect(self._document_worker_finished)
-        self._document_worker.start()
+        self._worker_lifecycle_state.begin_document(worker)
+        worker.ready.connect(self._document_transcript_ready)
+        worker.failed.connect(self._document_transcript_failed)
+        worker.finished.connect(lambda worker=worker: self._document_worker_finished(worker))
+        worker.start()
 
     def _document_transcript_ready(self, transcript, start_dubbing: bool) -> None:
         self._apply_document_transcript(transcript, start_dubbing)
@@ -414,10 +415,10 @@ class PlayerSourceMixin:
         QMessageBox.warning(self, self._tr("open_document_error_title"), message)
         self.statusBar().showMessage(self._tr("status_open_document_failed"))
 
-    def _document_worker_finished(self) -> None:
-        if self._document_worker is not None:
-            self._document_worker.deleteLater()
-            self._document_worker = None
+    def _document_worker_finished(self, worker=None) -> None:
+        worker = worker or self._document_worker
+        if worker is not None and self._worker_lifecycle_state.finish_document(worker):
+            self._worker_lifecycle_state.delete_worker(worker)
         self._set_document_opening_controls(True)
 
     def _set_document_opening_controls(self, enabled: bool) -> None:
@@ -1576,9 +1577,8 @@ class PlayerSourceMixin:
         )
 
     def _telegram_worker_finished(self, worker) -> None:
-        worker.deleteLater()
-        if self._telegram_worker is worker:
-            self._telegram_worker = None
+        self._worker_lifecycle_state.delete_worker(worker)
+        if self._worker_lifecycle_state.finish_telegram(worker):
             if not self._url_is_opening():
                 self._set_telegram_opening_controls(True)
             if getattr(worker, "operation", "") != "download":

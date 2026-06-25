@@ -37,6 +37,26 @@ class MediaProcessingState:
     source_filter_cache: dict[str, str] = field(default_factory=dict)
     playback_compat_cache: dict[str, str] = field(default_factory=dict)
 
+    def begin_source_filter(self, worker: object, *, mode: str, model: str) -> None:
+        self.source_filter_worker = worker
+        self.source_filter_worker_mode = str(mode or "")
+        self.source_filter_worker_model = str(model or "")
+
+    def finish_source_filter(self, worker: object | None = None) -> bool:
+        if worker is not None and self.source_filter_worker is not worker:
+            return False
+        self.source_filter_worker = None
+        return True
+
+    def begin_playback_compat(self, worker: object) -> None:
+        self.playback_compat_worker = worker
+
+    def finish_playback_compat(self, worker: object | None = None) -> bool:
+        if worker is not None and self.playback_compat_worker is not worker:
+            return False
+        self.playback_compat_worker = None
+        return True
+
 
 @dataclass
 class RuntimeStatusState:
@@ -267,6 +287,24 @@ class WorkerLifecycleState:
     def begin_export(self, worker: object) -> None:
         self.export_worker = worker
 
+    def begin_document(self, worker: object) -> None:
+        self.document_worker = worker
+
+    def finish_document(self, worker: object | None = None) -> bool:
+        if worker is not None and self.document_worker is not worker:
+            return False
+        self.document_worker = None
+        return True
+
+    def begin_telegram(self, worker: object) -> None:
+        self.telegram_worker = worker
+
+    def finish_telegram(self, worker: object) -> bool:
+        if self.telegram_worker is not worker:
+            return False
+        self.telegram_worker = None
+        return True
+
     def request_export_stop(self, *, keep_partial: bool = False) -> bool:
         worker = self.export_worker
         if worker is None:
@@ -311,3 +349,9 @@ class WorkerLifecycleState:
         if callable(delete_later):
             delete_later()
         return True
+
+    @staticmethod
+    def delete_worker(worker: object) -> None:
+        delete_later = getattr(worker, "deleteLater", None)
+        if callable(delete_later):
+            delete_later()

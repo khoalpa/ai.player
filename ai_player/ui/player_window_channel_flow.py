@@ -90,7 +90,7 @@ class PlayerChannelFlowMixin:
             language_id=self._config.gui_language,
             parent=self,
         )
-        self._telegram_worker = worker
+        self._worker_lifecycle_state.begin_telegram(worker)
         worker.videos_ready.connect(lambda videos, op=operation: self._telegram_items_ready(videos, op))
         worker.login_request_ready.connect(self._telegram_login_request_ready)
         worker.login_ready.connect(self._telegram_login_ready)
