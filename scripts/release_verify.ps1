@@ -59,14 +59,39 @@ try {
         $LogPath = Join-Path $RunRoot "$Name.log"
         Write-Output "==> $Name"
         $Started = Get-Date
-        $Output = @()
-        $ExitCode = 0
+        $Stdout = ""
+        $Stderr = ""
         try {
-            $Output = & $FilePath @Arguments 2>&1
-            $ExitCode = if ($null -ne $global:LASTEXITCODE) { $global:LASTEXITCODE } else { 0 }
+            $StartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $StartInfo.FileName = $FilePath
+            $StartInfo.WorkingDirectory = $ProjectRoot
+            $StartInfo.UseShellExecute = $false
+            $StartInfo.RedirectStandardOutput = $true
+            $StartInfo.RedirectStandardError = $true
+            foreach ($Argument in $Arguments) {
+                $StartInfo.ArgumentList.Add($Argument)
+            }
+            $Process = [System.Diagnostics.Process]::new()
+            $Process.StartInfo = $StartInfo
+            if (-not $Process.Start()) {
+                throw "Failed to start $FilePath"
+            }
+            $StdoutTask = $Process.StandardOutput.ReadToEndAsync()
+            $StderrTask = $Process.StandardError.ReadToEndAsync()
+            $Process.WaitForExit()
+            $Stdout = $StdoutTask.Result
+            $Stderr = $StderrTask.Result
+            $ExitCode = $Process.ExitCode
         } catch {
-            $Output = @($Output) + @("$_")
+            $Stderr = "$Stderr`n$_"
             $ExitCode = 1
+        }
+        $Output = @()
+        if ($Stdout) {
+            $Output += $Stdout.TrimEnd()
+        }
+        if ($Stderr) {
+            $Output += $Stderr.TrimEnd()
         }
         $Output | Tee-Object -FilePath $LogPath
         $Finished = Get-Date
