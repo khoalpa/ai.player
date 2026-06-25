@@ -2355,11 +2355,16 @@ def test_player_window_applies_online_lite_preset_controls(qapp) -> None:
         assert window._tts_api_secret_status.property("api_status_key") == "api_secret_status_missing"
 
         window._auto_voice_gender_check.setChecked(True)
+        assert window._auto_voice_gender_mode_combo.findData("balanced") >= 0
+        assert window._auto_voice_gender_mode_combo.findData("ai") >= 0
+        assert window._auto_voice_gender_mode_combo.findData("stable") == -1
+        assert window._auto_voice_gender_mode_combo.findData("sensitive") == -1
         window._set_combo_data(window._auto_voice_gender_mode_combo, "ai")
-        window._set_combo_data(window._speaker_gender_provider_combo, "huggingface_gender")
-        window._speaker_gender_api_key_edit.clear()
         window._sync_api_key_statuses()
-        assert window._speaker_gender_api_key_status.property("api_status_key") == "api_key_status_missing"
+        assert window._speaker_gender_provider_combo.findData("huggingface_gender") == -1
+        assert window._speaker_gender_provider_combo.currentData() == "local"
+        assert not window._speaker_gender_api_key_edit.isEnabled()
+        assert window._speaker_gender_api_key_status.property("api_status_key") == "api_key_status_not_needed"
 
         window._set_combo_data(window._transcript_cleanup_mode_combo, "light")
         window._set_combo_data(window._transcript_cleanup_provider_combo, "groq")
@@ -2503,12 +2508,9 @@ def test_player_window_keeps_api_keys_per_provider_for_online_groups(qapp, monke
         qapp.processEvents()
         assert window._transcript_cleanup_api_key_edit.text() == "gemini-key"
 
-        window._set_combo_data(window._speaker_gender_provider_combo, "local")
-        qapp.processEvents()
-        window._speaker_gender_api_key_edit.clear()
-        window._set_combo_data(window._speaker_gender_provider_combo, "huggingface_gender")
-        qapp.processEvents()
-        assert window._speaker_gender_api_key_edit.text() == "hf-key"
+        assert window._speaker_gender_provider_combo.findData("huggingface_gender") == -1
+        assert window._speaker_gender_provider_combo.currentData() == "local"
+        assert not window._speaker_gender_api_key_edit.isEnabled()
 
         window._save_settings()
         assert saved["translator_api_key"]["google_translate"] == "google-key"

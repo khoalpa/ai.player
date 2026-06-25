@@ -137,10 +137,8 @@ def test_available_speaker_gender_models_scans_audio_classifiers(monkeypatch, tm
     options = catalog.available_speaker_gender_models()
 
     assert catalog.RuntimeOption(str(model_dir.resolve()), "common-voice-gender-detection") in options
-    assert catalog.RuntimeOption(
-        "audeering/wav2vec2-large-robust-6-ft-age-gender",
-        "HF audeering age/gender 6-layer",
-    ) in options
+    assert all(not option.id.startswith("audeering/") for option in options)
+    assert all(not option.name.startswith("HF ") for option in options)
 
 
 def test_read_dropdown_options_file_accepts_wrapped_options(tmp_path) -> None:

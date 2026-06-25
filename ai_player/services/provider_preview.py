@@ -200,10 +200,18 @@ def _preview_speaker_gender(config: AppConfig) -> tuple[str, str, str, str]:
 
     selector = VoiceGenderSelector(config)
     decision = selector.select_voice(sample_path, provider=config.tts_provider, config=config)
+    mode = str(config.dubbing_auto_voice_gender_mode or "balanced").strip() or "balanced"
+    message = (
+        f"Input: {sample_path}\n"
+        f"Detected: {_gender_message(decision.gender, decision.confidence)}\n"
+        f"Selected voice: {decision.voice}\n"
+        f"Mode: {mode}\n"
+        f"Reason: {decision.reason}"
+    )
     return (
         provider,
         str(config.speaker_gender_model),
-        _gender_message(decision.gender, decision.confidence),
+        message,
         str(sample_path),
     )
 

@@ -185,6 +185,13 @@ class PlayerSettingsMixin:
             widget = getattr(self, widget_name, None)
             if widget is not None:
                 widget.setEnabled(online)
+        if not online:
+            api_base = getattr(self, "_speaker_gender_api_base_edit", None)
+            api_key = getattr(self, "_speaker_gender_api_key_edit", None)
+            if api_base is not None and api_base.text():
+                api_base.clear()
+            if api_key is not None and api_key.text():
+                api_key.clear()
         self._sync_api_key_statuses()
 
     def _sync_auto_match_controls_enabled(self, *_args) -> None:
@@ -1639,11 +1646,6 @@ class PlayerSettingsMixin:
                 "local",
                 self._tr("speaker_gender_provider_local"),
             )
-            self._set_combo_item_text(
-                self._speaker_gender_provider_combo,
-                "huggingface_gender",
-                self._tr("speaker_gender_provider_huggingface"),
-            )
         if hasattr(self, "_telegram_channel_filter_combo"):
             for value, key in (
                 ("all", "telegram_filter_all"),
@@ -1674,9 +1676,7 @@ class PlayerSettingsMixin:
             self._set_combo_item_text(self._source_filter_model_combo, "mdx_extra", self._tr("source_filter_model_mdx"))
         if hasattr(self, "_auto_voice_gender_mode_combo"):
             for value, key in (
-                ("stable", "voice_gender_mode_stable"),
                 ("balanced", "voice_gender_mode_balanced"),
-                ("sensitive", "voice_gender_mode_sensitive"),
                 ("ai", "voice_gender_mode_ai"),
             ):
                 self._set_combo_item_text(self._auto_voice_gender_mode_combo, value, self._tr(key))

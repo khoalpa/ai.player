@@ -1667,9 +1667,7 @@ class PlayerLayoutMixin:
         self._auto_voice_gender_check.setChecked(self._config.dubbing_auto_voice_gender)
         self._auto_voice_gender_check.toggled.connect(self._sync_auto_voice_controls_enabled)
         self._auto_voice_gender_mode_combo = QComboBox()
-        self._auto_voice_gender_mode_combo.addItem(self._tr("voice_gender_mode_stable"), "stable")
         self._auto_voice_gender_mode_combo.addItem(self._tr("voice_gender_mode_balanced"), "balanced")
-        self._auto_voice_gender_mode_combo.addItem(self._tr("voice_gender_mode_sensitive"), "sensitive")
         self._auto_voice_gender_mode_combo.addItem(self._tr("voice_gender_mode_ai"), "ai")
         self._auto_voice_gender_mode_combo.setCurrentIndex(
             max(
@@ -1700,9 +1698,6 @@ class PlayerLayoutMixin:
         self._speaker_gender_provider_combo = QComboBox()
         self._compact_combo(self._speaker_gender_provider_combo)
         self._speaker_gender_provider_combo.addItem(self._tr("speaker_gender_provider_local"), "local")
-        self._speaker_gender_provider_combo.addItem(
-            self._tr("speaker_gender_provider_huggingface"), "huggingface_gender"
-        )
         self._speaker_gender_provider_combo.setCurrentIndex(
             max(
                 0,

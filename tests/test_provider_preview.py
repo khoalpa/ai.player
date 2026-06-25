@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -150,6 +151,40 @@ def test_huggingface_speaker_gender_preview_checks_endpoint(monkeypatch) -> None
     assert calls[0][1]["headers"]["Authorization"] == "Bearer hf-key"
     assert result.provider == "huggingface_gender"
     assert "accepted" in result.message
+
+
+def test_local_speaker_gender_preview_shows_decision_details(monkeypatch, tmp_path) -> None:
+    sample_path = tmp_path / "speaker-preview.wav"
+    sample_path.write_bytes(b"audio")
+
+    class FakeSelector:
+        def __init__(self, _config) -> None:
+            pass
+
+        def select_voice(self, reference_path, *, provider, config):
+            assert reference_path == sample_path
+            assert provider == "edge"
+            return SimpleNamespace(gender="female", confidence=0.87, voice="vi-VN-HoaiMyNeural", reason="ai:accepted")
+
+    monkeypatch.setattr(provider_preview, "_sample_audio_path", lambda: sample_path)
+    monkeypatch.setattr(provider_preview, "VoiceGenderSelector", FakeSelector)
+
+    result = provider_preview.preview_provider(
+        "speaker_gender",
+        AppConfig(
+            dubbing_auto_voice_gender_mode="ai",
+            speaker_gender_provider="local",
+            speaker_gender_model="models/speaker_gender/common-voice-gender-detection",
+            tts_provider="edge",
+        ),
+    )
+
+    assert result.provider == "local"
+    assert f"Input: {sample_path}" in result.message
+    assert "Detected: female (87%)" in result.message
+    assert "Selected voice: vi-VN-HoaiMyNeural" in result.message
+    assert "Mode: ai" in result.message
+    assert "Reason: ai:accepted" in result.message
 
 
 def test_local_asr_preview_loads_selected_model(monkeypatch) -> None:

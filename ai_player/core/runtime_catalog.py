@@ -86,11 +86,7 @@ DEFAULT_TRANSLATION_PROVIDERS = (
     ("NLLB Local", "nllb"),
     ("No translation", "none"),
 )
-DEFAULT_ONLINE_SPEAKER_GENDER_MODELS = (
-    ("HF audeering age/gender 6-layer", "audeering/wav2vec2-large-robust-6-ft-age-gender"),
-    ("HF audeering age/gender 24-layer", "audeering/wav2vec2-large-robust-24-ft-age-gender"),
-    ("HF XLS-R gender LibriSpeech", "alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech"),
-)
+DEFAULT_ONLINE_SPEAKER_GENDER_MODELS: tuple[tuple[str, str], ...] = ()
 DEFAULT_ONLINE_OCR_MODELS = (
     ("HF TrOCR base handwritten", "microsoft/trocr-base-handwritten"),
     ("HF TrOCR large handwritten", "microsoft/trocr-large-handwritten"),
@@ -554,9 +550,7 @@ def available_ocr_models() -> list[RuntimeOption]:
 
 
 def available_speaker_gender_models() -> list[RuntimeOption]:
-    options: list[RuntimeOption] = [
-        RuntimeOption(model_id, name) for name, model_id in DEFAULT_ONLINE_SPEAKER_GENDER_MODELS
-    ]
+    options: list[RuntimeOption] = []
     seen: set[str] = {option.id for option in options}
     if SPEAKER_GENDER_MODELS_PATH.exists():
         for path in sorted(SPEAKER_GENDER_MODELS_PATH.iterdir(), key=lambda item: item.name.lower()):
