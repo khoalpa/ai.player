@@ -1345,6 +1345,7 @@ class PlayerSettingsMixin:
             line_edit.editingFinished.connect(self._queue_save_settings)
         self._vieneu_core_combo.currentIndexChanged.connect(self._vieneu_core_changed)
         self._vieneu_mode_combo.currentIndexChanged.connect(self._sync_vieneu_advanced_controls)
+        self._restore_asr_api_key_for_provider(self._selected_asr_provider())
 
     def _online_provider_changed(self, kind: str, combo: QComboBox) -> None:
         value = str(combo.currentData() or "")

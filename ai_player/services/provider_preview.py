@@ -94,18 +94,31 @@ def _preview_asr(config: AppConfig) -> tuple[str, str, str, str]:
     provider = effective_asr_provider(config)
     if is_online_asr_provider(provider):
         _check_online_asr_endpoint(config, provider)
-        return provider, "", "Online ASR endpoint accepted the configured credentials.", ""
+        message = (
+            f"Provider: {provider}\n"
+            "Model: online\n"
+            "Device: online\n"
+            "Status: Endpoint accepted the configured credentials."
+        )
+        return provider, "", message, ""
 
     provider = normalize_asr_provider(provider)
     device = effective_whisper_device(config.whisper_device)
     compute = effective_whisper_compute_type(config.whisper_compute_type, device)
+    model = str(config.whisper_model)
     get_shared_whisper_model(
-        config.whisper_model,
+        model,
         device=device,
         compute_type=compute,
         local_files_only=config.whisper_offline,
     )
-    return provider, str(config.whisper_model), f"Whisper model loaded on {device}/{compute}.", ""
+    message = (
+        f"Provider: {provider}\n"
+        f"Model: {model}\n"
+        f"Device: {device}/{compute}\n"
+        "Status: Whisper model loaded."
+    )
+    return provider, model, message, ""
 
 
 def _check_online_asr_endpoint(config: AppConfig, provider: str) -> None:

@@ -2313,17 +2313,13 @@ def test_player_window_applies_online_lite_preset_controls(qapp) -> None:
         assert config.translator_api_base == ""
         assert config.transcript_cleanup_api_base == ""
 
-        window._set_combo_data(window._asr_provider_combo, "assemblyai")
-        window._asr_api_key_edit.clear()
+        assert window._asr_provider_combo.findData("auto") >= 0
+        assert window._asr_provider_combo.findData("faster_whisper") >= 0
+        assert window._asr_provider_combo.findData("assemblyai") == -1
+        assert window._asr_provider_combo.findData("speechmatics") == -1
         window._sync_api_key_statuses()
-        window._save_settings()
-        assert window._config.asr_provider == "assemblyai"
-        assert window._asr_provider_combo.currentData() == "assemblyai"
-        assert window._asr_api_key_edit.isEnabled()
-        assert window._asr_api_key_status.property("api_status_key") == "api_key_status_missing"
-        window._asr_api_key_edit.setText("assembly-key")
-        window._sync_api_key_statuses()
-        assert window._asr_api_key_status.property("api_status_key") == "api_key_status_saved"
+        assert not window._asr_api_key_edit.isEnabled()
+        assert window._asr_api_key_status.property("api_status_key") == "api_key_status_not_needed"
 
         window._set_combo_data(window._ocr_provider_combo, "ocr_space")
         window._ocr_api_key_edit.clear()
@@ -2411,9 +2407,14 @@ def test_player_window_cleanup_ui_uses_primary_provider_profiles(qapp) -> None:
 
 def test_player_window_keeps_asr_api_keys_per_provider(qapp, monkeypatch) -> None:
     monkeypatch.setattr(
+        player_window_module,
+        "load_app_config",
+        lambda _default: AppConfig(asr_provider="speechmatics"),
+    )
+    monkeypatch.setattr(
         player_window_settings,
         "load_asr_provider_api_keys",
-        lambda: {"speechmatics": "speech-key"},
+        lambda: {"assemblyai": "assembly-key", "speechmatics": "speech-key"},
     )
     saved_keys = []
     monkeypatch.setattr(
@@ -2423,19 +2424,14 @@ def test_player_window_keeps_asr_api_keys_per_provider(qapp, monkeypatch) -> Non
     )
     window = PlayerWindow()
     try:
-        window._set_combo_data(window._asr_provider_combo, "assemblyai")
-        qapp.processEvents()
-        window._asr_api_key_edit.setText("assembly-key")
-
+        assert window._asr_provider_combo.currentData() == "speechmatics"
+        assert window._asr_provider_combo.findData("speechmatics") >= 0
+        assert window._asr_provider_combo.findData("assemblyai") == -1
+        assert window._asr_api_key_edit.text() == "speech-key"
         window._set_combo_data(window._asr_provider_combo, "speechmatics")
         qapp.processEvents()
 
         assert window._asr_api_key_edit.text() == "speech-key"
-
-        window._set_combo_data(window._asr_provider_combo, "assemblyai")
-        qapp.processEvents()
-
-        assert window._asr_api_key_edit.text() == "assembly-key"
 
         window._save_settings()
         assert saved_keys[-1]["assemblyai"] == "assembly-key"
@@ -2526,14 +2522,14 @@ def test_player_window_online_provider_consent_rejects_and_reverts(qapp, monkeyp
     try:
         window.show()
         qapp.processEvents()
-        previous = window._asr_provider_combo.currentData()
+        previous = window._ocr_provider_combo.currentData()
 
-        window._set_combo_data(window._asr_provider_combo, "assemblyai")
+        window._set_combo_data(window._ocr_provider_combo, "google_vision")
         qapp.processEvents()
 
-        assert window._asr_provider_combo.currentData() == previous
+        assert window._ocr_provider_combo.currentData() == previous
         assert messages
-        assert "assemblyai" in messages[0][1]
+        assert "google_vision" in messages[0][1]
         assert window.statusBar().currentMessage() == window._tr("online_provider_consent_rejected")
         window._settings_save_timer.stop()
     finally:
@@ -2553,16 +2549,16 @@ def test_player_window_online_provider_consent_accepts_once_per_provider(qapp, m
         window.show()
         qapp.processEvents()
 
-        window._set_combo_data(window._asr_provider_combo, "assemblyai")
+        window._set_combo_data(window._ocr_provider_combo, "google_vision")
         qapp.processEvents()
-        assert window._asr_provider_combo.currentData() == "assemblyai"
+        assert window._ocr_provider_combo.currentData() == "google_vision"
 
-        window._set_combo_data(window._asr_provider_combo, "faster_whisper")
-        window._set_combo_data(window._asr_provider_combo, "assemblyai")
+        window._set_combo_data(window._ocr_provider_combo, "tesseract")
+        window._set_combo_data(window._ocr_provider_combo, "google_vision")
         qapp.processEvents()
 
         assert len(calls) == 1
-        assert "assemblyai" in calls[0]
+        assert "google_vision" in calls[0]
         window._settings_save_timer.stop()
     finally:
         window.close()
@@ -2621,6 +2617,23 @@ def test_player_window_preserves_selected_advanced_tts_provider(qapp, monkeypatc
         assert window._tts_provider_combo.findData("azure_tts") >= 0
         assert window._tts_provider_combo.findData("google_tts") == -1
         assert window._tts_provider_combo.findData("amazon_polly") == -1
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_preserves_selected_advanced_asr_provider(qapp, monkeypatch) -> None:
+    monkeypatch.setattr(
+        player_window_module,
+        "load_app_config",
+        lambda _default: AppConfig(asr_provider="assemblyai", asr_api_key="assembly-key"),
+    )
+
+    window = PlayerWindow()
+    try:
+        assert window._asr_provider_combo.currentData() == "assemblyai"
+        assert window._asr_provider_combo.findData("assemblyai") >= 0
+        assert window._asr_provider_combo.findData("speechmatics") == -1
         window._settings_save_timer.stop()
     finally:
         window.close()

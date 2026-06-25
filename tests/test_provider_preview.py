@@ -100,7 +100,10 @@ def test_assemblyai_preview_treats_missing_probe_transcript_as_auth_success(monk
 
     assert calls
     assert result.provider == "assemblyai"
-    assert "accepted" in result.message
+    assert "Provider: assemblyai" in result.message
+    assert "Model: online" in result.message
+    assert "Device: online" in result.message
+    assert "Status: Endpoint accepted" in result.message
 
 
 def test_speechmatics_preview_reports_auth_error_without_html(monkeypatch) -> None:
@@ -219,3 +222,7 @@ def test_local_asr_preview_loads_selected_model(monkeypatch) -> None:
         )
     ]
     assert result.provider == "faster_whisper"
+    assert "Provider: faster_whisper" in result.message
+    assert "Model: models/asr/demo" in result.message
+    assert "Device: cpu/int8" in result.message
+    assert "Status: Whisper model loaded." in result.message

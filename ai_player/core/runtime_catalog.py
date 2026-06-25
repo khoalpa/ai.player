@@ -518,10 +518,15 @@ def available_local_llm_options() -> list[RuntimeOption]:
     return options
 
 
-def available_asr_providers() -> list[RuntimeOption]:
-    return [
+def available_asr_providers(*, include_advanced: bool = False) -> list[RuntimeOption]:
+    providers = [
         RuntimeOption("auto", "Auto ASR"),
         RuntimeOption("faster_whisper", "Faster Whisper"),
+    ]
+    if not include_advanced:
+        return providers
+    return [
+        *providers,
         RuntimeOption("assemblyai", "AssemblyAI"),
         RuntimeOption("speechmatics", "Speechmatics"),
     ]

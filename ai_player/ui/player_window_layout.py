@@ -56,6 +56,7 @@ from ai_player.core.runtime_catalog import (
     available_speaker_gender_models,
     available_translation_provider_options,
 )
+from ai_player.services.asr import normalize_asr_provider
 from ai_player.services.capture_sources import list_capture_device_options
 from ai_player.services.source_voice_filter import (
     SOURCE_VOICE_FILTER_DEMUCS_MODELS,
@@ -1508,9 +1509,22 @@ class PlayerLayoutMixin:
 
         self._asr_provider_combo = QComboBox()
         self._compact_combo(self._asr_provider_combo)
-        for provider in available_asr_providers():
+        asr_provider_options = available_asr_providers()
+        selected_asr_provider = normalize_asr_provider(self._config.asr_provider)
+        if selected_asr_provider not in {provider.id for provider in asr_provider_options}:
+            advanced_provider = next(
+                (
+                    provider
+                    for provider in available_asr_providers(include_advanced=True)
+                    if provider.id == selected_asr_provider
+                ),
+                None,
+            )
+            if advanced_provider is not None:
+                asr_provider_options.append(advanced_provider)
+        for provider in asr_provider_options:
             self._asr_provider_combo.addItem(provider.name, provider.id)
-        self._asr_provider_combo.setCurrentIndex(max(0, self._asr_provider_combo.findData(self._config.asr_provider)))
+        self._asr_provider_combo.setCurrentIndex(max(0, self._asr_provider_combo.findData(selected_asr_provider)))
         self._asr_model_combo = QComboBox()
         self._compact_combo(self._asr_model_combo)
         self._asr_model_combo.setEditable(True)

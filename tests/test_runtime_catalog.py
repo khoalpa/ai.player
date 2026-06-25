@@ -117,6 +117,16 @@ def test_available_asr_models_scans_local_whisper_dirs(monkeypatch, tmp_path) ->
     assert options == [catalog.RuntimeOption(str(model_dir.resolve()), "faster-whisper-large-v3")]
 
 
+def test_available_asr_provider_options_are_primary_by_default() -> None:
+    assert [option.id for option in catalog.available_asr_providers()] == ["auto", "faster_whisper"]
+    assert [option.id for option in catalog.available_asr_providers(include_advanced=True)] == [
+        "auto",
+        "faster_whisper",
+        "assemblyai",
+        "speechmatics",
+    ]
+
+
 def test_available_ocr_models_scans_tessdata_dirs(monkeypatch, tmp_path) -> None:
     tessdata = tmp_path / "tessdata"
     tessdata.mkdir()
