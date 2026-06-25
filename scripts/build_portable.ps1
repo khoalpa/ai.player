@@ -100,6 +100,7 @@ function Get-CodeSigningCertificate {
 function Set-BuildAuthenticodeSignature {
     param(
         [string]$Path,
+        [AllowNull()]
         [System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate,
         [string]$TimestampUrl
     )
@@ -133,6 +134,7 @@ function Get-BuildSignableFiles {
 function Set-BuildAuthenticodeSignatures {
     param(
         [string]$Root,
+        [AllowNull()]
         [System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate,
         [string]$TimestampUrl
     )
