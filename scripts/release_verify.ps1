@@ -17,6 +17,7 @@ $RunStamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $RunRoot = Join-Path $ProjectRoot "data\tmp\release-verify\$RunStamp"
 $SummaryPath = Join-Path $RunRoot "summary.json"
 $Steps = New-Object System.Collections.Generic.List[object]
+$ProfileSummaries = New-Object System.Collections.Generic.List[object]
 
 if (-not $Python) {
     $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
@@ -41,12 +42,80 @@ try {
             status = $Status
             run_root = $RunRoot
             build_profiles = @($BuildProfileList)
+            profile_summaries = @($ProfileSummaries | ForEach-Object { $_ })
             steps = Get-StepSummary
         }
         if ($ErrorMessage) {
             $Summary["error"] = $ErrorMessage
         }
         $Summary | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $SummaryPath -Encoding UTF8
+    }
+
+    function Get-BuildProfileInfo {
+        param([string]$Profile)
+
+        $ArtifactPath = Join-Path $ProjectRoot "dist\portable\AI Player Lite"
+        $AppPath = Join-Path $ArtifactPath "AI Player\AI Player.exe"
+        if ($Profile -eq "Lite") {
+            return [ordered]@{
+                profile = "Lite"
+                scope = "UI/document/URL/Edge TTS"
+                dependency_profile = "dev,packaging"
+                artifact_path = $ArtifactPath
+                app_path = $AppPath
+            }
+        }
+        if ($Profile -eq "OfflineCpu") {
+            return [ordered]@{
+                profile = "OfflineCpu"
+                scope = "ASR/NLLB/VieNeu local"
+                dependency_profile = "dev,packaging,offline-ai,audit"
+                artifact_path = $ArtifactPath
+                app_path = $AppPath
+            }
+        }
+        if ($Profile -eq "Gpu") {
+            return [ordered]@{
+                profile = "Gpu"
+                scope = "CUDA/Demucs/source separation"
+                dependency_profile = "dev,packaging,offline-ai,gpu,audio-separation,audit"
+                artifact_path = $ArtifactPath
+                app_path = $AppPath
+            }
+        }
+        throw "Unknown build profile: $Profile"
+    }
+
+    function Write-BuildProfileSummary {
+        param(
+            [string]$Profile,
+            [string]$Status
+        )
+
+        $Info = Get-BuildProfileInfo $Profile
+        $StepPrefix = $Profile.ToLowerInvariant()
+        $InstallStep = if ($Profile -eq "OfflineCpu") { "install-offline-cpu" } else { "install-$StepPrefix" }
+        $ProfileSteps = @(
+            Get-StepSummary |
+                Where-Object { $_.name -in @($InstallStep, "build-$StepPrefix", "launch-$StepPrefix") }
+        )
+        $ProfileSummaryPath = Join-Path $RunRoot "profile-$StepPrefix-summary.json"
+        $ProfileSummary = [ordered]@{
+            status = $Status
+            run_root = $RunRoot
+            summary = $ProfileSummaryPath
+            profile = $Info
+            steps = $ProfileSteps
+        }
+        $ProfileSummary | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $ProfileSummaryPath -Encoding UTF8
+        $ProfileSummaries.Add([ordered]@{
+            profile = $Profile
+            status = $Status
+            scope = $Info["scope"]
+            summary = $ProfileSummaryPath
+            artifact_path = $Info["artifact_path"]
+            app_path = $Info["app_path"]
+        }) | Out-Null
     }
 
     function Join-ProcessArguments {
@@ -168,6 +237,7 @@ try {
     function Invoke-PortableBuild {
         param([string]$Profile)
 
+        $ProfileInfo = Get-BuildProfileInfo $Profile
         Invoke-DependencyInstall $Profile
         $BuildArgs = @("-Python", $Python)
         if ($RequireSignature) {
@@ -184,10 +254,11 @@ try {
             -FilePath (Join-Path $ProjectRoot "scripts\smoke_launch_app.ps1") `
             -Arguments @(
             "-AppPath",
-            "dist\portable\AI Player Lite\AI Player\AI Player.exe",
+            $ProfileInfo["app_path"],
             "-Seconds",
             "8"
         )
+        Write-BuildProfileSummary -Profile $Profile -Status "passed"
     }
 
     Invoke-ReleaseStep `

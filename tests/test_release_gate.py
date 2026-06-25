@@ -70,6 +70,11 @@ def test_release_verify_runs_required_short_gate_and_ordered_builds() -> None:
 
     assert "[ValidateSet(\"Lite\", \"OfflineCpu\", \"Gpu\")]" in script
     assert "data\\tmp\\release-verify" in script
+    assert "profile-$StepPrefix-summary.json" in script
+    assert "profile_summaries" in script
+    assert "UI/document/URL/Edge TTS" in script
+    assert "ASR/NLLB/VieNeu local" in script
+    assert "CUDA/Demucs/source separation" in script
     assert "check_release_worktree.ps1" in script
     assert '"ruff", "check", "."' in script
     assert '"pytest", "-q"' in script
