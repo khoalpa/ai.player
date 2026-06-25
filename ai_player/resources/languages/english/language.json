@@ -871,6 +871,8 @@
     "runtime_warmup_translation": "Preload translator",
     "runtime_warmup_tts": "Preload TTS",
     "tts_advanced_group": "Advanced TTS",
+    "show_advanced_provider_options": "Show advanced options",
+    "show_advanced_provider_options_tooltip": "Show additional online and legacy providers for ASR, translation, and TTS.",
     "asr_provider": "Speech provider",
     "asr_model": "Speech model",
     "asr_api_base": "Speech API endpoint",

@@ -75,6 +75,7 @@ def build_models_settings_tab(
     layout = QVBoxLayout(tab)
     _setup_settings_tab_layout(layout)
     layout.addWidget(_model_status_strip(owner))
+    layout.addWidget(owner._advanced_provider_options_check)
     for title_key, section in (
         ("asr_group", asr_grid),
         ("translation_group", translation_grid),

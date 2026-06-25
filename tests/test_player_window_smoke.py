@@ -2372,6 +2372,54 @@ def test_player_window_applies_online_lite_preset_controls(qapp) -> None:
         window.close()
 
 
+def test_player_window_advanced_provider_checkbox_toggles_provider_options(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        assert not window._advanced_provider_options_check.isChecked()
+        assert window._asr_provider_combo.findData("assemblyai") == -1
+        assert window._translator_combo.findData("deepl") == -1
+        assert window._tts_provider_combo.findData("azure_tts") == -1
+
+        window._advanced_provider_options_check.setChecked(True)
+        qapp.processEvents()
+
+        assert window._asr_provider_combo.findData("assemblyai") >= 0
+        assert window._asr_provider_combo.findData("speechmatics") >= 0
+        assert window._translator_combo.findData("azure_translator") >= 0
+        assert window._translator_combo.findData("google_translate") >= 0
+        assert window._translator_combo.findData("deepl") >= 0
+        assert window._tts_provider_combo.findData("azure_tts") >= 0
+        assert window._tts_provider_combo.findData("google_tts") >= 0
+        assert window._tts_provider_combo.findData("amazon_polly") >= 0
+
+        window._set_combo_data(window._asr_provider_combo, "assemblyai")
+        window._set_combo_data(window._translator_combo, "deepl")
+        window._set_combo_data(window._tts_provider_combo, "azure_tts")
+        qapp.processEvents()
+
+        window._advanced_provider_options_check.setChecked(False)
+        qapp.processEvents()
+
+        assert window._asr_provider_combo.currentData() == "assemblyai"
+        assert window._asr_provider_combo.findData("assemblyai") >= 0
+        assert window._asr_provider_combo.findData("speechmatics") == -1
+        assert window._translator_combo.currentData() == "deepl"
+        assert window._translator_combo.findData("deepl") >= 0
+        assert window._translator_combo.findData("google_translate") == -1
+        assert window._tts_provider_combo.currentData() == "azure_tts"
+        assert window._tts_provider_combo.findData("azure_tts") >= 0
+        assert window._tts_provider_combo.findData("amazon_polly") == -1
+
+        config = window._current_runtime_config()
+        assert config.show_advanced_provider_options is False
+        assert config.asr_provider == "assemblyai"
+        assert config.translator_provider == "deepl"
+        assert config.tts_provider == "azure_tts"
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
 def test_player_window_cleanup_ui_uses_primary_provider_profiles(qapp) -> None:
     window = PlayerWindow()
     try:

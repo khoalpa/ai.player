@@ -127,6 +127,7 @@ RUNTIME_LOCAL_SETTINGS = {
     "runtime_warmup_translation",
     "runtime_warmup_tts",
     "runtime_warmup_whisper",
+    "show_advanced_provider_options",
     "vieneu_tts_api_base",
     "vieneu_tts_backend",
     "vieneu_tts_core",

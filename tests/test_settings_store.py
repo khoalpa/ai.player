@@ -671,6 +671,17 @@ def test_save_app_config_removes_vieneu_remote_core(tmp_path, monkeypatch) -> No
     assert runtime_data["vieneu_tts_offline"] is True
 
 
+def test_save_app_config_persists_advanced_provider_options(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", tmp_path / "settings.json")
+
+    settings_store.save_app_config(AppConfig(show_advanced_provider_options=True))
+
+    runtime_data = json.loads(settings_store.runtime_local_file_path().read_text(encoding="utf-8"))
+    assert runtime_data["show_advanced_provider_options"] is True
+    assert settings_store.load_app_config(AppConfig()).show_advanced_provider_options is True
+
+
 def test_load_app_config_migrates_legacy_telegram_blacklist_to_separate_file(tmp_path, monkeypatch) -> None:
     settings_file = tmp_path / "settings.json"
     settings_file.write_text(

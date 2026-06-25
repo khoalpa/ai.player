@@ -6,7 +6,11 @@ from dataclasses import replace
 from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QLineEdit, QMessageBox, QPushButton, QSlider, QWidget
 
 from ai_player.core.config import DEFAULT_PERFORMANCE_PRESET, AppConfig, read_preserved_source_terms_file
-from ai_player.core.runtime_catalog import available_language_options, available_translation_provider_options
+from ai_player.core.runtime_catalog import (
+    available_asr_providers,
+    available_language_options,
+    available_translation_provider_options,
+)
 from ai_player.core.settings_store import (
     load_asr_provider_api_keys,
     load_provider_api_secrets,
@@ -34,7 +38,7 @@ from ai_player.services.translation import (
     normalize_translator_provider,
 )
 from ai_player.services.tts import available_voices
-from ai_player.services.tts_base import is_online_tts_provider, normalize_tts_provider
+from ai_player.services.tts_base import available_tts_providers, is_online_tts_provider, normalize_tts_provider
 from ai_player.services.tts_vieneu import available_vieneu_models
 from ai_player.services.tts_voices import voice_gender
 from ai_player.ui.player_window_utils import (
@@ -106,6 +110,85 @@ class PlayerSettingsMixin:
         self._refresh_vieneu_models()
         self._refresh_tts_voices()
         self._sync_vieneu_advanced_controls()
+
+    def _advanced_provider_options_enabled(self) -> bool:
+        checkbox = getattr(self, "_advanced_provider_options_check", None)
+        if checkbox is not None:
+            return checkbox.isChecked()
+        return bool(getattr(self._config, "show_advanced_provider_options", False))
+
+    def _refresh_advanced_provider_options(self, *_args) -> None:
+        self._refresh_asr_provider_options()
+        self._refresh_translation_provider_options()
+        self._refresh_tts_provider_options()
+        self._sync_asr_controls()
+        self._refresh_translation_models()
+        self._refresh_tts_options()
+        self._sync_api_key_statuses()
+
+    def _refresh_asr_provider_options(self) -> None:
+        if not hasattr(self, "_asr_provider_combo"):
+            return
+        current = normalize_asr_provider(self._selected_asr_provider())
+        options = available_asr_providers(include_advanced=self._advanced_provider_options_enabled())
+        if current not in {option.id for option in options}:
+            advanced = next(
+                (option for option in available_asr_providers(include_advanced=True) if option.id == current),
+                None,
+            )
+            if advanced is not None:
+                options.append(advanced)
+        self._replace_combo_options(
+            self._asr_provider_combo,
+            [(option.name, option.id) for option in options],
+            current=current,
+        )
+
+    def _refresh_translation_provider_options(self) -> None:
+        if not hasattr(self, "_translator_combo"):
+            return
+        current = normalize_translator_provider(
+            self._translator_combo.currentData() or self._config.translator_provider
+        )
+        language = self._selected_gui_language()
+        options = available_translation_provider_options(
+            language,
+            include_advanced=self._advanced_provider_options_enabled(),
+        )
+        if current not in {option.id for option in options}:
+            advanced = next(
+                (
+                    option
+                    for option in available_translation_provider_options(language, include_advanced=True)
+                    if option.id == current
+                ),
+                None,
+            )
+            if advanced is not None:
+                options.append(advanced)
+        self._replace_combo_options(
+            self._translator_combo,
+            [(option.name, option.id) for option in options],
+            current=current,
+        )
+
+    def _refresh_tts_provider_options(self) -> None:
+        if not hasattr(self, "_tts_provider_combo"):
+            return
+        current = normalize_tts_provider(self._selected_tts_provider())
+        options = available_tts_providers(include_advanced=self._advanced_provider_options_enabled())
+        if current not in {option.id for option in options}:
+            advanced = next(
+                (option for option in available_tts_providers(include_advanced=True) if option.id == current),
+                None,
+            )
+            if advanced is not None:
+                options.append(advanced)
+        self._replace_combo_options(
+            self._tts_provider_combo,
+            [(option.name, option.id) for option in options],
+            current=current,
+        )
 
     def _refresh_vieneu_models(self, *_args) -> None:
         previous_model = self._selected_vieneu_model() or self._config.vieneu_tts_model_name
@@ -916,6 +999,7 @@ class PlayerSettingsMixin:
         config = replace(
             self._config,
             gui_language=self._selected_gui_language(),
+            show_advanced_provider_options=self._advanced_provider_options_check.isChecked(),
             telegram_blacklisted_item_keys=tuple(sorted(self._telegram_channel_state.blacklisted_item_keys)),
             telegram_blacklisted_content_keys=tuple(sorted(self._telegram_channel_state.blacklisted_content_keys)),
             telegram_auto_open_videos=self._telegram_auto_open_enabled(),
@@ -1232,6 +1316,7 @@ class PlayerSettingsMixin:
                 combo.lineEdit().editingFinished.connect(self._queue_save_settings)
 
         checks = (
+            self._advanced_provider_options_check,
             self._preserve_terms_check,
             self._runtime_warmup_enabled_check,
             self._runtime_warmup_whisper_check,
@@ -1251,6 +1336,7 @@ class PlayerSettingsMixin:
         )
         for checkbox in checks:
             checkbox.toggled.connect(self._queue_save_settings)
+        self._advanced_provider_options_check.toggled.connect(self._refresh_advanced_provider_options)
         self._auto_match_audio_check.toggled.connect(self._sync_auto_match_controls_enabled)
         self._asr_provider_combo.currentIndexChanged.connect(self._sync_asr_controls)
         self._asr_provider_combo.currentIndexChanged.connect(
@@ -1600,10 +1686,7 @@ class PlayerSettingsMixin:
                 for option in available_language_options(include_auto=False, language_id=language)
             ],
         )
-        self._replace_combo_options(
-            self._translator_combo,
-            [(option.name, option.id) for option in available_translation_provider_options(language)],
-        )
+        self._refresh_translation_provider_options()
         self._refresh_translation_models()
         self._retranslate_inline_option_combos()
 
@@ -1694,8 +1777,9 @@ class PlayerSettingsMixin:
             combo.setItemText(index, text)
 
     @staticmethod
-    def _replace_combo_options(combo: QComboBox, options: list[tuple[str, str]]) -> None:
-        current = combo.currentData()
+    def _replace_combo_options(combo: QComboBox, options: list[tuple[str, str]], *, current=None) -> None:
+        if current is None:
+            current = combo.currentData()
         was_blocked = combo.blockSignals(True)
         combo.clear()
         for label, value in options:

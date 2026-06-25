@@ -155,6 +155,7 @@ def _env_bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class AppConfig:
     gui_language: str = "vi"
+    show_advanced_provider_options: bool = False
     telegram_blacklisted_item_keys: tuple[str, ...] = ()
     telegram_blacklisted_content_keys: tuple[str, ...] = ()
     telegram_auto_open_videos: bool = True

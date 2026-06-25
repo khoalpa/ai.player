@@ -47,24 +47,20 @@ except ImportError:
 
 from ai_player.core.runtime_catalog import (
     available_asr_models,
-    available_asr_providers,
     available_gui_language_options,
     available_language_options,
     available_local_llm_options,
     available_ocr_models,
     available_ocr_providers,
     available_speaker_gender_models,
-    available_translation_provider_options,
 )
-from ai_player.services.asr import normalize_asr_provider
 from ai_player.services.capture_sources import list_capture_device_options
 from ai_player.services.source_voice_filter import (
     SOURCE_VOICE_FILTER_DEMUCS_MODELS,
     normalize_source_voice_filter_model,
 )
 from ai_player.services.speaker_voice_selector import normalize_speaker_gender_provider, normalize_voice_gender_mode
-from ai_player.services.translation import normalize_translator_provider
-from ai_player.services.tts_base import available_tts_providers, available_vieneu_modes, normalize_tts_provider
+from ai_player.services.tts_base import available_vieneu_modes
 from ai_player.services.video_source import is_supported_browser_video_url
 from ai_player.ui.player_window_media import DEFAULT_SIDEBAR_PANEL_SIZES
 from ai_player.ui.player_window_media_browser import DEFAULT_MEDIA_HOME_URL, build_media_browser_buttons
@@ -1507,24 +1503,18 @@ class PlayerLayoutMixin:
         )
         self._target_language_combo.currentIndexChanged.connect(self._language_pair_changed)
 
+        self._advanced_provider_options_check = QCheckBox(self._tr("show_advanced_provider_options"))
+        self._advanced_provider_options_check.setProperty("i18n_key", "show_advanced_provider_options")
+        self._advanced_provider_options_check.setToolTip(self._tr("show_advanced_provider_options_tooltip"))
+        self._advanced_provider_options_check.setProperty(
+            "i18n_tooltip_key",
+            "show_advanced_provider_options_tooltip",
+        )
+        self._advanced_provider_options_check.setChecked(self._config.show_advanced_provider_options)
+
         self._asr_provider_combo = QComboBox()
         self._compact_combo(self._asr_provider_combo)
-        asr_provider_options = available_asr_providers()
-        selected_asr_provider = normalize_asr_provider(self._config.asr_provider)
-        if selected_asr_provider not in {provider.id for provider in asr_provider_options}:
-            advanced_provider = next(
-                (
-                    provider
-                    for provider in available_asr_providers(include_advanced=True)
-                    if provider.id == selected_asr_provider
-                ),
-                None,
-            )
-            if advanced_provider is not None:
-                asr_provider_options.append(advanced_provider)
-        for provider in asr_provider_options:
-            self._asr_provider_combo.addItem(provider.name, provider.id)
-        self._asr_provider_combo.setCurrentIndex(max(0, self._asr_provider_combo.findData(selected_asr_provider)))
+        self._refresh_asr_provider_options()
         self._asr_model_combo = QComboBox()
         self._compact_combo(self._asr_model_combo)
         self._asr_model_combo.setEditable(True)
@@ -1570,27 +1560,7 @@ class PlayerLayoutMixin:
 
         self._translator_combo = QComboBox()
         self._compact_combo(self._translator_combo)
-        translation_provider_options = available_translation_provider_options(self._config.gui_language)
-        selected_translator_provider = normalize_translator_provider(self._config.translator_provider)
-        if selected_translator_provider not in {provider.id for provider in translation_provider_options}:
-            advanced_provider = next(
-                (
-                    provider
-                    for provider in available_translation_provider_options(
-                        self._config.gui_language,
-                        include_advanced=True,
-                    )
-                    if provider.id == selected_translator_provider
-                ),
-                None,
-            )
-            if advanced_provider is not None:
-                translation_provider_options.append(advanced_provider)
-        for translator in translation_provider_options:
-            self._translator_combo.addItem(translator.name, translator.id)
-        self._translator_combo.setCurrentIndex(
-            max(0, self._translator_combo.findData(selected_translator_provider))
-        )
+        self._refresh_translation_provider_options()
         self._translator_combo.currentIndexChanged.connect(self._translator_changed)
         self._nllb_model_combo = QComboBox()
         self._compact_combo(self._nllb_model_combo)
@@ -1649,24 +1619,7 @@ class PlayerLayoutMixin:
 
         self._tts_provider_combo = QComboBox()
         self._compact_combo(self._tts_provider_combo)
-        tts_provider_options = available_tts_providers()
-        selected_tts_provider = normalize_tts_provider(self._config.tts_provider)
-        if selected_tts_provider not in {provider.id for provider in tts_provider_options}:
-            advanced_provider = next(
-                (
-                    provider
-                    for provider in available_tts_providers(include_advanced=True)
-                    if provider.id == selected_tts_provider
-                ),
-                None,
-            )
-            if advanced_provider is not None:
-                tts_provider_options.append(advanced_provider)
-        for provider in tts_provider_options:
-            self._tts_provider_combo.addItem(provider.name, provider.id)
-        self._tts_provider_combo.setCurrentIndex(
-            max(0, self._tts_provider_combo.findData(selected_tts_provider))
-        )
+        self._refresh_tts_provider_options()
         self._tts_provider_combo.currentIndexChanged.connect(self._refresh_tts_options)
 
         self._tts_mode_label = self._field_label("mode")

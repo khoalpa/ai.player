@@ -855,6 +855,8 @@
     "runtime_warmup_translation": "Nạp bộ dịch",
     "runtime_warmup_tts": "Nạp TTS",
     "tts_advanced_group": "TTS nâng cao",
+    "show_advanced_provider_options": "Hiện tuỳ chọn nâng cao",
+    "show_advanced_provider_options_tooltip": "Hiện thêm provider online/legacy cho nhận dạng giọng nói, dịch thuật và tạo giọng nói.",
     "asr_provider": "Bộ nhận dạng giọng nói",
     "asr_model": "Mô hình giọng nói",
     "ocr_provider": "Bộ nhận dạng chữ viết",
