@@ -78,13 +78,19 @@ try {
         $Stdout = ""
         $Stderr = ""
         try {
+            $ProcessFilePath = $FilePath
+            $ProcessArguments = $Arguments
+            if ([System.IO.Path]::GetExtension($FilePath).Equals(".ps1", [System.StringComparison]::OrdinalIgnoreCase)) {
+                $ProcessFilePath = "powershell.exe"
+                $ProcessArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $FilePath) + $Arguments
+            }
             $StartInfo = [System.Diagnostics.ProcessStartInfo]::new()
-            $StartInfo.FileName = $FilePath
+            $StartInfo.FileName = $ProcessFilePath
             $StartInfo.WorkingDirectory = $ProjectRoot
             $StartInfo.UseShellExecute = $false
             $StartInfo.RedirectStandardOutput = $true
             $StartInfo.RedirectStandardError = $true
-            $StartInfo.Arguments = Join-ProcessArguments $Arguments
+            $StartInfo.Arguments = Join-ProcessArguments $ProcessArguments
             $Process = [System.Diagnostics.Process]::new()
             $Process.StartInfo = $StartInfo
             if (-not $Process.Start()) {
