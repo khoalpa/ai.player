@@ -15,9 +15,20 @@ from ai_player.core.i18n import ui_text
 from ai_player.core.redaction import compact_redacted_text
 from ai_player.services.ffmpeg import ffmpeg_executable, run_ffmpeg, run_ffprobe
 
+VIDEO_ERROR_EMPTY_URL = "VIDEO_EMPTY_URL"
+VIDEO_ERROR_INVALID_MEDIA = "VIDEO_INVALID_MEDIA"
+VIDEO_ERROR_PROVIDER_UNSUPPORTED = "VIDEO_PROVIDER_UNSUPPORTED"
+VIDEO_ERROR_YTDLP_MISSING = "YTDLP_MISSING"
+VIDEO_ERROR_YTDLP_DOWNLOAD_FAILED = "YTDLP_DOWNLOAD_FAILED"
+VIDEO_ERROR_YTDLP_FORMAT_MISSING = "YTDLP_FORMAT_MISSING"
+VIDEO_ERROR_VIDEO_NO_AUDIO = "VIDEO_NO_AUDIO"
+
 
 class VideoSourceError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: str = VIDEO_ERROR_INVALID_MEDIA, provider: str = "") -> None:
+        super().__init__(message)
+        self.code = code
+        self.provider = provider
 
 
 class VideoSourceCancelled(RuntimeError):
@@ -97,12 +108,20 @@ def resolve_video_source(
 ) -> VideoSource:
     url = value.strip()
     if not url:
-        raise VideoSourceError(ui_text("video_error_empty_url", language_id))
+        raise VideoSourceError(ui_text("video_error_empty_url", language_id), code=VIDEO_ERROR_EMPTY_URL)
 
     if is_telegram_web_progressive_url(url):
-        raise VideoSourceError(ui_text("video_error_telegram_web_progressive", language_id))
+        raise VideoSourceError(
+            ui_text("video_error_telegram_web_progressive", language_id),
+            code=VIDEO_ERROR_PROVIDER_UNSUPPORTED,
+            provider="telegram",
+        )
     if _is_private_telegram_url(url):
-        raise VideoSourceError(ui_text("video_error_telegram_private_url", language_id))
+        raise VideoSourceError(
+            ui_text("video_error_telegram_private_url", language_id),
+            code=VIDEO_ERROR_PROVIDER_UNSUPPORTED,
+            provider="telegram",
+        )
 
     if _should_resolve_with_ytdlp(url):
         return _resolve_page_url(
@@ -204,7 +223,10 @@ def _resolve_page_url(
     try:
         import yt_dlp
     except ImportError as exc:
-        raise VideoSourceError(ui_text("video_error_missing_ytdlp_page", language_id)) from exc
+        raise VideoSourceError(
+            ui_text("video_error_missing_ytdlp_page", language_id),
+            code=VIDEO_ERROR_YTDLP_MISSING,
+        ) from exc
 
     provider = _provider_name(url)
     quality = _normalize_playback_quality(playback_quality)
@@ -276,7 +298,11 @@ def _resolve_page_url(
             info = ydl.extract_info(url, download=full_cache)
         check_cancelled()
         if not isinstance(info, dict):
-            raise VideoSourceError(ui_text("video_error_info_missing", language_id, provider=provider))
+            raise VideoSourceError(
+                ui_text("video_error_info_missing", language_id, provider=provider),
+                code=VIDEO_ERROR_YTDLP_FORMAT_MISSING,
+                provider=provider,
+            )
     except VideoSourceCancelled:
         raise
     except VideoSourceError:
@@ -295,15 +321,25 @@ def _resolve_page_url(
             )
             if fallback_source is not None:
                 return fallback_source
-            raise VideoSourceError(ui_text("video_error_usable_media_missing", language_id, provider=provider)) from exc
+            raise VideoSourceError(
+                ui_text("video_error_usable_media_missing", language_id, provider=provider),
+                code=VIDEO_ERROR_YTDLP_FORMAT_MISSING,
+                provider=provider,
+            ) from exc
         raise VideoSourceError(
-            ui_text("video_error_download_failed", language_id, provider=provider, detail=detail)
+            ui_text("video_error_download_failed", language_id, provider=provider, detail=detail),
+            code=VIDEO_ERROR_YTDLP_DOWNLOAD_FAILED,
+            provider=provider,
         ) from exc
 
     if not full_cache:
         playback_url = _stream_playback_url(info)
         if not playback_url:
-            raise VideoSourceError(ui_text("video_error_stream_url_missing", language_id, provider=provider))
+            raise VideoSourceError(
+                ui_text("video_error_stream_url_missing", language_id, provider=provider),
+                code=VIDEO_ERROR_YTDLP_FORMAT_MISSING,
+                provider=provider,
+            )
         width, height = _video_dimensions_from_info(info)
         return VideoSource(
             input_url=url,
@@ -319,10 +355,18 @@ def _resolve_page_url(
         source_cache_dir = _source_cache_dir(provider, quality, cache_root=cache_dir)
     local_path = _downloaded_file_path(info, source_cache_dir)
     if not local_path:
-        raise VideoSourceError(ui_text("video_error_downloaded_file_missing", language_id, provider=provider))
+        raise VideoSourceError(
+            ui_text("video_error_downloaded_file_missing", language_id, provider=provider),
+            code=VIDEO_ERROR_YTDLP_FORMAT_MISSING,
+            provider=provider,
+        )
     if not _video_file_has_audio(local_path):
         _remove_cached_file(local_path)
-        raise VideoSourceError(ui_text("video_error_no_audio_stream", language_id, provider=provider))
+        raise VideoSourceError(
+            ui_text("video_error_no_audio_stream", language_id, provider=provider),
+            code=VIDEO_ERROR_VIDEO_NO_AUDIO,
+            provider=provider,
+        )
 
     if progress_callback is not None:
         progress_callback(

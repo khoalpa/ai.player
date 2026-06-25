@@ -64,6 +64,8 @@ def test_resolve_rejects_telegram_web_progressive_url() -> None:
         )
 
     assert "Telegram Web progressive" in str(exc_info.value)
+    assert exc_info.value.code == video_source.VIDEO_ERROR_PROVIDER_UNSUPPORTED
+    assert exc_info.value.provider == "telegram"
 
 
 def test_resolve_rejects_private_telegram_url_before_ytdlp() -> None:
@@ -71,6 +73,8 @@ def test_resolve_rejects_private_telegram_url_before_ytdlp() -> None:
         video_source.resolve_video_source("https://t.me/+s91pFSI1prtmZjMx", language_id="en")
 
     assert "Telegram invite/private URLs" in str(exc_info.value)
+    assert exc_info.value.code == video_source.VIDEO_ERROR_PROVIDER_UNSUPPORTED
+    assert exc_info.value.provider == "telegram"
 
 
 @pytest.mark.parametrize(
@@ -327,6 +331,8 @@ def test_resolve_page_url_rejects_empty_ytdlp_info(monkeypatch, full_cache: bool
         video_source.resolve_video_source("https://t.me/demo/123", full_cache=full_cache, language_id="en")
 
     assert "Could not read video information from telegram" in str(exc_info.value)
+    assert exc_info.value.code == video_source.VIDEO_ERROR_YTDLP_FORMAT_MISSING
+    assert exc_info.value.provider == "telegram"
 
 
 def test_video_dimensions_from_info_uses_requested_formats() -> None:
@@ -365,6 +371,8 @@ def test_resolve_page_url_cleans_ytdlp_color_codes(monkeypatch) -> None:
     assert "ERROR:" not in message
     assert "\x1b" not in message
     assert "[0;31m" not in message
+    assert exc_info.value.code == video_source.VIDEO_ERROR_YTDLP_DOWNLOAD_FAILED
+    assert exc_info.value.provider == "youtube"
 
 
 def test_resolve_page_url_reports_missing_usable_media(monkeypatch) -> None:
@@ -392,6 +400,8 @@ def test_resolve_page_url_reports_missing_usable_media(monkeypatch) -> None:
     message = str(exc_info.value)
     assert "usable audio/video stream" in message
     assert "Unable to find embedded media URL" not in message
+    assert exc_info.value.code == video_source.VIDEO_ERROR_YTDLP_FORMAT_MISSING
+    assert exc_info.value.provider == "vlxx-example"
 
 
 def test_clean_download_error_removes_bare_ansi_codes() -> None:
@@ -525,4 +535,6 @@ def test_resolve_page_url_rejects_cached_file_without_audio(monkeypatch, tmp_pat
         )
 
     assert "no audio stream" in str(exc_info.value)
+    assert exc_info.value.code == video_source.VIDEO_ERROR_VIDEO_NO_AUDIO
+    assert exc_info.value.provider == "youtube"
     assert not downloaded.exists()
