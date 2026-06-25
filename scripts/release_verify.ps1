@@ -82,9 +82,15 @@ try {
         }
 
         if ($Profile -eq "Lite") {
-            Invoke-ReleaseStep "install-lite" $Python @("-m", "pip", "install", "-e", ".[dev,packaging]")
+            Invoke-ReleaseStep -Name "install-lite" -FilePath $Python -Arguments @(
+                "-m",
+                "pip",
+                "install",
+                "-e",
+                ".[dev,packaging]"
+            )
         } elseif ($Profile -eq "OfflineCpu") {
-            Invoke-ReleaseStep "install-offline-cpu" $Python @(
+            Invoke-ReleaseStep -Name "install-offline-cpu" -FilePath $Python -Arguments @(
                 "-m",
                 "pip",
                 "install",
@@ -92,7 +98,7 @@ try {
                 ".[dev,packaging,offline-ai,audit]"
             )
         } elseif ($Profile -eq "Gpu") {
-            Invoke-ReleaseStep "install-gpu" $Python @(
+            Invoke-ReleaseStep -Name "install-gpu" -FilePath $Python -Arguments @(
                 "-m",
                 "pip",
                 "install",
@@ -112,8 +118,14 @@ try {
         if ($RequireSignature) {
             $BuildArgs += "-RequireSignature"
         }
-        Invoke-ReleaseStep "build-$($Profile.ToLowerInvariant())" (Join-Path $ProjectRoot "scripts\build_portable.ps1") $BuildArgs
-        Invoke-ReleaseStep "launch-$($Profile.ToLowerInvariant())" (Join-Path $ProjectRoot "scripts\smoke_launch_app.ps1") @(
+        Invoke-ReleaseStep `
+            -Name "build-$($Profile.ToLowerInvariant())" `
+            -FilePath (Join-Path $ProjectRoot "scripts\build_portable.ps1") `
+            -Arguments $BuildArgs
+        Invoke-ReleaseStep `
+            -Name "launch-$($Profile.ToLowerInvariant())" `
+            -FilePath (Join-Path $ProjectRoot "scripts\smoke_launch_app.ps1") `
+            -Arguments @(
             "-AppPath",
             "dist\portable\AI Player Lite\AI Player\AI Player.exe",
             "-Seconds",
@@ -121,19 +133,25 @@ try {
         )
     }
 
-    Invoke-ReleaseStep "worktree" (Join-Path $ProjectRoot "scripts\check_release_worktree.ps1") @("-FailOnModified")
-    Invoke-ReleaseStep "ruff" $Python @("-m", "ruff", "check", ".")
+    Invoke-ReleaseStep `
+        -Name "worktree" `
+        -FilePath (Join-Path $ProjectRoot "scripts\check_release_worktree.ps1") `
+        -Arguments @("-FailOnModified")
+    Invoke-ReleaseStep -Name "ruff" -FilePath $Python -Arguments @("-m", "ruff", "check", ".")
     if (-not $SkipPytest) {
-        Invoke-ReleaseStep "pytest" $Python @("-m", "pytest", "-q")
+        Invoke-ReleaseStep -Name "pytest" -FilePath $Python -Arguments @("-m", "pytest", "-q")
     }
-    Invoke-ReleaseStep "pip-check" $Python @("-m", "pip", "check")
-    Invoke-ReleaseStep "runtime-doctor" $Python @(".\scripts\runtime_doctor.py", "--ci")
-    Invoke-ReleaseStep "workflow-smoke" $Python @(
+    Invoke-ReleaseStep -Name "pip-check" -FilePath $Python -Arguments @("-m", "pip", "check")
+    Invoke-ReleaseStep -Name "runtime-doctor" -FilePath $Python -Arguments @(".\scripts\runtime_doctor.py", "--ci")
+    Invoke-ReleaseStep -Name "workflow-smoke" -FilePath $Python -Arguments @(
         ".\scripts\workflow_smoke_check.py",
         "--output",
         (Join-Path $RunRoot "workflow-smoke-current.json")
     )
-    Invoke-ReleaseStep "release-smoke" $Python @("-m", "pytest", "tests\test_release_smoke.py", "-q")
+    Invoke-ReleaseStep `
+        -Name "release-smoke" `
+        -FilePath $Python `
+        -Arguments @("-m", "pytest", "tests\test_release_smoke.py", "-q")
 
     $BuildOrder = @("Lite", "OfflineCpu", "Gpu")
     $SelectedBuilds = @($BuildOrder | Where-Object { $BuildProfiles -contains $_ })
