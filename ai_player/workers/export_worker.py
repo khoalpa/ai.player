@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import tempfile
 import threading
 from dataclasses import replace
@@ -14,6 +15,16 @@ from ai_player.core.config import AppConfig
 from ai_player.core.i18n import ui_text
 from ai_player.core.offline_env import OfflineEnvironmentToken, pop_hf_offline_environment, push_hf_offline_environment
 from ai_player.core.performance import measure_stage
+from ai_player.core.runtime_errors import (
+    ASR_RUNTIME_FAILED,
+    EXPORT_OUTPUT_MISSING,
+    FFMPEG_FAILED,
+    MODEL_NOT_FOUND,
+    TTS_PROVIDER_FAILED,
+    CodedRuntimeError,
+    coded_error_info,
+    coded_user_message,
+)
 from ai_player.pipeline.export_plan import (
     ExportCue,
     ExportRange,
@@ -65,7 +76,7 @@ from ai_player.services.ffmpeg import make_silence as ffmpeg_make_silence
 from ai_player.services.speaker_voice_selector import VoiceGenderSelector
 from ai_player.services.transcript_cleanup import TranscriptCleaner
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
-from ai_player.services.tts import create_tts_provider
+from ai_player.services.tts import TTSError, create_tts_provider
 from ai_player.services.whisper_runtime import (
     SharedWhisperModel,
     get_shared_whisper_model,
@@ -321,12 +332,13 @@ class DubbingExportWorker(QThread):
                     return
             else:
                 raise RuntimeError(self._tr("export_error_invalid_kind", kind=self._export_kind))
+            self._require_export_output(self._output_path)
             self._set_progress(100)
             self.export_finished.emit(str(self._output_path))
         except Exception as exc:
             if not self._stop_requested:
-                LOGGER.exception("Dubbing export worker failed.")
-                self.failed.emit(_clean_message(exc))
+                self._log_worker_failure("Dubbing export worker failed.", exc)
+                self.failed.emit(self._ui_failure_message(exc))
         finally:
             if self._tts_provider is not None:
                 self._tts_provider.close()
@@ -344,7 +356,11 @@ class DubbingExportWorker(QThread):
         if should_use_online_asr(self._config, language=self._selected_whisper_language()):
             return
         if self._config.whisper_offline and not Path(self._config.whisper_model).exists():
-            raise RuntimeError(self._tr("export_error_missing_whisper_offline"))
+            raise CodedRuntimeError(
+                MODEL_NOT_FOUND,
+                self._tr("export_error_missing_whisper_offline"),
+                detail=f"Missing Whisper model path: {self._config.whisper_model}",
+            )
 
     def _selected_whisper_language(self) -> str | None:
         return selected_source_language(self._config)
@@ -509,11 +525,29 @@ class DubbingExportWorker(QThread):
         except Exception as exc:
             if self._whisper_device == "cpu" and self._whisper_compute_type != "int8":
                 self._emit_progress("worker_whisper_cpu_float16_fallback")
-                return self._switch_whisper_to_cpu(exc)
+                try:
+                    return self._switch_whisper_to_cpu(exc)
+                except Exception as fallback_exc:
+                    raise CodedRuntimeError(
+                        ASR_RUNTIME_FAILED,
+                        "ASR runtime failed. Check ASR model/device settings.",
+                        detail=f"Whisper CPU fallback failed after {type(exc).__name__}: {fallback_exc}",
+                    ) from fallback_exc
             if self._whisper_device == "cpu":
-                raise
+                raise CodedRuntimeError(
+                    ASR_RUNTIME_FAILED,
+                    "ASR runtime failed. Check ASR model/device settings.",
+                    detail=f"Whisper model load failed: {exc}",
+                ) from exc
             self._emit_progress("worker_whisper_cuda_fallback")
-            return self._switch_whisper_to_cpu(exc)
+            try:
+                return self._switch_whisper_to_cpu(exc)
+            except Exception as fallback_exc:
+                raise CodedRuntimeError(
+                    ASR_RUNTIME_FAILED,
+                    "ASR runtime failed. Check ASR model/device settings.",
+                    detail=f"Whisper CUDA fallback failed after {type(exc).__name__}: {fallback_exc}",
+                ) from fallback_exc
 
     def _switch_whisper_to_cpu(self, _cause: Exception | None = None) -> SharedWhisperModel:
         self._whisper_device = "cpu"
@@ -549,16 +583,27 @@ class DubbingExportWorker(QThread):
         *,
         passthrough_errors: tuple[type[BaseException], ...] = (),
     ):
-        return transcribe_model_with_device_fallback(
-            model,
-            source_audio,
-            kwargs,
-            whisper_device=lambda: self._whisper_device,
-            whisper_compute_type=lambda: self._whisper_compute_type,
-            emit_status=lambda key: self._emit_progress(key),
-            switch_whisper_to_cpu=lambda exc: self._switch_whisper_to_cpu(exc),
-            passthrough_errors=passthrough_errors,
-        )
+        try:
+            return transcribe_model_with_device_fallback(
+                model,
+                source_audio,
+                kwargs,
+                whisper_device=lambda: self._whisper_device,
+                whisper_compute_type=lambda: self._whisper_compute_type,
+                emit_status=lambda key: self._emit_progress(key),
+                switch_whisper_to_cpu=lambda exc: self._switch_whisper_to_cpu(exc),
+                passthrough_errors=passthrough_errors,
+            )
+        except passthrough_errors:
+            raise
+        except Exception as exc:
+            if isinstance(exc, CodedRuntimeError):
+                raise
+            raise CodedRuntimeError(
+                ASR_RUNTIME_FAILED,
+                "ASR runtime failed. Check ASR model/device settings.",
+                detail=f"Whisper transcription failed for {source_audio}: {exc}",
+            ) from exc
 
     def _build_aligned_audio(self, cues: list[ExportCue], output_path: Path) -> None:
         if self._temp_dir is None:
@@ -664,7 +709,43 @@ class DubbingExportWorker(QThread):
         if respect_stop and self._stop_requested:
             raise RuntimeError(self._tr("export_error_cancelled"))
         cancel_callback = self._is_stop_requested if respect_stop else (lambda: False)
-        run_ffmpeg_cancelable(args, cancel_callback=cancel_callback, **kwargs)
+        try:
+            run_ffmpeg_cancelable(args, cancel_callback=cancel_callback, **kwargs)
+        except ProcessCancelled:
+            raise
+        except subprocess.CalledProcessError as exc:
+            raise CodedRuntimeError(
+                FFMPEG_FAILED,
+                "FFmpeg failed. Check source media and output path.",
+                detail=_clean_message(exc),
+            ) from exc
+
+    def _require_export_output(self, path: Path) -> None:
+        if path.exists() and path.stat().st_size > 0:
+            return
+        raise CodedRuntimeError(
+            EXPORT_OUTPUT_MISSING,
+            "Export output was not created. Check disk space and output path.",
+            detail=f"Missing or empty export output: {path}",
+        )
+
+    def _ui_failure_message(self, exc: Exception) -> str:
+        if isinstance(exc, TTSError):
+            wrapped = CodedRuntimeError(
+                TTS_PROVIDER_FAILED,
+                "TTS provider failed. Check provider/model settings.",
+                detail=exc,
+            )
+            return coded_user_message(wrapped)
+        return coded_user_message(exc, fallback=_clean_message(exc))
+
+    @staticmethod
+    def _log_worker_failure(message: str, exc: Exception) -> None:
+        info = coded_error_info(exc)
+        if info is None:
+            LOGGER.exception(message)
+            return
+        LOGGER.exception("%s code=%s detail=%s", message, info.code, info.detail)
 
     def _is_stop_requested(self) -> bool:
         return self._stop_requested
@@ -921,6 +1002,7 @@ class StagedDubbingExportWorker(DubbingExportWorker):
                 self._emit_progress("staged_export_progress_writing_mp4")
                 self._set_progress(94)
                 self._mux_video(paths.final_mix, output_path=paths.final_video, cancel_strategy="quit")
+                self._require_export_output(paths.final_video)
 
                 self._write_staged_manifest(
                     manifest_path,
@@ -945,8 +1027,8 @@ class StagedDubbingExportWorker(DubbingExportWorker):
                 if self._keep_partial_requested:
                     self.partial_finished.emit(str(self._output_dir))
             else:
-                LOGGER.exception("Staged dubbing export worker failed.")
-                self.failed.emit(_clean_message(exc))
+                self._log_worker_failure("Staged dubbing export worker failed.", exc)
+                self.failed.emit(self._ui_failure_message(exc))
         finally:
             if self._tts_provider is not None:
                 self._tts_provider.close()
@@ -1091,7 +1173,11 @@ class StagedDubbingExportWorker(DubbingExportWorker):
 
     def _require_staged_artifact(self, path: Path) -> None:
         if not path.exists() or (path.is_file() and path.stat().st_size <= 0):
-            raise RuntimeError(self._tr("staged_export_error_missing_artifact", path=str(path)))
+            raise CodedRuntimeError(
+                EXPORT_OUTPUT_MISSING,
+                self._tr("staged_export_error_missing_artifact", path=str(path)),
+                detail=f"Missing or empty staged artifact: {path}",
+            )
 
     def _mix_staged_final_audio(self, paths: StagedExportPaths) -> None:
         self._require_staged_artifact(paths.background)

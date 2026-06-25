@@ -8,6 +8,14 @@ from types import SimpleNamespace
 import pytest
 
 from ai_player.core.config import AppConfig
+from ai_player.core.runtime_errors import (
+    ASR_RUNTIME_FAILED,
+    EXPORT_OUTPUT_MISSING,
+    FFMPEG_FAILED,
+    MODEL_NOT_FOUND,
+    TTS_PROVIDER_FAILED,
+    CodedRuntimeError,
+)
 from ai_player.pipeline import export_plan, transcript_source
 from ai_player.ui import player_window_export
 from ai_player.workers import (
@@ -48,6 +56,68 @@ def test_scale_filters_contain_expected_operations(func, needle: str) -> None:
 def test_scale_filters_tolerate_invalid_dimensions() -> None:
     assert "min(1920\\,iw)" in export_worker._scale_filter("bad", 0)
     assert "pad=1920:1080" in export_worker._document_scale_filter(float("inf"), "bad")
+
+
+def test_export_worker_missing_offline_whisper_uses_model_error_code(tmp_path) -> None:
+    config = AppConfig(whisper_offline=True, whisper_model=str(tmp_path / "missing-model"))
+    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+
+    with pytest.raises(CodedRuntimeError) as exc_info:
+        worker._validate_whisper_model()
+
+    assert exc_info.value.code == MODEL_NOT_FOUND
+
+
+def test_export_worker_wraps_ffmpeg_failure_with_error_code(monkeypatch, tmp_path) -> None:
+    config = AppConfig()
+    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+
+    def fail_run_ffmpeg(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(2, ["ffmpeg"], stderr=b"bad input")
+
+    monkeypatch.setattr(export_worker, "run_ffmpeg_cancelable", fail_run_ffmpeg)
+
+    with pytest.raises(CodedRuntimeError) as exc_info:
+        worker._run_ffmpeg(["-i", "missing.mp4", tmp_path / "out.wav"])
+
+    assert exc_info.value.code == FFMPEG_FAILED
+    assert "bad input" in exc_info.value.detail
+
+
+def test_export_worker_wraps_asr_runtime_failure(monkeypatch, tmp_path) -> None:
+    config = AppConfig(whisper_device="cpu", whisper_compute_type="int8")
+    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    monkeypatch.setattr(
+        export_worker,
+        "get_shared_whisper_model",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    with pytest.raises(CodedRuntimeError) as exc_info:
+        worker._load_whisper_model()
+
+    assert exc_info.value.code == ASR_RUNTIME_FAILED
+
+
+def test_export_worker_missing_output_uses_export_error_code(tmp_path) -> None:
+    config = AppConfig()
+    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+
+    with pytest.raises(CodedRuntimeError) as exc_info:
+        worker._require_export_output(tmp_path / "missing.wav")
+
+    assert exc_info.value.code == EXPORT_OUTPUT_MISSING
+
+
+def test_export_worker_tts_failure_ui_message_is_short(tmp_path) -> None:
+    config = AppConfig()
+    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+
+    message = worker._ui_failure_message(export_worker.TTSError("secret technical provider trace"))
+
+    assert message == f"TTS provider failed. Check provider/model settings. [{TTS_PROVIDER_FAILED}]"
+    assert "technical provider trace" not in message
+
 
 @pytest.mark.parametrize(("value", "seconds"), [("00:00:01,500", 1.5), ("01:02:03.004", 3723.004)])
 def test_parse_srt_time(value: str, seconds: float) -> None:
