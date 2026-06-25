@@ -2,6 +2,30 @@
 
 Use this file to keep a short, build-specific record before sharing a Windows build.
 
+## 2026-06-25 Offline CPU And GPU Release Verification
+
+- Source baseline: current working tree after release verification profile
+  automation, deterministic workflow smoke checks, typed video-source errors,
+  and worker lifecycle state extraction were added.
+- Offline CPU profile: `.\scripts\release_verify.ps1 -BuildProfiles OfflineCpu`
+  passed. Summary:
+  `data\tmp\release-verify\20260625-141712\summary.json`.
+- GPU profile: `.\scripts\release_verify.ps1 -BuildProfiles Gpu` passed.
+  Summary: `data\tmp\release-verify\20260625-142411\summary.json`.
+- Both profile runs passed the short gate: release worktree check, `ruff`,
+  full `pytest`, `pip check`, Runtime Doctor, deterministic workflow smoke,
+  release smoke tests, portable build, and 8-second portable launch smoke.
+- Unit/integration tests: `.\.venv\Scripts\python.exe -m pytest -q` passed,
+  729 tests in each profile run.
+- Workflow smoke verified `samples\demo-video.mp4` duration, size, audio/video
+  stream presence, and `samples\demo-transcript.srt` segment count.
+- Portable build output: `dist\portable\AI Player Lite`.
+- Code signing: no certificate was provided, so the portable bundle remains
+  unsigned. Prepare a code-signing certificate and rerun with `-RequireSignature`
+  before broad public distribution.
+- Note: PyInstaller reported optional missing TensorRT/TBB libraries during the
+  build. The build completed and launch smoke passed.
+
 ## 2026-06-23 UI And Portable Refactor Smoke
 
 - Source baseline: current working tree after provider preview UI helpers,
