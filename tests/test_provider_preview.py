@@ -65,7 +65,11 @@ def test_tts_preview_writes_audio_file(monkeypatch, tmp_path) -> None:
     result = provider_preview.preview_provider("tts", AppConfig(tts_provider="edge"))
 
     assert result.output_path.endswith(".mp3")
-    assert "Audio preview" in result.message
+    assert "Input: Xin chao, day la ban nghe thu AI Player." in result.message
+    assert "Provider: edge" in result.message
+    assert "Voice: " in result.message
+    assert f"Output: {tmp_path / 'tts-preview.mp3'}" in result.message
+    assert "Duration: unknown" in result.message
 
 
 def test_online_asr_preview_requires_api_key() -> None:

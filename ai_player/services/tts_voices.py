@@ -66,11 +66,16 @@ TURBO_VIENEU_VOICES = [
 ]
 
 
-def available_tts_provider_options() -> list[VoiceOption]:
-    return [
+def available_tts_provider_options(*, include_advanced: bool = False) -> list[VoiceOption]:
+    providers = [
         VoiceOption("none", "Không TTS"),
         VoiceOption("vieneu", "VieNeu-TTS"),
         VoiceOption("edge", "Edge TTS"),
+    ]
+    if not include_advanced:
+        return providers
+    return [
+        *providers,
         VoiceOption("azure_tts", "Azure TTS"),
         VoiceOption("google_tts", "Google Cloud TTS"),
         VoiceOption("amazon_polly", "Amazon Polly"),

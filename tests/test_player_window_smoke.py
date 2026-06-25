@@ -9,13 +9,17 @@ from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QFrame, QMessageBox, QScrollArea, QSizePolicy
 
+import ai_player.ui.player_window as player_window_module
 from ai_player.core.config import LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH, LOCAL_TRANSLATION_MODEL_PATH, AppConfig
 from ai_player.services import document_reader
 from ai_player.services.document_reader import DocumentPage
 from ai_player.services.ffmpeg import probe_duration_seconds, run_ffmpeg
 from ai_player.services.telegram_channel import TelegramChannelVideo
 from ai_player.services.youtube_channel import YouTubeChannelItem
-from ai_player.ui import player_window_readiness, player_window_settings
+from ai_player.ui import (
+    player_window_readiness,
+    player_window_settings,
+)
 from ai_player.ui.player_window import PlayerWindow
 from ai_player.ui.player_window_layout import (
     DEFAULT_MEDIA_ASPECT_RATIO,
@@ -2341,18 +2345,16 @@ def test_player_window_applies_online_lite_preset_controls(qapp) -> None:
         window._sync_api_key_statuses()
         assert window._translator_api_key_status.property("api_status_key") == "api_key_status_saved"
 
-        window._tts_api_key_edit.clear()
-        window._set_combo_data(window._tts_provider_combo, "azure_tts")
+        assert window._tts_provider_combo.findData("none") >= 0
+        assert window._tts_provider_combo.findData("vieneu") >= 0
+        assert window._tts_provider_combo.findData("edge") >= 0
+        assert window._tts_provider_combo.findData("azure_tts") == -1
+        assert window._tts_provider_combo.findData("google_tts") == -1
+        assert window._tts_provider_combo.findData("amazon_polly") == -1
+        window._set_combo_data(window._tts_provider_combo, "edge")
         window._sync_api_key_statuses()
-        assert window._tts_api_key_status.property("api_status_key") == "api_key_status_missing"
-        window._tts_api_key_edit.setText("azure-key")
-        window._sync_api_key_statuses()
-        assert window._tts_api_key_status.property("api_status_key") == "api_key_status_saved"
-
-        window._set_combo_data(window._tts_provider_combo, "amazon_polly")
-        window._tts_api_secret_edit.clear()
-        window._sync_api_key_statuses()
-        assert window._tts_api_secret_status.property("api_status_key") == "api_secret_status_missing"
+        assert window._tts_api_key_status.property("api_status_key") == "api_key_status_not_needed"
+        assert window._tts_api_secret_status.property("api_status_key") == "api_secret_status_not_needed"
 
         window._auto_voice_gender_check.setChecked(True)
         assert window._auto_voice_gender_mode_combo.findData("balanced") >= 0
@@ -2477,18 +2479,11 @@ def test_player_window_keeps_api_keys_per_provider_for_online_groups(qapp, monke
         qapp.processEvents()
         assert window._translator_api_key_edit.text() == "google-key"
 
-        window._set_combo_data(window._tts_provider_combo, "azure_tts")
-        qapp.processEvents()
-        window._tts_api_key_edit.setText("azure-key")
-        window._tts_api_secret_edit.clear()
-        window._set_combo_data(window._tts_provider_combo, "amazon_polly")
-        qapp.processEvents()
-        assert window._tts_api_key_edit.text() == "aws-access"
-        assert window._tts_api_secret_edit.text() == "aws-secret"
-        window._set_combo_data(window._tts_provider_combo, "azure_tts")
-        qapp.processEvents()
-        assert window._tts_api_key_edit.text() == "azure-key"
-        assert window._tts_api_secret_edit.text() == ""
+        assert window._tts_provider_combo.findData("azure_tts") == -1
+        assert window._tts_provider_combo.findData("amazon_polly") == -1
+        assert window._tts_provider_combo.currentData() in {"vieneu", "edge", "none"}
+        assert not window._tts_api_key_edit.isEnabled()
+        assert not window._tts_api_secret_edit.isEnabled()
 
         window._set_combo_data(window._ocr_provider_combo, "azure_vision")
         qapp.processEvents()
@@ -2515,7 +2510,6 @@ def test_player_window_keeps_api_keys_per_provider_for_online_groups(qapp, monke
         window._save_settings()
         assert saved["translator_api_key"]["google_translate"] == "google-key"
         assert saved["translator_api_key"]["deepl"] == "deepl-key"
-        assert saved["tts_api_key"]["azure_tts"] == "azure-key"
         assert saved["tts_api_key"]["amazon_polly"] == "aws-access"
         assert saved["tts_api_secret"]["amazon_polly"] == "aws-secret"
         assert saved["ocr_api_key"]["azure_vision"] == "azure-ocr-key"
@@ -2617,6 +2611,24 @@ def test_player_window_provider_preview_status_is_not_duplicated(qapp) -> None:
         assert window._speaker_gender_preview_status.parent() is not None
         assert window._cleanup_preview_status.parent() is not None
         assert window._provider_preview_status.parent() is None
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_preserves_selected_advanced_tts_provider(qapp, monkeypatch) -> None:
+    monkeypatch.setattr(
+        player_window_module,
+        "load_app_config",
+        lambda _default: AppConfig(tts_provider="azure_tts", tts_api_key="azure-key"),
+    )
+
+    window = PlayerWindow()
+    try:
+        assert window._tts_provider_combo.currentData() == "azure_tts"
+        assert window._tts_provider_combo.findData("azure_tts") >= 0
+        assert window._tts_provider_combo.findData("google_tts") == -1
+        assert window._tts_provider_combo.findData("amazon_polly") == -1
         window._settings_save_timer.stop()
     finally:
         window.close()

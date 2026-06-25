@@ -104,8 +104,8 @@ def normalize_tts_provider(value: object) -> str:
     return "vieneu"
 
 
-def available_tts_providers() -> list[VoiceOption]:
-    return available_tts_provider_options()
+def available_tts_providers(*, include_advanced: bool = False) -> list[VoiceOption]:
+    return available_tts_provider_options(include_advanced=include_advanced)
 
 
 def available_vieneu_modes() -> list[VoiceOption]:

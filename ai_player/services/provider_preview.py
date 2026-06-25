@@ -19,6 +19,7 @@ from ai_player.services.asr import (
     is_online_asr_provider,
     normalize_asr_provider,
 )
+from ai_player.services.ffmpeg import probe_duration_seconds
 from ai_player.services.speaker_voice_selector import (
     HUGGINGFACE_GENDER_API_BASE,
     VoiceGenderSelector,
@@ -162,18 +163,37 @@ def _preview_tts(config: AppConfig) -> tuple[str, str, str, str]:
     provider = create_tts_provider(config)
     suffix = tts_output_suffix(provider_name)
     output_path = _preview_dir() / f"tts-preview.{suffix}"
+    preview_text = "Xin chao, day la ban nghe thu AI Player."
+    voice = str(config.tts_voice or "").strip()
     try:
-        provider.synthesize("Xin chao, day la ban nghe thu AI Player.", output_path, voice=config.tts_voice)
+        provider.synthesize(preview_text, output_path, voice=voice)
     finally:
         provider.close()
     if not output_path.exists() or output_path.stat().st_size <= 0:
         raise ProviderPreviewError("TTS provider did not create audio.")
+    duration_text = _preview_duration_text(output_path)
     return (
         provider_name,
         str(config.vieneu_tts_model_name or config.tts_model),
-        f"Audio preview: {output_path}",
+        (
+            f"Input: {preview_text}\n"
+            f"Provider: {provider_name}\n"
+            f"Voice: {voice or 'default'}\n"
+            f"Output: {output_path}\n"
+            f"Duration: {duration_text}"
+        ),
         str(output_path),
     )
+
+
+def _preview_duration_text(path: Path) -> str:
+    try:
+        duration = probe_duration_seconds(path)
+    except Exception:
+        duration = 0.0
+    if duration > 0:
+        return f"{duration:.2f}s"
+    return "unknown"
 
 
 def _preview_cleanup(config: AppConfig) -> tuple[str, str, str, str]:

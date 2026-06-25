@@ -70,7 +70,9 @@ def test_voice_gender(provider: str, voice: str, expected: str) -> None:
 
 
 def test_online_tts_provider_options_include_confirmed_providers() -> None:
-    assert {provider.id for provider in tts_base.available_tts_providers()} >= {
+    primary_ids = {provider.id for provider in tts_base.available_tts_providers()}
+    assert primary_ids == {"none", "vieneu", "edge"}
+    assert {provider.id for provider in tts_base.available_tts_providers(include_advanced=True)} >= {
         "azure_tts",
         "google_tts",
         "amazon_polly",

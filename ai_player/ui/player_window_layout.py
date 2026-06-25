@@ -1619,10 +1619,23 @@ class PlayerLayoutMixin:
 
         self._tts_provider_combo = QComboBox()
         self._compact_combo(self._tts_provider_combo)
-        for provider in available_tts_providers():
+        tts_provider_options = available_tts_providers()
+        selected_tts_provider = normalize_tts_provider(self._config.tts_provider)
+        if selected_tts_provider not in {provider.id for provider in tts_provider_options}:
+            advanced_provider = next(
+                (
+                    provider
+                    for provider in available_tts_providers(include_advanced=True)
+                    if provider.id == selected_tts_provider
+                ),
+                None,
+            )
+            if advanced_provider is not None:
+                tts_provider_options.append(advanced_provider)
+        for provider in tts_provider_options:
             self._tts_provider_combo.addItem(provider.name, provider.id)
         self._tts_provider_combo.setCurrentIndex(
-            max(0, self._tts_provider_combo.findData(normalize_tts_provider(self._config.tts_provider)))
+            max(0, self._tts_provider_combo.findData(selected_tts_provider))
         )
         self._tts_provider_combo.currentIndexChanged.connect(self._refresh_tts_options)
 
