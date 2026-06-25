@@ -58,6 +58,9 @@ class ProviderPreviewResult:
     output_path: str = ""
 
 
+CLEANUP_PREVIEW_INPUT = "OpenAI API nay bi nhan dang sai chu."
+
+
 def preview_provider(kind: str, config: AppConfig) -> ProviderPreviewResult:
     normalized_kind = str(kind or "").strip().lower()
     started = time.perf_counter()
@@ -180,10 +183,11 @@ def _preview_cleanup(config: AppConfig) -> tuple[str, str, str, str]:
 
         cleanup_config = replace(config, transcript_cleanup_mode="light")
     cleaner = TranscriptCleaner(cleanup_config)
-    cleaned = cleaner.clean("open ai api nay bi nhan dang sai chut.", "vi")
+    cleaned = cleaner.clean(CLEANUP_PREVIEW_INPUT, "vi")
     if not cleaned:
         raise ProviderPreviewError("Cleanup provider returned an empty preview.")
-    return str(cleanup_config.transcript_cleanup_provider), str(cleanup_config.transcript_cleanup_model), cleaned, ""
+    message = f"Input: {CLEANUP_PREVIEW_INPUT}\nOutput: {cleaned}"
+    return str(cleanup_config.transcript_cleanup_provider), str(cleanup_config.transcript_cleanup_model), message, ""
 
 
 def _preview_speaker_gender(config: AppConfig) -> tuple[str, str, str, str]:

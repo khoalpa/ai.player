@@ -31,6 +31,8 @@ def test_cleanup_preview_enables_light_mode_when_cleanup_is_off(monkeypatch) -> 
             seen_modes.append(config.transcript_cleanup_mode)
 
         def clean(self, text, source_language=None):
+            assert text == provider_preview.CLEANUP_PREVIEW_INPUT
+            assert source_language == "vi"
             return "OpenAI API nay da sach."
 
     monkeypatch.setattr(provider_preview, "TranscriptCleaner", FakeCleaner)
@@ -42,7 +44,10 @@ def test_cleanup_preview_enables_light_mode_when_cleanup_is_off(monkeypatch) -> 
 
     assert seen_modes == ["light"]
     assert result.provider == "openai"
-    assert "OpenAI" in result.message
+    assert result.message == (
+        f"Input: {provider_preview.CLEANUP_PREVIEW_INPUT}\n"
+        "Output: OpenAI API nay da sach."
+    )
 
 
 def test_tts_preview_writes_audio_file(monkeypatch, tmp_path) -> None:

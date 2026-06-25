@@ -70,8 +70,8 @@ class _FakeStatusBar:
 class _FakeOwner:
     def __init__(self) -> None:
         self._status_bar = _FakeStatusBar()
-        self._provider_preview_buttons = {"tts": _FakeButton(), "asr": _FakeButton()}
-        self._provider_preview_statuses = {"tts": _FakeLabel(), "asr": _FakeLabel()}
+        self._provider_preview_buttons = {"tts": _FakeButton(), "asr": _FakeButton(), "cleanup": _FakeButton()}
+        self._provider_preview_statuses = {"tts": _FakeLabel(), "asr": _FakeLabel(), "cleanup": _FakeLabel()}
         self._provider_preview_status = _FakeLabel()
 
     def _current_runtime_config(self) -> AppConfig:
@@ -134,6 +134,25 @@ def test_provider_preview_controller_formats_success_and_failure() -> None:
 
     assert owner._provider_preview_statuses["asr"].text.startswith("Provider test failed: line one line two")
     assert len(owner._provider_preview_statuses["asr"].text) < 540
+
+
+def test_provider_preview_controller_preserves_cleanup_input_output_lines() -> None:
+    owner = _FakeOwner()
+    controller = ProviderPreviewController(owner)
+
+    controller.ready(
+        SimpleNamespace(
+            kind="cleanup",
+            provider="local",
+            model="Qwen2.5-7B-Instruct",
+            elapsed_seconds=57.6,
+            message="Input: OpenAI API nay bi nhan dang sai chu.\nOutput: OpenAI API này bị nhận dạng sai chữ.",
+        )
+    )
+
+    text = owner._provider_preview_statuses["cleanup"].text
+    assert "local ready in 57.6s | Qwen2.5-7B-Instruct | Input:" in text
+    assert "\nOutput: OpenAI API này bị nhận dạng sai chữ." in text
 
 
 def test_provider_preview_controller_redacts_failure_detail() -> None:
