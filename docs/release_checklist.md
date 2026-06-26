@@ -6,6 +6,8 @@ Use this checklist before sharing a build.
 
 - Pick the target profile from `docs\release_profiles.md` and use its install,
   smoke, model, and distribution expectations for this build.
+- Verify profiles in order: `Lite` first, then `OfflineCpu`, then `Gpu` only
+  when the previous profile passes and the release scope requires it.
 - Confirm the working tree contains only intended changes with `git status --short --branch`.
 - Review untracked files with `git ls-files -o --exclude-standard` and either add them intentionally or move generated scratch files under ignored paths.
 - Run `.\scripts\check_release_worktree.ps1 -FailOnModified` before creating a
@@ -19,6 +21,9 @@ Use this checklist before sharing a build.
 - Run `.\.venv\Scripts\python.exe -m pytest`.
 - Run `.\scripts\release_verify.ps1` for the short release gate and generated
   logs under `data\tmp\release-verify\`.
+- For distributable artifacts, run release verification with the selected
+  profile and signing requirement, for example
+  `.\scripts\release_verify.ps1 -BuildProfiles Lite -RequireSignature`.
 - Run `.\.venv\Scripts\python.exe .\scripts\compare_performance_presets.py --language vi`
   to review preset latency/quality tradeoffs before changing release defaults.
 - Run `.\.venv\Scripts\python.exe .\scripts\workflow_smoke_check.py --output data\tmp\workflow-smoke-current.json`
@@ -49,6 +54,9 @@ Use this checklist before sharing a build.
 - If an online provider API key is configured, restart the app and confirm the key
   remains configured without plaintext in `data\config\settings.json` or
   `data\config\online_providers.local.json`.
+- If the selected profile hides advanced online providers, confirm existing
+  provider-specific keys survive save/restart without being shown in the active
+  Lite/offline combo.
 
 ## AI Pipeline Smoke Test
 
@@ -87,3 +95,17 @@ Use this checklist before sharing a build.
 - Run `.\scripts\smoke_launch_app.ps1 -AppPath "dist\portable\AI Player Lite\AI Player\AI Player.exe"` and confirm it stays running for the smoke window.
 - Run Runtime Doctor from the portable app.
 - Record the completed smoke results in `docs\manual_smoke_results.md`.
+
+## Final Smoke Record
+
+Add one dated entry to `docs\manual_smoke_results.md` before sharing the build:
+
+- Release profile and command used, including whether `-RequireSignature` was
+  set.
+- `data\tmp\release-verify\<stamp>\summary.json` path and status.
+- Artifact path and portable executable path.
+- Signing result: certificate thumbprint/PFX source for signed builds, or an
+  explicit note that the artifact is local-only and unsigned.
+- Manual smoke coverage completed for the selected profile.
+- Any accepted advisories, optional missing libraries, unavailable hardware, or
+  skipped checks with the reason.

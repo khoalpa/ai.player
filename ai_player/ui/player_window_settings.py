@@ -55,6 +55,7 @@ from ai_player.ui.player_window_utils import (
 from ai_player.ui.player_window_utils import (
     ui_label as _ui_label,
 )
+from ai_player.ui.provider_secret_controller import ProviderSecretController
 
 
 def _normalize_transcript_cleanup_provider(value: object) -> str:
@@ -383,62 +384,30 @@ class PlayerSettingsMixin:
     def _restore_asr_api_key_for_provider(self, provider: str) -> None:
         self._restore_provider_secrets_for_kind("asr", provider)
 
+    def _provider_secret_controller(self) -> ProviderSecretController:
+        controller = getattr(self, "_provider_secrets", None)
+        if controller is None:
+            controller = ProviderSecretController(
+                self,
+                load_asr_provider_api_keys=load_asr_provider_api_keys,
+                load_provider_api_secrets=load_provider_api_secrets,
+                save_asr_provider_api_keys=save_asr_provider_api_keys,
+                save_provider_api_secrets=save_provider_api_secrets,
+            )
+            self._provider_secrets = controller
+        return controller
+
     def _provider_secret_cache(self, secret_name: str) -> dict[str, str]:
-        if not hasattr(self, "_provider_api_secret_cache"):
-            self._provider_api_secret_cache = {}
-        if secret_name not in self._provider_api_secret_cache:
-            if secret_name == "asr_api_key":
-                keys = load_asr_provider_api_keys()
-            else:
-                keys = load_provider_api_secrets(secret_name)
-            provider = self._config_secret_provider(secret_name)
-            value = str(getattr(self._config, secret_name, "") or "")
-            if value and provider:
-                keys[provider] = value
-            self._provider_api_secret_cache[secret_name] = keys
-        return self._provider_api_secret_cache[secret_name]
+        return self._provider_secret_controller().cache(secret_name)
 
     def _secret_controls_for_kind(self, kind: str) -> tuple[tuple[str, str], ...]:
-        return {
-            "asr": (("_asr_api_key_edit", "asr_api_key"),),
-            "ocr": (("_ocr_api_key_edit", "ocr_api_key"),),
-            "translation": (("_translator_api_key_edit", "translator_api_key"),),
-            "tts": (
-                ("_tts_api_key_edit", "tts_api_key"),
-                ("_tts_api_secret_edit", "tts_api_secret"),
-            ),
-            "cleanup": (("_transcript_cleanup_api_key_edit", "transcript_cleanup_api_key"),),
-            "speaker_gender": (("_speaker_gender_api_key_edit", "speaker_gender_api_key"),),
-        }.get(kind, ())
+        return self._provider_secret_controller().controls_for_kind(kind)
 
     def _remember_provider_secrets_for_kind(self, kind: str, provider: object | None = None) -> None:
-        provider_key = self._secret_provider_for_kind(kind, provider)
-        if not provider_key:
-            return
-        for widget_name, secret_name in self._secret_controls_for_kind(kind):
-            widget = getattr(self, widget_name, None)
-            if widget is None:
-                continue
-            key = widget.text().strip()
-            cache = self._provider_secret_cache(secret_name)
-            if key:
-                cache[provider_key] = key
-            else:
-                cache.pop(provider_key, None)
+        self._provider_secret_controller().remember_kind(kind, provider)
 
     def _restore_provider_secrets_for_kind(self, kind: str, provider: object | None = None) -> None:
-        provider_key = self._secret_provider_for_kind(kind, provider)
-        for widget_name, secret_name in self._secret_controls_for_kind(kind):
-            widget = getattr(self, widget_name, None)
-            if widget is None:
-                continue
-            key = self._provider_secret_cache(secret_name).get(provider_key, "")
-            was_blocked = widget.blockSignals(True)
-            try:
-                widget.setText(key)
-            finally:
-                widget.blockSignals(was_blocked)
-        self._sync_api_key_statuses()
+        self._provider_secret_controller().restore_kind(kind, provider)
 
     def _secret_provider_for_kind(self, kind: str, provider: object | None = None) -> str:
         if kind == "asr":
@@ -1881,13 +1850,6 @@ class PlayerSettingsMixin:
                 return
 
     def _save_settings(self) -> None:
-        for kind in ("asr", "ocr", "translation", "tts", "cleanup", "speaker_gender"):
-            self._remember_provider_secrets_for_kind(kind)
-        if hasattr(self, "_provider_api_secret_cache"):
-            for secret_name, keys in self._provider_api_secret_cache.items():
-                if secret_name == "asr_api_key":
-                    save_asr_provider_api_keys(keys)
-                else:
-                    save_provider_api_secrets(secret_name, keys)
+        self._provider_secret_controller().save_all(("asr", "ocr", "translation", "tts", "cleanup", "speaker_gender"))
         self._config = self._current_runtime_config()
         save_app_config(self._config)

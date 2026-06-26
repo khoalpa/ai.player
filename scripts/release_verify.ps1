@@ -41,6 +41,7 @@ try {
         $Summary = [ordered]@{
             status = $Status
             run_root = $RunRoot
+            require_signature = [bool]$RequireSignature
             build_profiles = @($BuildProfileList)
             profile_summaries = @($ProfileSummaries | ForEach-Object { $_ })
             steps = Get-StepSummary
@@ -104,6 +105,7 @@ try {
             status = $Status
             run_root = $RunRoot
             summary = $ProfileSummaryPath
+            require_signature = [bool]$RequireSignature
             profile = $Info
             steps = $ProfileSteps
         }
@@ -112,6 +114,7 @@ try {
             profile = $Profile
             status = $Status
             scope = $Info["scope"]
+            require_signature = [bool]$RequireSignature
             summary = $ProfileSummaryPath
             artifact_path = $Info["artifact_path"]
             app_path = $Info["app_path"]

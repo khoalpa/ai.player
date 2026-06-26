@@ -60,6 +60,11 @@ Current extracted owners:
   user-facing Task Center dashboard. Long-running flows should update
   `_set_background_task_detail` so Task Center, Runtime, and status-bar views
   stay consistent without each worker owning duplicate UI.
+- `ai_player.ui.provider_secret_controller.ProviderSecretController` owns the
+  per-provider API key cache, restore, and save flow for ASR/OCR/translation/TTS
+  settings. `PlayerSettingsMixin` keeps thin compatibility wrappers while the
+  controller preserves secrets for online providers that may be hidden by the
+  current Lite/offline provider profile.
 
 ## TTS Service Boundaries
 
