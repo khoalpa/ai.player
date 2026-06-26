@@ -2,6 +2,37 @@
 
 Use this file to keep a short, build-specific record before sharing a Windows build.
 
+## 2026-06-26 Lite Pass, Offline CPU Signing Blocker
+
+- Source baseline: commit `fd9dcf0` after provider-secret controller extraction
+  and release verification summary updates.
+- Signing precheck: `.\scripts\build_portable.ps1 -ListCodeSigningCerts`
+  found no code-signing certificates in `Cert:\CurrentUser\My` or
+  `Cert:\LocalMachine\My`.
+- GPU availability check: `nvidia-smi` reported NVIDIA RTX A4500 Laptop GPU,
+  driver `582.16`.
+- Lite profile: `.\scripts\release_verify.ps1 -BuildProfiles Lite` passed.
+  Summary: `data\tmp\release-verify\20260626-113353\summary.json`.
+- Lite gate coverage: release worktree check, `ruff`, full `pytest`, `pip
+  check`, Runtime Doctor, deterministic workflow smoke, release smoke tests,
+  portable build, and 8-second portable launch smoke.
+- Offline CPU profile: `.\scripts\release_verify.ps1 -BuildProfiles OfflineCpu`
+  passed through worktree, `ruff`, full `pytest`, `pip check`, Runtime Doctor,
+  deterministic workflow smoke, release smoke tests, and portable build, then
+  failed at `launch-offlinecpu`. Summary:
+  `data\tmp\release-verify\20260626-114104\summary.json`.
+- Offline CPU blocker: Windows Application Control blocked the unsigned
+  portable executable at launch. `Get-AuthenticodeSignature` reported
+  `NotSigned` for `dist\portable\AI Player Lite\AI Player\AI Player.exe`.
+- GPU profile: skipped for this pass because the same unsigned portable launch
+  blocker is expected until an enterprise-approved code-signing certificate is
+  installed or passed via PFX.
+- Distribution status: Lite verification passed earlier in this pass, but the
+  current portable output was overwritten by the later Offline CPU build and is
+  unsigned/blocked on this machine. Do not share this artifact outside local
+  development until signing is available and `release_verify.ps1
+  -BuildProfiles <profile> -RequireSignature` passes.
+
 ## 2026-06-25 Lite Release Verification With Profile Summary
 
 - Source baseline: current working tree after typed export runtime errors,
