@@ -4,6 +4,7 @@ import html
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QTableWidgetItem
 
 from ai_player.ui.player_window_media_browser import DEFAULT_MEDIA_HOME_URL
@@ -78,9 +79,14 @@ class PlayerTranscriptMixin:
             target = normalized.get("target", {}).get("cleaned", "") or normalized.get("target", {}).get("raw", "")
             status = self._transcript_segment_status(normalized, target)
             self._set_transcript_segment_row(row, str(row + 1), source, target, status)
+            self._style_transcript_segment_row(row, normalized, bool(target))
+        self._apply_transcript_filter()
         if selected_row < 0 or selected_row >= len(self._transcript_segments):
             selected_row = 0
-        table.selectRow(selected_row)
+        if table.isRowHidden(selected_row):
+            selected_row = self._first_visible_transcript_row()
+        if selected_row >= 0:
+            table.selectRow(selected_row)
         table.resizeRowsToContents()
         self._sync_transcript_segment_editor(selected_row)
         self._sync_transcript_segment_banner()
@@ -100,6 +106,24 @@ class PlayerTranscriptMixin:
             item = QTableWidgetItem(_repair_mojibake(str(value or "")))
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             table.setItem(row, column, item)
+
+    def _style_transcript_segment_row(self, row: int, segment: dict, has_target: bool) -> None:
+        table = getattr(self, "_transcript_segment_table", None)
+        if table is None:
+            return
+        metadata = segment.get("metadata", {}) if isinstance(segment, dict) else {}
+        if isinstance(metadata, dict) and metadata.get("retry_requested"):
+            color = QColor("#fff7e8")
+        elif isinstance(metadata, dict) and metadata.get("reviewed"):
+            color = QColor("#eef8f3")
+        elif not has_target:
+            color = QColor("#f8fafc")
+        else:
+            color = QColor("#ffffff")
+        for column in range(table.columnCount()):
+            item = table.item(row, column)
+            if item is not None:
+                item.setBackground(QBrush(color))
 
     def _refresh_transcript_status_strip(self) -> None:
         labels = getattr(self, "_transcript_status_labels", None)
@@ -148,6 +172,94 @@ class PlayerTranscriptMixin:
 
     def _transcript_segment_selection_changed(self) -> None:
         self._sync_transcript_segment_editor(self._selected_transcript_segment_index())
+
+    def _set_transcript_filter(self, mode: str) -> None:
+        self._transcript_filter = str(mode or "all")
+        for value, button in getattr(self, "_transcript_filter_buttons", {}).items():
+            button.setChecked(value == self._transcript_filter)
+        self._apply_transcript_filter()
+        self._sync_transcript_segment_editor(self._selected_transcript_segment_index())
+
+    def _apply_transcript_filter(self) -> None:
+        table = getattr(self, "_transcript_segment_table", None)
+        if table is None:
+            return
+        mode = str(getattr(self, "_transcript_filter", "all") or "all")
+        for row, segment in enumerate(getattr(self, "_transcript_segments", [])):
+            normalized = self._normalize_transcript_segment(segment)
+            table.setRowHidden(row, not self._transcript_segment_matches_filter(normalized, mode))
+        current = table.currentRow()
+        if current >= 0 and table.isRowHidden(current):
+            first = self._first_visible_transcript_row()
+            if first >= 0:
+                table.selectRow(first)
+
+    def _transcript_segment_matches_filter(self, segment: dict, mode: str) -> bool:
+        if mode == "all":
+            return True
+        metadata = segment.get("metadata", {}) if isinstance(segment, dict) else {}
+        target = segment.get("target", {}) if isinstance(segment, dict) else {}
+        has_target = (
+            bool(str(target.get("cleaned") or target.get("raw") or "").strip())
+            if isinstance(target, dict)
+            else False
+        )
+        if mode == "retry":
+            return bool(isinstance(metadata, dict) and metadata.get("retry_requested"))
+        if mode == "reviewed":
+            return bool(isinstance(metadata, dict) and metadata.get("reviewed"))
+        if mode == "untranslated":
+            return not has_target
+        return True
+
+    def _first_visible_transcript_row(self) -> int:
+        table = getattr(self, "_transcript_segment_table", None)
+        if table is None:
+            return -1
+        for row in range(table.rowCount()):
+            if not table.isRowHidden(row):
+                return row
+        return -1
+
+    def _visible_transcript_segment_indexes(self) -> list[int]:
+        table = getattr(self, "_transcript_segment_table", None)
+        if table is None:
+            return []
+        return [
+            row
+            for row in range(min(table.rowCount(), len(getattr(self, "_transcript_segments", []))))
+            if not table.isRowHidden(row)
+        ]
+
+    def _mark_visible_transcript_segments_reviewed(self) -> None:
+        indexes = self._visible_transcript_segment_indexes()
+        if not indexes:
+            self.statusBar().showMessage(self._tr("transcript_segment_no_selection"))
+            return
+        for index in indexes:
+            segment = self._normalize_transcript_segment(self._transcript_segments[index])
+            metadata = segment.setdefault("metadata", {})
+            if isinstance(metadata, dict):
+                metadata["reviewed"] = True
+                metadata["retry_requested"] = False
+            self._transcript_segments[index] = segment
+        self._render_transcript()
+        self.statusBar().showMessage(self._tr("transcript_batch_reviewed").format(count=len(indexes)))
+
+    def _retry_visible_transcript_segments(self) -> None:
+        indexes = self._visible_transcript_segment_indexes()
+        if not indexes:
+            self.statusBar().showMessage(self._tr("transcript_segment_no_selection"))
+            return
+        for index in indexes:
+            segment = self._normalize_transcript_segment(self._transcript_segments[index])
+            metadata = segment.setdefault("metadata", {})
+            if isinstance(metadata, dict):
+                metadata["reviewed"] = False
+                metadata["retry_requested"] = True
+            self._transcript_segments[index] = segment
+        self._render_transcript()
+        self.statusBar().showMessage(self._tr("transcript_batch_retry_marked").format(count=len(indexes)))
 
     def _sync_transcript_segment_banner(self) -> None:
         banner = getattr(self, "_transcript_segment_banner", None)
@@ -248,6 +360,51 @@ class PlayerTranscriptMixin:
             button.setText(self._tr(f"next_action_button_{action_key}"))
             button.setToolTip(self._tr(f"next_action_button_{action_key}"))
             button.show()
+        self._apply_next_action_checklist(panel)
+
+    def _apply_next_action_checklist(self, panel) -> None:
+        checklist = getattr(panel, "_next_action_checklist", None)
+        if not checklist:
+            return
+        statuses = self._next_action_checklist_statuses()
+        markers = {
+            "done": "OK",
+            "active": ">",
+            "warn": "!",
+            "todo": "-",
+        }
+        for key, (marker, label) in checklist.items():
+            status = statuses.get(key, "todo")
+            marker.setText(markers.get(status, "-"))
+            for widget in (marker, label):
+                widget.setProperty("status", status)
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+
+    def _next_action_checklist_statuses(self) -> dict[str, str]:
+        has_source = self._has_open_source()
+        has_transcript = self._has_transcript_content()
+        transcript_path_edit = getattr(self, "_transcript_path_edit", None)
+        has_transcript_file = bool(transcript_path_edit is not None and transcript_path_edit.text().strip())
+        translator = ""
+        translator_combo = getattr(self, "_translator_combo", None)
+        if translator_combo is not None:
+            translator = str(translator_combo.currentData() or "")
+        tts = ""
+        tts_combo = getattr(self, "_tts_provider_combo", None)
+        if tts_combo is not None:
+            tts = str(tts_combo.currentData() or "")
+        return {
+            "next_step_source": "done" if has_source else "active",
+            "next_step_transcript": (
+                "done" if has_transcript else ("active" if has_source or has_transcript_file else "todo")
+            ),
+            "next_step_translation": (
+                "done" if has_transcript and translator != "none" else ("active" if has_transcript else "todo")
+            ),
+            "next_step_voice": "done" if has_transcript and tts != "none" else ("warn" if has_transcript else "todo"),
+            "next_step_export": "active" if has_transcript else "todo",
+        }
 
     def _run_next_action(self, index: int, *, panel_name: str = "nextActionPanel") -> None:
         panel_attr = "_transcript_empty_panel" if panel_name == "transcriptEmptyPanel" else "_next_action_panel"
@@ -271,6 +428,7 @@ class PlayerTranscriptMixin:
                 self._start_dubbing()
             else:
                 self._dub_button.setChecked(True)
+                self._toggle_dubbing(True)
         elif action_key == "open_transcript":
             self._select_settings_tab_for_widget(self._transcript_tab_widget)
         elif action_key == "export":

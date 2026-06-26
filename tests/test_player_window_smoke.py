@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import QMimeData, QPoint, Qt, QTimer, QUrl
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QFrame, QMessageBox, QScrollArea, QSizePolicy
 
@@ -2876,6 +2876,26 @@ def test_seek_requests_dubbing_resync_without_blocking_stop(qapp, monkeypatch) -
         window.close()
 
 
+def test_next_action_start_dubbing_starts_on_first_click(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    try:
+        starts: list[str] = []
+        monkeypatch.setattr(window, "_start_dubbing", lambda: starts.append("start"))
+
+        window._next_action_panel._next_action_keys = ["start_dubbing"]
+        window._dubbing_auto_enabled = False
+        window._dub_button.setChecked(False)
+
+        window._run_next_action(0)
+
+        assert window._dub_button.isChecked()
+        assert window._dubbing_auto_enabled is True
+        assert starts == ["start"]
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
 def test_runtime_warmup_status_does_not_leave_last_progress_message(qapp) -> None:
     window = PlayerWindow()
     try:
@@ -3296,6 +3316,129 @@ def test_player_window_guide_and_device_auto_follow_language(qapp) -> None:
         assert "AI_PLAYER_EXTRA_YTDLP_HOSTS" in window._user_guide_html()
         assert len(window._user_guide_tabs()) == 4
         assert window._capture_system_device_combo.itemText(0) == "Tự động"
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_player_window_command_buttons_share_standard_metrics(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window.resize(1366, 768)
+        window.show()
+        qapp.processEvents()
+
+        height = window._COMMAND_BUTTON_HEIGHT
+        width = window._COMMAND_BUTTON_WIDTH
+        icon_size = window._ICON_BUTTON_SIZE
+
+        command_buttons = (
+            window._task_status_button,
+            window._open_source_button,
+            window._meeting_button,
+            window._export_button,
+            window._tools_menu_button,
+            window._display_options_button,
+        )
+        for button in command_buttons:
+            assert button.minimumHeight() == height
+            assert button.maximumHeight() == height
+            assert button.minimumWidth() == width
+            assert button.maximumWidth() == width
+
+        icon_buttons = (
+            window._play_button,
+            window._pause_button,
+            window._stop_button,
+            window._previous_page_button,
+            window._next_page_button,
+            window._media_home_button,
+            window._focus_media_button,
+        )
+        for button in icon_buttons:
+            assert button.minimumWidth() == icon_size
+            assert button.maximumWidth() == icon_size
+            assert button.minimumHeight() == icon_size
+            assert button.maximumHeight() == icon_size
+
+        for card in window._media_start_workflow_cards.values():
+            open_button = card._workflow_open_button
+            preset_button = card._workflow_preset_button
+            assert open_button.minimumHeight() == height
+            assert open_button.maximumHeight() == height
+            assert open_button.minimumWidth() == width
+            assert open_button.maximumWidth() == width
+            assert preset_button.minimumWidth() == width
+            assert preset_button.maximumWidth() == width
+            assert preset_button.minimumHeight() == height
+            assert preset_button.maximumHeight() == height
+            open_left = open_button.mapTo(card, QPoint(0, 0)).x()
+            preset_left = preset_button.mapTo(card, QPoint(0, 0)).x()
+            assert open_left >= card.width() - (width + 18)
+            assert preset_left >= card.width() - (width + 18)
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_media_start_quick_panel_opens_pasted_and_recent_sources(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    try:
+        opened: list[str] = []
+        monkeypatch.setattr(window, "_open_smart_source_text", lambda value: opened.append(str(value).strip()))
+
+        window._media_start_quick_source_edit.setText("https://example.com/video.mp4")
+        window._media_start_submit_quick_source()
+
+        assert opened == ["https://example.com/video.mp4"]
+        assert window._media_start_quick_source_edit.text() == ""
+
+        window._video_url_recent_urls = ("https://example.com/recent.mp4",)
+        window._refresh_media_start_context()
+        recent_button = window._media_start_recent_buttons[0]
+
+        assert not recent_button.isHidden()
+        assert recent_button.property("source") == "https://example.com/recent.mp4"
+        recent_button.click()
+        assert opened[-1] == "https://example.com/recent.mp4"
+        assert window._media_start_config_summary.text()
+
+        mime_data = QMimeData()
+        mime_data.setText("https://example.com/drop.mp4")
+        assert window._media_start_mime_supported(mime_data)
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_media_start_sections_do_not_overlap(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        window.resize(1366, 768)
+        window.show()
+        qapp.processEvents()
+
+        content = window._media_start_content
+        workflow_bottom = max(
+            card.mapTo(content, QPoint(0, 0)).y() + card.height()
+            for card in window._media_start_workflow_cards.values()
+        )
+        quick_top = window._media_start_drop_zone.mapTo(content, QPoint(0, 0)).y()
+
+        assert quick_top >= workflow_bottom
+        assert isinstance(window._media_start_overlay, QScrollArea)
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_runtime_stop_tasks_button_fits_localized_text(qapp) -> None:
+    window = PlayerWindow()
+    try:
+        button = window._runtime_stop_tasks_button
+
+        assert button.width() > window._COMMAND_BUTTON_WIDTH
+        assert button.width() >= button.sizeHint().width()
         window._settings_save_timer.stop()
     finally:
         window.close()

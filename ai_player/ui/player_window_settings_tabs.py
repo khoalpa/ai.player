@@ -218,6 +218,61 @@ def build_transcript_settings_tab(owner: Any) -> QWidget:
         owner._transcript_status_labels[key] = label
         status_layout.addWidget(label, index // 2, index % 2)
     layout.addWidget(owner._transcript_status_strip)
+    owner._transcript_filter = getattr(owner, "_transcript_filter", "all")
+    filter_row = QWidget()
+    filter_layout = QHBoxLayout(filter_row)
+    filter_layout.setContentsMargins(0, 0, 0, 0)
+    filter_layout.setSpacing(6)
+    owner._transcript_filter_group = QButtonGroup(filter_row)
+    owner._transcript_filter_group.setExclusive(True)
+    owner._transcript_filter_buttons = {}
+    for key, value in (
+        ("transcript_filter_all", "all"),
+        ("transcript_filter_retry", "retry"),
+        ("transcript_filter_untranslated", "untranslated"),
+        ("transcript_filter_reviewed", "reviewed"),
+    ):
+        button = QPushButton(owner._tr(key))
+        button.setObjectName("transcriptFilterButton")
+        button.setProperty("i18n_key", key)
+        button.setCheckable(True)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFixedHeight(owner._COMMAND_BUTTON_HEIGHT)
+        button.setFixedWidth(owner._COMMAND_BUTTON_WIDTH)
+        button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        button.clicked.connect(lambda _checked=False, mode=value: owner._set_transcript_filter(mode))
+        owner._transcript_filter_group.addButton(button)
+        owner._transcript_filter_buttons[value] = button
+        filter_layout.addWidget(button)
+    filter_layout.addStretch(1)
+    selected_filter = owner._transcript_filter_buttons.get(
+        owner._transcript_filter,
+        owner._transcript_filter_buttons["all"],
+    )
+    selected_filter.setChecked(True)
+    layout.addWidget(filter_row)
+
+    batch_row = QWidget()
+    batch_layout = QHBoxLayout(batch_row)
+    batch_layout.setContentsMargins(0, 0, 0, 0)
+    batch_layout.setSpacing(6)
+    owner._transcript_mark_visible_reviewed_button = QPushButton(owner._tr("transcript_batch_review_visible"))
+    owner._transcript_mark_visible_reviewed_button.setObjectName("transcriptBatchButton")
+    owner._transcript_mark_visible_reviewed_button.setProperty("i18n_key", "transcript_batch_review_visible")
+    owner._transcript_mark_visible_reviewed_button.setFixedHeight(owner._COMMAND_BUTTON_HEIGHT)
+    owner._transcript_mark_visible_reviewed_button.setFixedWidth(owner._COMMAND_BUTTON_WIDTH)
+    owner._transcript_mark_visible_reviewed_button.clicked.connect(owner._mark_visible_transcript_segments_reviewed)
+    owner._transcript_retry_visible_button = QPushButton(owner._tr("transcript_batch_retry_visible"))
+    owner._transcript_retry_visible_button.setObjectName("transcriptBatchButton")
+    owner._transcript_retry_visible_button.setProperty("i18n_key", "transcript_batch_retry_visible")
+    owner._transcript_retry_visible_button.setFixedHeight(owner._COMMAND_BUTTON_HEIGHT)
+    owner._transcript_retry_visible_button.setFixedWidth(owner._COMMAND_BUTTON_WIDTH)
+    owner._transcript_retry_visible_button.clicked.connect(owner._retry_visible_transcript_segments)
+    batch_layout.addWidget(owner._transcript_mark_visible_reviewed_button)
+    batch_layout.addWidget(owner._transcript_retry_visible_button)
+    batch_layout.addStretch(1)
+    layout.addWidget(batch_row)
+
     owner._transcript_empty_panel = _next_action_panel(
         owner,
         object_name="transcriptEmptyPanel",
@@ -305,8 +360,9 @@ def build_transcript_settings_tab(owner: Any) -> QWidget:
     )
     for button in segment_action_buttons:
         button.setObjectName("transcriptSegmentButton")
-        button.setMinimumHeight(32)
-        button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        button.setFixedHeight(owner._COMMAND_BUTTON_HEIGHT)
+        button.setFixedWidth(owner._COMMAND_BUTTON_WIDTH)
+        button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
     editor_actions_layout.addWidget(owner._transcript_segment_apply_button, 0, 0)
     editor_actions_layout.addWidget(owner._transcript_segment_review_button, 0, 1)
     editor_actions_layout.addWidget(owner._transcript_segment_retry_button, 1, 0, 1, 2)
@@ -350,12 +406,43 @@ def _next_action_panel(owner: Any, *, object_name: str = "nextActionPanel", show
     detail.setWordWrap(True)
     layout.addWidget(detail)
 
+    checklist = QFrame()
+    checklist.setObjectName("nextActionChecklist")
+    checklist_layout = QGridLayout(checklist)
+    checklist_layout.setContentsMargins(0, 0, 0, 0)
+    checklist_layout.setHorizontalSpacing(6)
+    checklist_layout.setVerticalSpacing(5)
+    checklist_labels = {}
+    for row, key in enumerate(
+        (
+            "next_step_source",
+            "next_step_transcript",
+            "next_step_translation",
+            "next_step_voice",
+            "next_step_export",
+        )
+    ):
+        marker = QLabel("")
+        marker.setObjectName("nextActionStepMarker")
+        marker.setFixedWidth(22)
+        label = QLabel(owner._tr(key))
+        label.setObjectName("nextActionStep")
+        label.setProperty("i18n_key", key)
+        label.setWordWrap(True)
+        label.setMinimumWidth(0)
+        label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        checklist_layout.addWidget(marker, row, 0)
+        checklist_layout.addWidget(label, row, 1)
+        checklist_labels[key] = (marker, label)
+    layout.addWidget(checklist)
+
     buttons = []
     if show_primary:
         primary = QPushButton("")
         primary.setObjectName("nextActionPrimaryButton")
         primary.setCursor(Qt.CursorShape.PointingHandCursor)
-        primary.setMinimumHeight(34)
+        primary.setFixedHeight(owner._COMMAND_BUTTON_HEIGHT)
+        primary.setMinimumWidth(owner._COMMAND_BUTTON_WIDTH)
         primary.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         primary.clicked.connect(lambda _checked=False, target=object_name: owner._run_next_action(0, panel_name=target))
         layout.addWidget(primary)
@@ -363,6 +450,7 @@ def _next_action_panel(owner: Any, *, object_name: str = "nextActionPanel", show
 
     panel._next_action_title = title
     panel._next_action_detail = detail
+    panel._next_action_checklist = checklist_labels
     panel._next_action_buttons = buttons
     panel._next_action_keys = [""]
     return panel
@@ -401,6 +489,7 @@ def build_settings_tabs(
     tabs.currentChanged.connect(owner._runtime_tab_changed)
     tabs.currentChanged.connect(owner._offline_models_tab_changed)
     tabs.currentChanged.connect(owner._task_center_tab_changed)
+    tabs.currentChanged.connect(owner._capture_devices_tab_changed)
     return tabs
 
 
@@ -424,6 +513,7 @@ def _settings_nav(owner: Any, tabs: QTabWidget) -> QFrame:
         button.setObjectName("settingsNavButton")
         button.setProperty("i18n_key", key)
         button.setCheckable(True)
+        button.setFixedHeight(owner._COMMAND_BUTTON_HEIGHT)
         button.setMinimumWidth(0)
         button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         button.clicked.connect(

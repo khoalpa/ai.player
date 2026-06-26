@@ -11,7 +11,7 @@ def build_media_browser_buttons(owner) -> None:
     owner._media_home_button.setObjectName("mediaHomeButton")
     owner._media_home_button.setProperty("i18n_tooltip_key", "google_home_tooltip")
     owner._media_home_button.setToolTip(owner._tr("google_home_tooltip"))
-    owner._media_home_button.setFixedSize(32, 32)
+    owner._media_home_button.setFixedSize(owner._ICON_BUTTON_SIZE, owner._ICON_BUTTON_SIZE)
     owner._media_home_button.clicked.connect(owner._open_media_home)
 
     owner._telegram_browser_button = QPushButton(owner.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack), "")
@@ -19,6 +19,7 @@ def build_media_browser_buttons(owner) -> None:
     owner._telegram_browser_button.setProperty("i18n_key", "telegram_channel_back")
     owner._telegram_browser_button.setProperty("i18n_tooltip_key", "telegram_channel_back")
     owner._telegram_browser_button.setToolTip(owner._tr("telegram_channel_back"))
+    owner._telegram_browser_button.setFixedSize(owner._ICON_BUTTON_SIZE, owner._ICON_BUTTON_SIZE)
     owner._telegram_browser_button.clicked.connect(owner._return_to_telegram_channel_browser)
     owner._telegram_browser_button.hide()
 

@@ -1258,6 +1258,8 @@ class PlayerSettingsMixin:
         if text == key:
             text = self._tr("preset_inspector_default")
         label.setText(text)
+        if hasattr(self, "_refresh_preset_cards"):
+            self._refresh_preset_cards()
 
     def _connect_settings_autosave(self) -> None:
         self._online_provider_consent_values: set[tuple[str, str]] = set()
@@ -1627,6 +1629,8 @@ class PlayerSettingsMixin:
             self._refresh_header_menu_text()
         if hasattr(self, "_refresh_media_start_launcher_text"):
             self._refresh_media_start_launcher_text()
+        if hasattr(self, "_sync_runtime_stop_tasks_button_width"):
+            self._sync_runtime_stop_tasks_button_width()
         if hasattr(self, "_refresh_next_action_panel"):
             self._refresh_next_action_panel()
         if hasattr(self, "_preserve_terms_check"):

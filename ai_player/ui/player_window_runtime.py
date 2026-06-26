@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QStyle, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QStyle, QVBoxLayout, QWidget
 
 
 class PlayerRuntimeMixin:
@@ -38,6 +38,7 @@ class PlayerRuntimeMixin:
             "runtime_tasks_stop",
             self.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop),
         )
+        self._sync_runtime_stop_tasks_button_width()
         self._runtime_stop_tasks_button.clicked.connect(self._stop_runtime_background_tasks)
         self._runtime_stop_tasks_button.setEnabled(False)
         task_toolbar_layout.addWidget(self._runtime_stop_tasks_button)
@@ -80,6 +81,16 @@ class PlayerRuntimeMixin:
             tab_widget=tab,
         )
         return tab
+
+    def _sync_runtime_stop_tasks_button_width(self) -> None:
+        button = getattr(self, "_runtime_stop_tasks_button", None)
+        if button is None:
+            return
+        button.setMaximumWidth(16777215)
+        button.setMinimumWidth(0)
+        width = max(self._COMMAND_BUTTON_WIDTH, button.sizeHint().width() + 12)
+        button.setFixedWidth(width)
+        button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
     def _refresh_runtime_tab(self) -> None:
         self._runtime_tab_controller.refresh()

@@ -169,7 +169,6 @@ class PlayerOfflineModelsMixin:
         self._offline_model_action_buttons.append(self._offline_models_run_all_button)
         self._offline_model_action_buttons.append(self._offline_models_run_missing_button)
         self._offline_model_action_buttons.append(self._offline_models_preview_missing_button)
-        self._refresh_offline_model_statuses()
         self._sync_offline_model_buttons()
         return tab
 

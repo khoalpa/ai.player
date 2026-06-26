@@ -97,7 +97,10 @@ class RuntimeTabController:
         self._labels["tasks"].setText(self.task_summary(tasks))
         if self._stop_tasks_button is not None:
             self._stop_tasks_button.setEnabled(bool(tasks))
-        self._labels["gpu_runtime"].setText(self.gpu_runtime_text())
+        if runtime_tab_active or getattr(self._owner, "_settings_tabs", None) is None:
+            self._labels["gpu_runtime"].setText(self.gpu_runtime_text())
+        else:
+            self._labels["gpu_runtime"].setText(self.gpu_runtime_config_text())
         self._labels["gpu"].setText(self._state.gpu_text)
         self._labels["python"].setText(platform.python_version())
         self._labels["platform"].setText(platform.platform())
@@ -387,16 +390,7 @@ class RuntimeTabController:
         return "\n".join(formatted)
 
     def gpu_runtime_text(self) -> str:
-        lines = [
-            self._tr("runtime_config_line").format(
-                whisper=(
-                    f"{self._owner._selected_whisper_device()}/"
-                    f"{self._owner._selected_whisper_compute()} b{int(self._owner._whisper_beam_slider.value())}"
-                ),
-                translator=self._owner._selected_translation_device(),
-                vieneu=self._owner._selected_vieneu_device(),
-            ),
-        ]
+        lines = [self.gpu_runtime_config_text()]
         try:
             import torch
 
@@ -412,6 +406,16 @@ class RuntimeTabController:
         except Exception as exc:
             lines.append(self._tr("runtime_ctranslate_failed").format(detail=_repair_mojibake(redact_secrets(exc))))
         return "\n".join(lines)
+
+    def gpu_runtime_config_text(self) -> str:
+        return self._tr("runtime_config_line").format(
+            whisper=(
+                f"{self._owner._selected_whisper_device()}/"
+                f"{self._owner._selected_whisper_compute()} b{int(self._owner._whisper_beam_slider.value())}"
+            ),
+            translator=self._owner._selected_translation_device(),
+            vieneu=self._owner._selected_vieneu_device(),
+        )
 
     def diagnostics_summary(self) -> str:
         try:

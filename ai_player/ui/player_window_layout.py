@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSlider,
     QSplitter,
@@ -54,7 +55,6 @@ from ai_player.core.runtime_catalog import (
     available_ocr_providers,
     available_speaker_gender_models,
 )
-from ai_player.services.capture_sources import list_capture_device_options
 from ai_player.services.source_voice_filter import (
     SOURCE_VOICE_FILTER_DEMUCS_MODELS,
     normalize_source_voice_filter_model,
@@ -787,6 +787,11 @@ class PlayerLayoutMixin:
         self._video_fullscreen_button.setToolTip(self._tr("fullscreen_tooltip"))
         self._video_fullscreen_button.setProperty("i18n_tooltip_key", "fullscreen_tooltip")
         self._video_fullscreen_button.clicked.connect(self._toggle_video_fullscreen)
+        self._focus_media_button = self._icon_button(QStyle.StandardPixmap.SP_TitleBarNormalButton, "focus_media")
+        self._focus_media_button.setCheckable(True)
+        self._focus_media_button.setToolTip(self._tr("focus_media_tooltip"))
+        self._focus_media_button.setProperty("i18n_tooltip_key", "focus_media_tooltip")
+        self._focus_media_button.clicked.connect(self._toggle_focus_media)
         self._panel_toggle_button = self._icon_button(QStyle.StandardPixmap.SP_TitleBarShadeButton, "panel_hide")
         self._panel_toggle_button.setToolTip(self._tr("panel_toggle_tooltip"))
         self._panel_toggle_button.setProperty("i18n_tooltip_key", "panel_toggle_tooltip")
@@ -857,6 +862,13 @@ class PlayerLayoutMixin:
             self,
         )
         self._fullscreen_action.triggered.connect(self._toggle_video_fullscreen)
+        self._focus_media_action = QAction(
+            self._app_icon("focus"),
+            self._tr("focus_media"),
+            self,
+        )
+        self._focus_media_action.setCheckable(True)
+        self._focus_media_action.triggered.connect(self._toggle_focus_media)
         self._toggle_sidebar_action = QAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarShadeButton),
             self._tr("panel_hide"),
@@ -902,6 +914,7 @@ class PlayerLayoutMixin:
         self._tools_menu.addSeparator()
         for action in (
             self._fullscreen_action,
+            self._focus_media_action,
             self._toggle_sidebar_action,
             self._sidebar_wider_action,
             self._sidebar_narrower_action,
@@ -931,8 +944,8 @@ class PlayerLayoutMixin:
 
         self._task_status_button = QPushButton(self._tr("task_status_idle"))
         self._task_status_button.setObjectName("taskStatusButton")
-        self._task_status_button.setMinimumWidth(0)
-        self._task_status_button.setMaximumWidth(156)
+        self._task_status_button.setFixedHeight(self._COMMAND_BUTTON_HEIGHT)
+        self._task_status_button.setFixedWidth(self._COMMAND_BUTTON_WIDTH)
         self._task_status_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self._task_status_button.setCursor(Qt.PointingHandCursor)
         self._task_status_button.setToolTip(self._tr("task_status_tooltip"))
@@ -1155,6 +1168,8 @@ class PlayerLayoutMixin:
             self._telegram_channel_side_panel,
         )
         self._telegram_channel_open_button.setProperty("i18n_key", "telegram_channel_open_item")
+        self._telegram_channel_open_button.setFixedHeight(self._COMMAND_BUTTON_HEIGHT)
+        self._telegram_channel_open_button.setFixedWidth(self._COMMAND_BUTTON_WIDTH)
         self._telegram_channel_open_button.clicked.connect(self._open_selected_telegram_channel_item)
         self._telegram_channel_open_button.hide()
         self._telegram_channel_login_button = QPushButton(
@@ -1162,6 +1177,8 @@ class PlayerLayoutMixin:
             self._telegram_channel_side_panel,
         )
         self._telegram_channel_login_button.setProperty("i18n_key", "telegram_channel_login")
+        self._telegram_channel_login_button.setFixedHeight(self._COMMAND_BUTTON_HEIGHT)
+        self._telegram_channel_login_button.setFixedWidth(self._COMMAND_BUTTON_WIDTH)
         self._telegram_channel_login_button.clicked.connect(self._telegram_login_for_current_channel)
         self._telegram_channel_login_button.hide()
         self._telegram_channel_refresh_button = QPushButton(
@@ -1169,6 +1186,8 @@ class PlayerLayoutMixin:
             self._telegram_channel_side_panel,
         )
         self._telegram_channel_refresh_button.setProperty("i18n_key", "telegram_channel_refresh")
+        self._telegram_channel_refresh_button.setFixedHeight(self._COMMAND_BUTTON_HEIGHT)
+        self._telegram_channel_refresh_button.setFixedWidth(self._COMMAND_BUTTON_WIDTH)
         self._telegram_channel_refresh_button.clicked.connect(self._refresh_current_telegram_channel)
         self._telegram_channel_refresh_button.hide()
         telegram_side_layout = QVBoxLayout(self._telegram_channel_side_panel)
@@ -1212,7 +1231,7 @@ class PlayerLayoutMixin:
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
             "",
         )
-        self._video_cache_dir_button.setFixedWidth(34)
+        self._video_cache_dir_button.setFixedSize(self._ICON_BUTTON_SIZE, self._ICON_BUTTON_SIZE)
         self._video_cache_dir_button.setToolTip(self._tr("video_cache_dir_choose"))
         self._video_cache_dir_button.setProperty("i18n_tooltip_key", "video_cache_dir_choose")
         self._video_cache_dir_button.clicked.connect(self._choose_video_cache_dir)
@@ -1220,7 +1239,7 @@ class PlayerLayoutMixin:
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogResetButton),
             "",
         )
-        self._video_cache_dir_reset_button.setFixedWidth(34)
+        self._video_cache_dir_reset_button.setFixedSize(self._ICON_BUTTON_SIZE, self._ICON_BUTTON_SIZE)
         self._video_cache_dir_reset_button.setToolTip(self._tr("video_cache_dir_reset"))
         self._video_cache_dir_reset_button.setProperty("i18n_tooltip_key", "video_cache_dir_reset")
         self._video_cache_dir_reset_button.clicked.connect(self._reset_video_cache_dir)
@@ -1233,18 +1252,33 @@ class PlayerLayoutMixin:
         media_start_page_layout = QGridLayout(self._media_start_page)
         media_start_page_layout.setContentsMargins(0, 0, 0, 0)
         media_start_page_layout.setSpacing(0)
-        self._media_start_overlay = self._media_start_panel()
-        media_start_page_layout.addWidget(self._media_start_overlay, 0, 0, Qt.AlignmentFlag.AlignCenter)
+        self._media_start_content = self._media_start_panel()
+        self._media_start_overlay = QScrollArea()
+        self._media_start_overlay.setObjectName("mediaStartScroll")
+        self._media_start_overlay.setWidgetResizable(True)
+        self._media_start_overlay.setFrameShape(QFrame.Shape.NoFrame)
+        self._media_start_overlay.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._media_start_overlay.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._media_start_overlay.setWidget(self._media_start_content)
+        media_start_page_layout.addWidget(self._media_start_overlay, 0, 0)
+        self._media_start_page.setAcceptDrops(True)
+        self._media_start_overlay.setAcceptDrops(True)
+        self._media_start_content.setAcceptDrops(True)
+        self._media_start_page.installEventFilter(self)
+        self._media_start_overlay.installEventFilter(self)
+        self._media_start_content.installEventFilter(self)
         self._media_stack.addWidget(self._media_start_page)
         self._media_stack.addWidget(self._video_placeholder)
         self._media_stack.addWidget(self._video_widget)
         self._media_stack.addWidget(self._document_view)
         self._media_stack.addWidget(self._telegram_channel_view)
         self._media_stack.setCurrentWidget(self._media_start_page)
+        self._media_stack.setAcceptDrops(True)
         self._media_stack.installEventFilter(self)
         self._media_frame = QFrame()
         self._media_frame.setObjectName("mediaFrame")
         self._media_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._media_frame.setAcceptDrops(True)
         self._media_frame.installEventFilter(self)
         media_frame_layout = QGridLayout(self._media_frame)
         media_frame_layout.setContentsMargins(0, 0, 0, 0)
@@ -1411,6 +1445,7 @@ class PlayerLayoutMixin:
         playback_layout.addWidget(self._media_home_button)
         playback_layout.addWidget(self._telegram_browser_button)
         playback_layout.addWidget(self._display_options_button)
+        playback_layout.addWidget(self._focus_media_button)
         playback_layout.addStretch(1)
         playback_layout.addWidget(self._audio_slider_control("dub_audio", self._dub_volume_slider))
         display_options = QFrame()
@@ -1832,7 +1867,8 @@ class PlayerLayoutMixin:
             _dropdown_options("vieneu_backends", self._config.gui_language),
             self._config.vieneu_tts_backend,
         )
-        capture_devices = list_capture_device_options()
+        self._capture_devices_loaded = False
+        capture_devices = self._initial_capture_device_options()
         self._capture_backend_combo = self._option_combo(
             _dropdown_options("capture_backends", self._config.gui_language),
             self._config.capture_backend,
@@ -1989,17 +2025,20 @@ class PlayerLayoutMixin:
         self._preset_inspector = QLabel("")
         self._preset_inspector.setObjectName("presetInspector")
         self._preset_inspector.setWordWrap(True)
+        self._preset_cards = {}
+        self._preset_cards_panel = self._preset_cards_panel_widget()
 
         basic_source_grid = QGridLayout()
         basic_source_grid.setHorizontalSpacing(8)
         basic_source_grid.setVerticalSpacing(7)
         basic_source_grid.addWidget(preset_row, 0, 0, 1, 2)
         basic_source_grid.addWidget(self._preset_inspector, 1, 0, 1, 2)
-        basic_source_grid.addWidget(self._audio_source_panel(), 2, 0, 1, 2)
-        basic_source_grid.addWidget(self._field_label("source_language"), 3, 0)
-        basic_source_grid.addWidget(self._source_language_combo, 3, 1)
-        basic_source_grid.addWidget(self._field_label("target_language"), 4, 0)
-        basic_source_grid.addWidget(self._target_language_combo, 4, 1)
+        basic_source_grid.addWidget(self._preset_cards_panel, 2, 0, 1, 2)
+        basic_source_grid.addWidget(self._audio_source_panel(), 3, 0, 1, 2)
+        basic_source_grid.addWidget(self._field_label("source_language"), 4, 0)
+        basic_source_grid.addWidget(self._source_language_combo, 4, 1)
+        basic_source_grid.addWidget(self._field_label("target_language"), 5, 0)
+        basic_source_grid.addWidget(self._target_language_combo, 5, 1)
 
         basic_voice_grid = QGridLayout()
         basic_voice_grid.setHorizontalSpacing(8)
@@ -2357,6 +2396,7 @@ class PlayerLayoutMixin:
         self._apply_control_tooltips()
         self._performance_preset_combo.currentIndexChanged.connect(self._apply_selected_performance_preset)
         self._connect_settings_autosave()
+        self._connect_media_start_context_refresh()
 
         self._settings_scroll = settings_panel
 
@@ -2413,6 +2453,11 @@ class PlayerLayoutMixin:
         layout = QHBoxLayout(drawer)
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(8)
+        self._task_drawer_state = QLabel(self._tr("task_drawer_state_idle"))
+        self._task_drawer_state.setObjectName("taskDrawerState")
+        self._task_drawer_state.setProperty("i18n_key", "task_drawer_state_idle")
+        self._task_drawer_state.setMinimumWidth(88)
+        layout.addWidget(self._task_drawer_state)
         self._task_drawer_summary = QLabel(self._tr("task_drawer_idle"))
         self._task_drawer_summary.setObjectName("taskDrawerSummary")
         self._task_drawer_summary.setProperty("i18n_key", "task_drawer_idle")
@@ -2580,6 +2625,7 @@ class PlayerLayoutMixin:
             ("_cache_inspector_action", "cache_inspector_title"),
             ("_clear_workflow_cache_action", "task_center_clear_cache"),
             ("_fullscreen_action", "fullscreen"),
+            ("_focus_media_action", "focus_media"),
             ("_toggle_sidebar_action", "panel_hide"),
             ("_sidebar_wider_action", "sidebar_wider"),
             ("_sidebar_narrower_action", "sidebar_narrower"),
@@ -2711,83 +2757,140 @@ class PlayerLayoutMixin:
             display = text if len(text) <= 48 else f"{text[:45]}..."
             action.setText(f"{label}: {display}")
 
+    def _preset_cards_panel_widget(self) -> QWidget:
+        panel = QWidget()
+        panel.setObjectName("presetCardsPanel")
+        layout = QGridLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setHorizontalSpacing(8)
+        layout.setVerticalSpacing(8)
+        group = QButtonGroup(panel)
+        group.setExclusive(True)
+        self._preset_card_group = group
+        presets = ("low_latency", "offline_lite", "balanced", "quality")
+        for index, preset_id in enumerate(presets):
+            button = QPushButton()
+            button.setObjectName("presetCardButton")
+            button.setCheckable(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setMinimumHeight(70)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            button.setProperty("preset_id", preset_id)
+            button.clicked.connect(lambda _checked=False, value=preset_id: self._select_preset_card(value))
+            group.addButton(button)
+            self._preset_cards[preset_id] = button
+            layout.addWidget(button, index // 2, index % 2)
+        self._refresh_preset_cards()
+        return panel
+
+    def _select_preset_card(self, preset_id: str) -> None:
+        combo = getattr(self, "_performance_preset_combo", None)
+        if combo is None:
+            return
+        self._set_combo_data(combo, preset_id)
+        self._apply_selected_performance_preset()
+
+    def _refresh_preset_cards(self) -> None:
+        cards = getattr(self, "_preset_cards", {})
+        if not cards:
+            return
+        current = ""
+        combo = getattr(self, "_performance_preset_combo", None)
+        if combo is not None:
+            current = str(combo.currentData() or "")
+        for preset_id, button in cards.items():
+            label = self._preset_display_label(preset_id)
+            detail = self._preset_card_detail(preset_id)
+            button.setText(f"{label}\n{detail}" if detail else label)
+            button.setChecked(preset_id == current)
+            button.setToolTip(detail or label)
+
+    def _preset_card_detail(self, preset_id: str) -> str:
+        keys = {
+            "low_latency": "preset_card_low_latency",
+            "offline_lite": "preset_card_offline_lite",
+            "balanced": "preset_card_balanced",
+            "quality": "preset_card_quality",
+        }
+        key = keys.get(preset_id, "preset_card_default")
+        return self._tr(key)
+
     def _media_start_panel(self) -> QFrame:
         panel = QFrame()
         panel.setObjectName("mediaStartPanel")
-        panel.setMaximumWidth(880)
-        panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        panel.setMaximumWidth(16777215)
+        panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(14)
-        title = QLabel(self._tr("media_start_title"))
-        title.setObjectName("mediaStartTitle")
-        title.setProperty("i18n_key", "media_start_title")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setWordWrap(True)
-        layout.addWidget(title)
-        subtitle = QLabel(self._tr("media_start_subtitle"))
-        subtitle.setObjectName("mediaStartSubtitle")
-        subtitle.setProperty("i18n_key", "media_start_subtitle")
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setWordWrap(True)
-        layout.addWidget(subtitle)
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(10)
+        layout.setContentsMargins(24, 18, 24, 18)
+        layout.setSpacing(12)
+
+        grid_host = QWidget()
+        grid_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        grid = QGridLayout(grid_host)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(10)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         self._media_start_workflow_buttons = {}
-        for index, (workflow_key, title_key, detail_key, icon, callback) in enumerate(
+        self._media_start_workflow_cards = {}
+        for index, (workflow_key, title_key, detail_key, icon_name, preset_id, callback) in enumerate(
             (
                 (
                     "video",
                     "first_run_workflow_video",
                     "first_run_workflow_video_detail",
-                    QStyle.StandardPixmap.SP_DirOpenIcon,
+                    "video",
+                    "low_latency",
                     self._open_video,
                 ),
                 (
                     "url",
                     "first_run_workflow_url",
                     "first_run_workflow_url_detail",
-                    QStyle.StandardPixmap.SP_BrowserReload,
+                    "url",
+                    "online_lite",
                     self._open_video_url,
                 ),
                 (
                     "document",
                     "first_run_workflow_document",
                     "first_run_workflow_document_detail",
-                    QStyle.StandardPixmap.SP_FileIcon,
+                    "document",
+                    "offline_lite",
                     self._open_document,
                 ),
                 (
                     "meeting",
                     "first_run_workflow_meeting",
                     "first_run_workflow_meeting_detail",
-                    QStyle.StandardPixmap.SP_MediaPlay,
+                    "meeting",
+                    "low_latency",
                     self._toggle_meeting,
                 ),
             )
         ):
-            button = self._make_button(title_key, self.style().standardIcon(icon))
-            button.setObjectName("mediaStartWorkflowButton")
-            button.setProperty("i18n_key", "")
-            button.setProperty("workflow_title_key", title_key)
-            button.setProperty("workflow_detail_key", detail_key)
-            button.setMinimumHeight(74)
-            button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-            button.setToolTip(self._media_start_button_tooltip(title_key, detail_key))
-            button.clicked.connect(
-                lambda _checked=False, key=workflow_key, cb=callback: self._start_goal_workflow(key, cb)
+            card = self._media_start_workflow_card(
+                workflow_key=workflow_key,
+                title_key=title_key,
+                detail_key=detail_key,
+                icon_name=icon_name,
+                preset_id=preset_id,
+                callback=callback,
             )
-            grid.addWidget(button, index // 2, index % 2)
-            self._media_start_workflow_buttons[title_key] = button
-        layout.addLayout(grid)
+            grid.addWidget(card, index // 2, index % 2)
+            self._media_start_workflow_cards[workflow_key] = card
+            self._media_start_workflow_buttons[title_key] = card._workflow_compat_button
+        layout.addWidget(grid_host)
+
+        layout.addWidget(self._media_start_quick_panel())
 
         setup_title = QPushButton(self._tr("first_run_profile_change"))
         setup_title.setObjectName("mediaStartSetupTitle")
         setup_title.setProperty("i18n_key", "first_run_profile_change")
         setup_title.setCheckable(True)
+        setup_title.setFixedHeight(self._COMMAND_BUTTON_HEIGHT)
+        setup_title.setFixedWidth(self._COMMAND_BUTTON_WIDTH)
         layout.addWidget(setup_title)
 
         profile_row = QWidget()
@@ -2803,7 +2906,8 @@ class PlayerLayoutMixin:
             button = QPushButton(self._tr(str(profile["title"])))
             button.setObjectName("mediaStartProfileButton")
             button.setCheckable(True)
-            button.setMinimumHeight(34)
+            button.setFixedHeight(self._COMMAND_BUTTON_HEIGHT)
+            button.setFixedWidth(self._COMMAND_BUTTON_WIDTH)
             button.setCursor(Qt.PointingHandCursor)
             button.setProperty("launcher_profile", profile_key)
             button.setProperty("launcher_profile_title_key", str(profile["title"]))
@@ -2820,6 +2924,242 @@ class PlayerLayoutMixin:
         self._refresh_media_start_launcher_text()
         return panel
 
+    def _media_start_quick_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("mediaStartQuickPanel")
+        panel.setAcceptDrops(True)
+        panel.installEventFilter(self)
+        layout = QGridLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setHorizontalSpacing(12)
+        layout.setVerticalSpacing(8)
+        layout.setColumnStretch(0, 3)
+        layout.setColumnStretch(1, 2)
+
+        drop_zone = QFrame()
+        drop_zone.setObjectName("mediaStartDropZone")
+        drop_zone.setAcceptDrops(True)
+        drop_zone.installEventFilter(self)
+        drop_layout = QVBoxLayout(drop_zone)
+        drop_layout.setContentsMargins(12, 10, 12, 10)
+        drop_layout.setSpacing(6)
+        drop_title = QLabel(self._tr("media_start_drop_title"))
+        drop_title.setObjectName("mediaStartDropTitle")
+        drop_title.setProperty("i18n_key", "media_start_drop_title")
+        drop_detail = QLabel(self._tr("media_start_drop_detail"))
+        drop_detail.setObjectName("mediaStartDropDetail")
+        drop_detail.setProperty("i18n_key", "media_start_drop_detail")
+        drop_detail.setWordWrap(True)
+        drop_layout.addWidget(drop_title)
+        drop_layout.addWidget(drop_detail)
+
+        quick_row = QWidget()
+        quick_layout = QHBoxLayout(quick_row)
+        quick_layout.setContentsMargins(0, 0, 0, 0)
+        quick_layout.setSpacing(6)
+        quick_edit = QLineEdit()
+        quick_edit.setObjectName("mediaStartQuickSourceEdit")
+        quick_edit.setProperty("i18n_key", "media_start_quick_placeholder")
+        quick_edit.setPlaceholderText(self._tr("media_start_quick_placeholder"))
+        quick_edit.setClearButtonEnabled(True)
+        quick_edit.setFixedHeight(self._COMMAND_BUTTON_HEIGHT)
+        quick_edit.returnPressed.connect(self._media_start_submit_quick_source)
+        quick_button = QPushButton(self._app_icon("open"), self._tr("media_start_quick_open"))
+        quick_button.setObjectName("mediaStartQuickOpenButton")
+        quick_button.setProperty("i18n_key", "media_start_quick_open")
+        quick_button.setCursor(Qt.PointingHandCursor)
+        quick_button.setFixedSize(self._COMMAND_BUTTON_WIDTH, self._COMMAND_BUTTON_HEIGHT)
+        quick_button.clicked.connect(self._media_start_submit_quick_source)
+        quick_layout.addWidget(quick_edit, 1)
+        quick_layout.addWidget(quick_button)
+        drop_layout.addWidget(quick_row)
+
+        info_panel = QFrame()
+        info_panel.setObjectName("mediaStartInfoPanel")
+        info_layout = QVBoxLayout(info_panel)
+        info_layout.setContentsMargins(12, 10, 12, 10)
+        info_layout.setSpacing(7)
+        recent_title = QLabel(self._tr("media_start_recent_title"))
+        recent_title.setObjectName("mediaStartSectionTitle")
+        recent_title.setProperty("i18n_key", "media_start_recent_title")
+        info_layout.addWidget(recent_title)
+        self._media_start_recent_empty_label = QLabel(self._tr("media_start_recent_empty"))
+        self._media_start_recent_empty_label.setObjectName("mediaStartMutedText")
+        self._media_start_recent_empty_label.setProperty("i18n_key", "media_start_recent_empty")
+        self._media_start_recent_empty_label.setWordWrap(True)
+        info_layout.addWidget(self._media_start_recent_empty_label)
+        self._media_start_recent_buttons = []
+        for _index in range(3):
+            button = QPushButton()
+            button.setObjectName("mediaStartRecentButton")
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFixedHeight(30)
+            button.clicked.connect(
+                lambda _checked=False, source_button=button: self._open_media_start_recent_source(
+                    str(source_button.property("source") or "")
+                )
+            )
+            button.hide()
+            self._media_start_recent_buttons.append(button)
+            info_layout.addWidget(button)
+
+        config_title = QLabel(self._tr("media_start_config_title"))
+        config_title.setObjectName("mediaStartSectionTitle")
+        config_title.setProperty("i18n_key", "media_start_config_title")
+        info_layout.addWidget(config_title)
+        self._media_start_config_summary = QLabel()
+        self._media_start_config_summary.setObjectName("mediaStartConfigSummary")
+        self._media_start_config_summary.setWordWrap(True)
+        info_layout.addWidget(self._media_start_config_summary)
+
+        self._media_start_drop_zone = drop_zone
+        self._media_start_quick_source_edit = quick_edit
+        self._media_start_quick_open_button = quick_button
+        layout.addWidget(drop_zone, 0, 0)
+        layout.addWidget(info_panel, 0, 1)
+        self._refresh_media_start_context()
+        return panel
+
+    def _media_start_workflow_card(
+        self,
+        *,
+        workflow_key: str,
+        title_key: str,
+        detail_key: str,
+        icon_name: str,
+        preset_id: str,
+        callback,
+    ) -> QFrame:
+        card = QFrame()
+        card.setObjectName("mediaStartWorkflowCard")
+        card.setProperty("workflow_key", workflow_key)
+        card.setProperty("workflow_title_key", title_key)
+        card.setProperty("workflow_detail_key", detail_key)
+        card.setProperty("workflow_preset_id", preset_id)
+        card.setMinimumHeight(108)
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(10)
+
+        body = QWidget(card)
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(6)
+
+        header = QWidget()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
+        icon = QLabel()
+        icon.setObjectName("mediaStartWorkflowIcon")
+        icon.setPixmap(self._app_icon(icon_name).pixmap(22, 22))
+        header_layout.addWidget(icon)
+        title = QLabel(self._tr(title_key))
+        title.setObjectName("mediaStartWorkflowTitle")
+        title.setProperty("i18n_key", title_key)
+        title.setWordWrap(True)
+        header_layout.addWidget(title, 1)
+        body_layout.addWidget(header)
+
+        detail = QLabel(self._tr(detail_key))
+        detail.setObjectName("mediaStartWorkflowDetail")
+        detail.setProperty("i18n_key", detail_key)
+        detail.setWordWrap(True)
+        body_layout.addWidget(detail)
+
+        runtime = QLabel(self._workflow_runtime_status_text(workflow_key, preset_id))
+        runtime.setObjectName("mediaStartWorkflowRuntime")
+        runtime.setWordWrap(False)
+        runtime.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        body_layout.addWidget(runtime, 0, Qt.AlignmentFlag.AlignLeft)
+        body_layout.addStretch(1)
+        layout.addWidget(body, 1)
+
+        actions = QWidget()
+        actions.setObjectName("workflowCardActions")
+        actions_layout = QVBoxLayout(actions)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(6)
+        actions_layout.addStretch(1)
+        open_button = QPushButton(self._app_icon("open"), self._tr("workflow_card_open"))
+        open_button.setObjectName("workflowCardPrimaryButton")
+        open_button.setProperty("i18n_key", "workflow_card_open")
+        open_button.setCursor(Qt.PointingHandCursor)
+        open_button.setFixedHeight(self._COMMAND_BUTTON_HEIGHT)
+        open_button.setFixedWidth(self._COMMAND_BUTTON_WIDTH)
+        open_button.clicked.connect(
+            lambda _checked=False, key=workflow_key, cb=callback: self._start_goal_workflow(key, cb)
+        )
+        compat_button = QPushButton(self._tr(title_key), card)
+        compat_button.setObjectName("mediaStartWorkflowButton")
+        compat_button.setProperty("i18n_key", title_key)
+        compat_button.setToolTip(self._media_start_button_tooltip(title_key, detail_key))
+        compat_button.clicked.connect(
+            lambda _checked=False, key=workflow_key, cb=callback: self._start_goal_workflow(key, cb)
+        )
+        compat_button.hide()
+        preset_button = QPushButton(self._tr("workflow_card_quick_preset"))
+        preset_button.setObjectName("workflowCardSecondaryButton")
+        preset_button.setProperty("i18n_key", "workflow_card_quick_preset")
+        preset_button.setCursor(Qt.PointingHandCursor)
+        preset_button.setToolTip(self._workflow_preset_tooltip(workflow_key, preset_id))
+        preset_button.setFixedSize(self._COMMAND_BUTTON_WIDTH, self._COMMAND_BUTTON_HEIGHT)
+        preset_button.clicked.connect(
+            lambda _checked=False, key=workflow_key, preset=preset_id: self._apply_workflow_quick_preset(key, preset)
+        )
+        actions_layout.addWidget(open_button)
+        actions_layout.addWidget(preset_button)
+        actions_layout.addStretch(1)
+        layout.addWidget(actions, 0, Qt.AlignmentFlag.AlignRight)
+
+        card._workflow_title = title
+        card._workflow_detail = detail
+        card._workflow_runtime = runtime
+        card._workflow_open_button = open_button
+        card._workflow_compat_button = compat_button
+        card._workflow_preset_button = preset_button
+        return card
+
+    def _workflow_runtime_status_text(self, workflow_key: str, preset_id: str) -> str:
+        preset_label = self._preset_display_label(preset_id)
+        requirements = {
+            "video": "workflow_badge_video",
+            "url": "workflow_badge_url",
+            "document": "workflow_badge_document",
+            "meeting": "workflow_badge_meeting",
+        }.get(workflow_key, "workflow_badge_default")
+        return self._tr(requirements).format(preset=preset_label)
+
+    def _workflow_preset_tooltip(self, workflow_key: str, preset_id: str) -> str:
+        return self._tr("workflow_preset_tooltip").format(
+            workflow=self._tr(f"workflow_name_{workflow_key}"),
+            preset=self._preset_display_label(preset_id),
+        )
+
+    def _preset_display_label(self, preset_id: str) -> str:
+        combo = getattr(self, "_performance_preset_combo", None)
+        if combo is not None:
+            index = combo.findData(preset_id)
+            if index >= 0:
+                return combo.itemText(index)
+        for label, value in _dropdown_options("performance_presets", self._ui_language()):
+            if value == preset_id:
+                return _ui_label(label)
+        return str(preset_id or "")
+
+    def _apply_workflow_quick_preset(self, workflow_key: str, preset_id: str) -> None:
+        combo = getattr(self, "_performance_preset_combo", None)
+        if combo is not None:
+            self._set_combo_data(combo, preset_id)
+            self._apply_selected_performance_preset()
+        self.statusBar().showMessage(
+            self._tr("workflow_quick_preset_applied").format(
+                workflow=self._tr(f"workflow_name_{workflow_key}"),
+                preset=self._preset_display_label(preset_id),
+            )
+        )
+
     def _apply_media_start_profile(self, profile_key: str) -> None:
         if hasattr(self, "_readiness_select_profile"):
             self._readiness_select_profile(profile_key)
@@ -2830,12 +3170,31 @@ class PlayerLayoutMixin:
         self._sync_media_start_profile_buttons()
 
     def _refresh_media_start_launcher_text(self) -> None:
-        for button in getattr(self, "_media_start_workflow_buttons", {}).values():
-            title_key = str(button.property("workflow_title_key") or "")
-            detail_key = str(button.property("workflow_detail_key") or "")
-            if title_key and detail_key:
-                button.setText(self._tr(title_key))
-                button.setToolTip(self._media_start_button_tooltip(title_key, detail_key))
+        for card in getattr(self, "_media_start_workflow_cards", {}).values():
+            title_key = str(card.property("workflow_title_key") or "")
+            detail_key = str(card.property("workflow_detail_key") or "")
+            workflow_key = str(card.property("workflow_key") or "")
+            preset_id = str(card.property("workflow_preset_id") or "")
+            title = getattr(card, "_workflow_title", None)
+            detail = getattr(card, "_workflow_detail", None)
+            runtime = getattr(card, "_workflow_runtime", None)
+            open_button = getattr(card, "_workflow_open_button", None)
+            compat_button = getattr(card, "_workflow_compat_button", None)
+            preset_button = getattr(card, "_workflow_preset_button", None)
+            if title is not None and title_key:
+                title.setText(self._tr(title_key))
+            if detail is not None and detail_key:
+                detail.setText(self._tr(detail_key))
+            if runtime is not None:
+                runtime.setText(self._workflow_runtime_status_text(workflow_key, preset_id))
+            if open_button is not None:
+                open_button.setText(self._tr("workflow_card_open"))
+            if compat_button is not None and title_key:
+                compat_button.setText(self._tr(title_key))
+                compat_button.setToolTip(self._media_start_button_tooltip(title_key, detail_key))
+            if preset_button is not None:
+                preset_button.setText(self._tr("workflow_card_quick_preset"))
+                preset_button.setToolTip(self._workflow_preset_tooltip(workflow_key, preset_id))
         for button in getattr(self, "_media_start_profile_buttons", {}).values():
             title_key = str(button.property("launcher_profile_title_key") or "")
             detail_key = str(button.property("launcher_profile_detail_key") or "")
@@ -2843,6 +3202,63 @@ class PlayerLayoutMixin:
                 button.setText(self._tr(title_key))
                 button.setToolTip(self._media_start_button_tooltip(title_key, detail_key))
         self._sync_media_start_profile_buttons()
+        self._refresh_media_start_context()
+
+    def _connect_media_start_context_refresh(self) -> None:
+        if getattr(self, "_media_start_context_refresh_connected", False):
+            return
+        self._media_start_context_refresh_connected = True
+        widgets = (
+            getattr(self, "_performance_preset_combo", None),
+            getattr(self, "_asr_provider_combo", None),
+            getattr(self, "_translator_combo", None),
+            getattr(self, "_tts_provider_combo", None),
+            getattr(self, "_audio_source_combo", None),
+        )
+        for widget in widgets:
+            if widget is not None:
+                widget.currentIndexChanged.connect(lambda *_args: self._refresh_media_start_context())
+        self._refresh_media_start_context()
+
+    def _refresh_media_start_context(self) -> None:
+        edit = getattr(self, "_media_start_quick_source_edit", None)
+        if edit is not None:
+            edit.setPlaceholderText(self._tr("media_start_quick_placeholder"))
+        recent_buttons = list(getattr(self, "_media_start_recent_buttons", []) or [])
+        recent_urls = list(self._video_url_recent_urls_for_settings()[: len(recent_buttons)])
+        empty_label = getattr(self, "_media_start_recent_empty_label", None)
+        if empty_label is not None:
+            empty_label.setText(self._tr("media_start_recent_empty"))
+            empty_label.setVisible(not bool(recent_urls))
+        for index, button in enumerate(recent_buttons):
+            url = recent_urls[index] if index < len(recent_urls) else ""
+            button.setProperty("source", url)
+            if not url:
+                button.hide()
+                continue
+            button.setText(self._media_start_recent_source_label(url))
+            button.setToolTip(url)
+            button.show()
+        summary = getattr(self, "_media_start_config_summary", None)
+        if summary is not None and hasattr(self, "_performance_preset_combo"):
+            summary.setText(
+                self._tr("media_start_config_summary").format(
+                    profile=self._combo_text(self._performance_preset_combo),
+                    asr=self._combo_text(self._asr_provider_combo),
+                    translation=self._combo_text(self._translator_combo),
+                    tts=self._combo_text(self._tts_provider_combo),
+                )
+            )
+
+    @staticmethod
+    def _media_start_recent_source_label(source: str) -> str:
+        value = str(source or "").strip()
+        parsed = urlparse(value)
+        if parsed.netloc:
+            label = f"{parsed.netloc}{parsed.path}"
+        else:
+            label = Path(value).name or value
+        return label if len(label) <= 48 else f"...{label[-45:]}"
 
     def _media_start_button_tooltip(self, title_key: str, detail_key: str) -> str:
         return f"{self._tr(title_key)}\n{self._tr(detail_key)}"
@@ -2998,3 +3414,48 @@ class PlayerLayoutMixin:
         self._preserve_terms_check.setToolTip(tooltip)
         if hasattr(self, "_preserved_terms_file_edit"):
             self._preserved_terms_file_edit.setToolTip(tooltip)
+
+    def _initial_capture_device_options(self) -> dict[str, list[str]]:
+        return {
+            "system": [self._config.capture_system_device] if self._config.capture_system_device else [],
+            "microphone": [self._config.capture_microphone_device] if self._config.capture_microphone_device else [],
+        }
+
+    def _capture_devices_tab_changed(self, index: int) -> None:
+        if not hasattr(self, "_advanced_tab_widget") or not hasattr(self, "_settings_tabs"):
+            return
+        if self._settings_tab_contains(self._settings_tabs.widget(index), self._advanced_tab_widget):
+            self._load_capture_device_options()
+
+    def _load_capture_device_options(self, *, force: bool = False) -> None:
+        if getattr(self, "_capture_devices_loaded", False) and not force:
+            return
+        if not hasattr(self, "_capture_system_device_combo") or not hasattr(self, "_capture_microphone_device_combo"):
+            return
+        from ai_player.services.capture_sources import list_capture_device_options
+
+        capture_devices = list_capture_device_options()
+        self._replace_capture_device_options(self._capture_system_device_combo, capture_devices.get("system", []))
+        self._replace_capture_device_options(
+            self._capture_microphone_device_combo,
+            capture_devices.get("microphone", []),
+        )
+        self._capture_devices_loaded = True
+
+    def _replace_capture_device_options(self, combo: QComboBox, devices: list[str]) -> None:
+        current = combo.currentData()
+        was_blocked = combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(self._i18n_text("auto"), "")
+        seen = {""}
+        for device in devices:
+            device = str(device or "").strip()
+            if not device or device in seen:
+                continue
+            combo.addItem(device, device)
+            seen.add(device)
+        if current and current not in seen:
+            combo.addItem(str(current), current)
+        index = combo.findData(current)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(was_blocked)

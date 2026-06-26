@@ -139,6 +139,56 @@ class PlayerSourceMixin:
         clipboard = QApplication.clipboard()
         self._open_smart_source_text(clipboard.text() if clipboard is not None else "")
 
+    def _media_start_submit_quick_source(self, *_args) -> None:
+        edit = getattr(self, "_media_start_quick_source_edit", None)
+        value = edit.text().strip() if edit is not None else ""
+        if not value:
+            self.statusBar().showMessage(self._tr("media_start_quick_empty"))
+            return
+        self._open_smart_source_text(value)
+        if edit is not None:
+            edit.clear()
+
+    def _open_media_start_recent_source(self, source: str) -> None:
+        value = str(source or "").strip()
+        if value:
+            self._open_smart_source_text(value)
+
+    def _media_start_mime_supported(self, mime_data) -> bool:
+        if mime_data is None:
+            return False
+        if mime_data.hasUrls():
+            for url in mime_data.urls():
+                value = url.toLocalFile() if url.isLocalFile() else url.toString()
+                if self._smart_source_text_supported(value):
+                    return True
+        return bool(mime_data.hasText() and self._smart_source_text_supported(mime_data.text()))
+
+    def _open_media_start_mime_source(self, mime_data) -> bool:
+        if mime_data is None:
+            return False
+        if mime_data.hasUrls():
+            paths: list[str] = []
+            text_sources: list[str] = []
+            for url in mime_data.urls():
+                value = url.toLocalFile() if url.isLocalFile() else url.toString()
+                if not value:
+                    continue
+                if url.isLocalFile():
+                    paths.append(value)
+                else:
+                    text_sources.append(value)
+            if paths:
+                self._open_smart_source_paths(paths)
+                return True
+            if text_sources:
+                self._open_smart_source_text(text_sources[0])
+                return True
+        if mime_data.hasText():
+            self._open_smart_source_text(mime_data.text())
+            return True
+        return False
+
     def _smart_source_clipboard_text(self) -> str:
         clipboard = QApplication.clipboard()
         return str(clipboard.text() if clipboard is not None else "").strip()
@@ -558,6 +608,8 @@ class PlayerSourceMixin:
             return
         history = [item for item in self._video_url_recent_urls_for_settings() if item != normalized]
         self._video_url_recent_urls = tuple([normalized, *history][:20])
+        if hasattr(self, "_refresh_media_start_context"):
+            self._refresh_media_start_context()
 
     def _video_url_recent_urls_for_settings(self) -> tuple[str, ...]:
         return tuple(getattr(self, "_video_url_recent_urls", self._config.video_url_recent_urls) or ())

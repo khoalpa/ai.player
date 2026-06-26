@@ -233,19 +233,48 @@ class PlayerTaskCenterMixin:
 
     def _refresh_task_drawer_summary(self, text: str, *, active: bool) -> None:
         drawer = getattr(self, "_task_drawer", None)
+        has_error = getattr(self, "_task_center_retry_action", None) is not None
         if drawer is not None:
-            drawer.setProperty("activeTasks", "true" if active else "false")
+            if active:
+                state = "true"
+            elif has_error:
+                state = "error"
+            else:
+                state = "false"
+            drawer.setProperty("activeTasks", state)
             style = drawer.style()
             style.unpolish(drawer)
             style.polish(drawer)
             if active:
                 self._task_drawer_user_open = False
                 drawer.setVisible(not self._task_drawer_hidden_for_video_playback())
+            elif has_error:
+                drawer.setVisible(True)
             elif not getattr(self, "_task_drawer_user_open", False):
                 drawer.hide()
+        state_label = getattr(self, "_task_drawer_state", None)
+        if state_label is not None:
+            if active:
+                label_key = "task_drawer_state_running"
+                status = "active"
+            elif has_error:
+                label_key = "task_drawer_state_error"
+                status = "error"
+            else:
+                label_key = "task_drawer_state_idle"
+                status = "idle"
+            state_label.setText(self._tr(label_key))
+            state_label.setProperty("i18n_key", label_key)
+            state_label.setProperty("status", status)
+            state_label.style().unpolish(state_label)
+            state_label.style().polish(state_label)
         summary = getattr(self, "_task_drawer_summary", None)
         if summary is not None:
-            summary.setText(text)
+            if has_error and not active:
+                last_error = str(getattr(self, "_task_center_last_error", "") or "").strip()
+                summary.setText(last_error or text)
+            else:
+                summary.setText(text)
             summary.setProperty("i18n_key", "task_drawer_idle" if not active else "")
         stop_button = getattr(self, "_task_drawer_stop_button", None)
         if stop_button is not None:

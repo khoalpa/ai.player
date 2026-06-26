@@ -132,6 +132,8 @@ class PlayerReadinessMixin:
         self._readiness_profile_toggle = QPushButton(self._tr("first_run_profile_change"))
         self._readiness_profile_toggle.setCheckable(True)
         self._readiness_profile_toggle.setProperty("i18n_key", "first_run_profile_change")
+        self._readiness_profile_toggle.setFixedHeight(self._COMMAND_BUTTON_HEIGHT)
+        self._readiness_profile_toggle.setFixedWidth(self._COMMAND_BUTTON_WIDTH)
         layout.addWidget(self._readiness_profile_toggle)
         profile_panel = QWidget(tab)
         self._readiness_profile_panel = profile_panel

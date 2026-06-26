@@ -540,6 +540,10 @@ class PlayerMediaMixin:
             available = self._media_stack.size()
             max_width = max(160, available.width() - 4)
             max_height = max(120, available.height() - 4)
+        if self._media_stack.currentWidget() is getattr(self, "_media_start_page", None):
+            self._media_frame.setFixedSize(max_width, max_height)
+            self._position_subtitle_overlay()
+            return
         if self._media_stack.currentWidget() is getattr(self, "_telegram_channel_view", None):
             self._media_frame.setFixedSize(max_width, max_height)
             self._position_subtitle_overlay()
@@ -881,11 +885,67 @@ class PlayerMediaMixin:
     def _toggle_video_fullscreen(self) -> None:
         self._set_video_fullscreen(not self._video_fullscreen)
 
+    def _toggle_focus_media(self, *_args) -> None:
+        self._set_focus_media_mode(not bool(getattr(self, "_focus_media_enabled", False)))
+
+    def _set_focus_media_mode(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == bool(getattr(self, "_focus_media_enabled", False)):
+            return
+        self._focus_media_enabled = enabled
+        if enabled:
+            self._focus_media_panel_state = {
+                "top": not self._top_panel_hidden,
+                "bottom": not self._bottom_panel_hidden,
+                "sidebar": not self._sidebar_panel_hidden,
+                "drawer": bool(getattr(self, "_task_drawer", None) and self._task_drawer.isVisible()),
+            }
+            if hasattr(self, "_source_bar"):
+                self._source_bar.hide()
+            if hasattr(self, "_settings_scroll"):
+                sizes = self._splitter.sizes()
+                if len(sizes) >= 2 and sizes[1] > 0:
+                    self._sidebar_panel_sizes = sizes
+                self._settings_scroll.hide()
+            if hasattr(self, "_task_drawer"):
+                self._task_drawer.hide()
+            if hasattr(self, "_display_options_panel"):
+                self._display_options_panel.hide()
+            self._top_panel_hidden = True
+            self._bottom_panel_hidden = False
+            self._sidebar_panel_hidden = True
+            self._set_focus_media_chrome(True)
+            self.statusBar().showMessage(self._tr("status_focus_media_enabled"))
+        else:
+            state = getattr(self, "_focus_media_panel_state", {})
+            if hasattr(self, "_source_bar"):
+                self._source_bar.setVisible(bool(state.get("top", True)))
+            if hasattr(self, "_settings_scroll"):
+                self._settings_scroll.setVisible(bool(state.get("sidebar", True)))
+                if bool(state.get("sidebar", True)):
+                    self._splitter.setSizes(self._sidebar_panel_sizes or list(DEFAULT_SIDEBAR_PANEL_SIZES))
+            if hasattr(self, "_task_drawer"):
+                self._task_drawer.setVisible(bool(state.get("drawer", False)))
+            self._top_panel_hidden = not bool(state.get("top", True))
+            self._bottom_panel_hidden = not bool(state.get("bottom", True))
+            self._sidebar_panel_hidden = not bool(state.get("sidebar", True))
+            self._set_focus_media_chrome(False)
+            self.statusBar().showMessage(self._tr("status_focus_media_disabled"))
+        for widget in (getattr(self, "_focus_media_button", None), getattr(self, "_focus_media_action", None)):
+            if widget is not None and hasattr(widget, "setChecked"):
+                widget.setChecked(enabled)
+        self._sync_panel_visibility_buttons()
+        self._apply_media_aspect_ratio()
+        QTimer.singleShot(0, self._apply_media_aspect_ratio)
+
     def _exit_video_fullscreen(self) -> None:
         if self._video_fullscreen:
             self._set_video_fullscreen(False)
 
     def _handle_escape_shortcut(self) -> None:
+        if getattr(self, "_focus_media_enabled", False):
+            self._set_focus_media_mode(False)
+            return
         if self._video_fullscreen:
             self._set_video_fullscreen(False)
         restoring_panels = self._top_panel_hidden or self._bottom_panel_hidden or self._sidebar_panel_hidden
@@ -1025,8 +1085,22 @@ class PlayerMediaMixin:
             getattr(self, "_document_view", None),
             getattr(self, "_media_stack", None),
             getattr(self, "_media_frame", None),
+            getattr(self, "_media_start_page", None),
+            getattr(self, "_media_start_overlay", None),
+            getattr(self, "_media_start_content", None),
+            getattr(self, "_media_start_drop_zone", None),
         }
         if watched in media_widgets:
+            if event.type() in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
+                supports_drop = getattr(self, "_media_start_mime_supported", None)
+                if callable(supports_drop) and supports_drop(event.mimeData()):
+                    event.acceptProposedAction()
+                    return True
+            if event.type() == QEvent.Type.Drop:
+                open_drop = getattr(self, "_open_media_start_mime_source", None)
+                if callable(open_drop) and open_drop(event.mimeData()):
+                    event.acceptProposedAction()
+                    return True
             if (
                 watched is getattr(self, "_video_placeholder", None)
                 and event.type() == QEvent.Type.MouseButtonRelease
