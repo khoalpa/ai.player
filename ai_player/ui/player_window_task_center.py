@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+import sys
+import time
 from collections.abc import Callable
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QPlainTextEdit,
     QPushButton,
@@ -22,6 +28,7 @@ from ai_player.core.config import PROJECT_ROOT, RUNTIME_DIR
 from ai_player.services.asr import asr_transcript_cache_stats, clear_asr_transcript_cache
 from ai_player.services.tts_base import clear_tts_cache, tts_cache_stats
 from ai_player.services.workflow_cache import clear_workflow_text_cache, workflow_text_cache_stats
+from ai_player.services.video_source import CACHE_MAX_AGE_SECONDS, default_video_cache_root
 from ai_player.ui.task_center import BackgroundTask, collect_background_tasks, stop_background_tasks
 
 
@@ -335,7 +342,8 @@ class PlayerTaskCenterMixin:
         dialog = QDialog(self)
         dialog.setWindowTitle(self._tr("cache_inspector_title"))
         layout = QVBoxLayout(dialog)
-        table = QTableWidget(3, 4, dialog)
+        rows = self._cache_inspector_rows()
+        table = QTableWidget(len(rows), 4, dialog)
         table.setHorizontalHeaderLabels(
             [
                 self._tr("cache_inspector_cache"),
@@ -344,7 +352,6 @@ class PlayerTaskCenterMixin:
                 self._tr("cache_inspector_activity"),
             ]
         )
-        rows = self._cache_inspector_rows()
         for row, values in enumerate(rows):
             for column, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
@@ -361,6 +368,8 @@ class PlayerTaskCenterMixin:
             ("cache_inspector_clear_asr", self._clear_asr_cache_only),
             ("cache_inspector_clear_text", self._clear_text_cache_only),
             ("cache_inspector_clear_tts", self._clear_tts_cache_only),
+            ("cache_inspector_clear_url_old", self._clear_old_video_url_cache),
+            ("cache_inspector_clear_url", self._clear_video_url_cache),
             ("cache_inspector_clear_all", self._clear_workflow_caches),
         ):
             button = QPushButton(self._tr(label_key), dialog)
@@ -382,6 +391,7 @@ class PlayerTaskCenterMixin:
             self._cache_inspector_row("ASR", asr, RUNTIME_DIR / "asr-cache"),
             self._cache_inspector_row("Text", text, None),
             self._cache_inspector_row("TTS", tts, RUNTIME_DIR / "tts-cache"),
+            self._video_cache_inspector_row(),
         ]
 
     def _cache_inspector_row(self, name: str, stats: dict[str, int], path) -> tuple[str, int, str, str]:
@@ -417,6 +427,66 @@ class PlayerTaskCenterMixin:
         clear_tts_cache()
         self._refresh_task_center()
 
+    def _video_cache_inspector_row(self) -> tuple[str, int, str, str]:
+        root = self._video_url_cache_root()
+        files = self._cache_files(root)
+        site_count = len({path.relative_to(root).parts[0] for path in files if len(path.relative_to(root).parts) > 1})
+        return (
+            "URL video",
+            len(files),
+            self._format_bytes(sum(path.stat().st_size for path in files)),
+            f"{site_count} sites / {root}",
+        )
+
+    def _video_url_cache_root(self):
+        configured = str(getattr(self._config, "video_cache_dir", "") or "").strip()
+        if configured:
+            return Path(configured) / "ai-player-sources"
+        return default_video_cache_root()
+
+    def _clear_old_video_url_cache(self) -> None:
+        root = self._video_url_cache_root()
+        cutoff = time.time() - CACHE_MAX_AGE_SECONDS
+        for path in self._cache_files(root):
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+            except OSError:
+                pass
+        self._remove_empty_cache_dirs(root)
+        self._refresh_task_center()
+        self.statusBar().showMessage(self._tr("cache_inspector_url_old_cleared"))
+
+    def _clear_video_url_cache(self) -> None:
+        root = self._video_url_cache_root()
+        try:
+            if root.exists():
+                shutil.rmtree(root)
+        except OSError:
+            pass
+        self._url_cache_completed_count = 0
+        self._refresh_task_center()
+        self.statusBar().showMessage(self._tr("cache_inspector_url_cleared"))
+
+    @staticmethod
+    def _cache_files(root) -> list[Path]:
+        try:
+            return [item for item in Path(root).glob("**/*") if item.is_file()]
+        except OSError:
+            return []
+
+    @staticmethod
+    def _remove_empty_cache_dirs(root) -> None:
+        try:
+            dirs = [item for item in Path(root).glob("**/*") if item.is_dir()]
+        except OSError:
+            return
+        for path in sorted(dirs, key=lambda item: len(item.parts), reverse=True):
+            try:
+                path.rmdir()
+            except OSError:
+                pass
+
     def _show_workflow_health(self) -> None:
         dialog = QDialog(self)
         dialog.setWindowTitle(self._tr("workflow_health_title"))
@@ -448,6 +518,67 @@ class PlayerTaskCenterMixin:
         layout.addWidget(buttons)
         dialog.resize(760, 360)
         dialog.exec()
+
+    def _show_adult_extractor_health(self) -> None:
+        url, accepted = QInputDialog.getText(self, self._tr("adult_health_title"), self._tr("adult_health_url"))
+        if not accepted or not str(url or "").strip():
+            return
+        command = [
+            sys.executable,
+            str(PROJECT_ROOT / "scripts" / "probe_adult_site.py"),
+            str(url).strip(),
+            "--output",
+            str(PROJECT_ROOT / "data" / "tmp" / "adult-site-probe"),
+        ]
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._tr("adult_health_title"))
+        layout = QVBoxLayout(dialog)
+        output = QPlainTextEdit(dialog)
+        output.setReadOnly(True)
+        output.setPlainText(self._tr("adult_health_running"))
+        layout.addWidget(output, 1)
+        close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dialog)
+        close.rejected.connect(dialog.reject)
+        layout.addWidget(close)
+        dialog.resize(760, 480)
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=45,
+            )
+            output.setPlainText(self._adult_health_report_text(result))
+        except Exception as exc:
+            output.setPlainText(f"{self._tr('adult_health_failed')}: {exc}")
+        dialog.exec()
+
+    def _adult_health_report_text(self, result: subprocess.CompletedProcess) -> str:
+        text = str(result.stdout or "").strip()
+        if text:
+            try:
+                report = json.loads(text)
+            except json.JSONDecodeError:
+                report = None
+            if isinstance(report, dict):
+                media = report.get("media_candidates") if isinstance(report.get("media_candidates"), list) else []
+                lines = [
+                    f"{self._tr('adult_health_status')}: "
+                    f"{self._tr('adult_health_ok') if result.returncode == 0 else self._tr('adult_health_attention')}",
+                    f"Host: {report.get('host') or '-'}",
+                    f"JSON payloads: {report.get('json_payload_count') or 0}",
+                    f"Iframe: {report.get('iframe_candidate') or '-'}",
+                    f"Media candidates: {len(media)}",
+                ]
+                lines.extend(f"- {item}" for item in media[:12])
+                lines.append(f"Fixture: {report.get('html_fixture') or '-'}")
+                lines.append(f"Registry draft: {report.get('registry_draft') or '-'}")
+                return "\n".join(lines)
+        stderr = str(result.stderr or "").strip()
+        return "\n\n".join(part for part in (text, stderr, f"exit={result.returncode}") if part)
 
     def _workflow_health_action_label(self) -> str:
         title = self._tr("workflow_health_title")

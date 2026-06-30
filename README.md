@@ -185,6 +185,9 @@ Trang video qua `yt-dlp`:
 - YouTube, TikTok, Facebook, Instagram, Threads, X/Twitter, Vimeo, Dailymotion, public Telegram previews.
 - Internal builds can install private `yt-dlp` plugin packages and declare their
   extra hosts with `AI_PLAYER_EXTRA_YTDLP_HOSTS`.
+- Adult extractor hosts can also be extended with
+  `data/config/private/adult_sites.local.json` or by probing a URL with
+  `scripts/probe_adult_site.py`.
 - Internal builds can also install a private Telegram client package for
   Telethon-backed login and authenticated Telegram downloads.
 - YouTube channel and playlist URLs can be browsed in-app; internal builds can
@@ -348,14 +351,3 @@ data/                    # settings, cache và transcript tạm do app tạo
 - Offline model folders cần tải lại sau khi clone.
 - NLLB, Whisper lớn và VieNeu model đầy đủ nên được kiểm tra thủ công trên máy Windows/GPU trước khi phát hành build cho người dùng cuối.
 - Khi export từ nguồn live (`system`, `microphone`, `system_microphone`, `subtitle`), app có thể yêu cầu chuyển sang nguồn file/transcript ổn định hơn.
-
-## Donation
-
-Nếu AI Player hữu ích với bạn, bạn có thể ủng hộ tác giả qua VietQR/MB Bank:
-
-- Ngân hàng: `MB Bank`
-- Số tài khoản: `0914030780`
-- Chủ tài khoản: `LE PHAM ANH KHOA`
-- Nội dung gợi ý: `Donation AI Player`
-
-![Donation VietQR](docs/assets/donation-mbb-0914030780.jpg)

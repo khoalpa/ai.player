@@ -30,6 +30,7 @@ from ai_player.workers.player_window_workers import PlaybackCompatibilityWorker,
 _QT_COMPAT_VIDEO_CACHE: dict[tuple[str, int, int], bool] = {}
 DEFAULT_SIDEBAR_PANEL_WIDTH = 360
 DEFAULT_SIDEBAR_PANEL_SIZES = (1500, DEFAULT_SIDEBAR_PANEL_WIDTH)
+PLAYBACK_COMPAT_CACHE_SIGNATURE = "qt-playback-main-h264-source-v3"
 
 
 def _is_offscreen_platform() -> bool:
@@ -364,7 +365,7 @@ class PlayerMediaMixin:
     def _playback_compat_output_path(source_path: str) -> Path:
         stat_key = PlayerMediaMixin._source_stat_key(source_path)
         digest = hashlib.sha1(
-            f"{source_path}{stat_key}:qt-playback-main-h264-720p-v2".encode("utf-8", errors="replace")
+            f"{source_path}{stat_key}:{PLAYBACK_COMPAT_CACHE_SIGNATURE}".encode("utf-8", errors="replace")
         ).hexdigest()[:16]
         root = Path(tempfile.gettempdir()) / "ai-player-playback-cache"
         _cleanup_cache_root(root, max_bytes=10 * 1024 * 1024 * 1024)
@@ -372,7 +373,7 @@ class PlayerMediaMixin:
 
     @staticmethod
     def _playback_compat_cache_key(source_path: str) -> str:
-        return f"{source_path}{PlayerMediaMixin._source_stat_key(source_path)}:qt-playback-main-h264-720p-v2"
+        return f"{source_path}{PlayerMediaMixin._source_stat_key(source_path)}:{PLAYBACK_COMPAT_CACHE_SIGNATURE}"
 
     @staticmethod
     def _source_stat_key(source_path: str) -> str:

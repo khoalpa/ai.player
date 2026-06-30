@@ -981,6 +981,7 @@ class PlayerSettingsMixin:
             video_aspect_ratio=self._selected_video_aspect_ratio(),
             playback_video_quality=self._selected_playback_video_quality(),
             video_url_full_cache=self._selected_video_url_full_cache(),
+            video_url_play_after_cache_percent=int(self._config.video_url_play_after_cache_percent),
             video_cache_dir=self._selected_video_cache_dir(),
             video_url_recent_urls=self._video_url_recent_urls_for_settings(),
             audio_source=self._selected_audio_source(),
@@ -1158,6 +1159,11 @@ class PlayerSettingsMixin:
         whisper_model = preset.get("whisper_model")
         if whisper_model:
             self._config = replace(self._config, whisper_model=str(whisper_model))
+        play_after_cache_percent = preset.get("video_url_play_after_cache_percent")
+        if play_after_cache_percent is not None:
+            self._config = replace(self._config, video_url_play_after_cache_percent=int(play_after_cache_percent))
+        self._set_combo_data(self._playback_quality_combo, preset.get("playback_video_quality"))
+        self._set_checkbox(self._video_url_full_cache_check, preset.get("video_url_full_cache"))
         self._set_slider_value(self._segment_seconds_slider, preset.get("segment_seconds"))
         self._set_slider_value(self._start_delay_slider, preset.get("dubbing_start_delay_seconds"))
         self._set_slider_value(self._prebuffer_segments_slider, preset.get("dubbing_prebuffer_segments"))

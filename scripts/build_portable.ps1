@@ -271,9 +271,6 @@ Set-BuildAuthenticodeSignatures -Root $AppDist -Certificate $CodeSigningCertific
 Copy-Item -LiteralPath $AppDist -Destination $PortableRoot -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "README.md") -Destination $PortableRoot -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "LICENSE") -Destination $PortableRoot -Force
-if (Test-Path (Join-Path $ProjectRoot "samples")) {
-    Copy-Item -LiteralPath (Join-Path $ProjectRoot "samples") -Destination $PortableRoot -Recurse -Force
-}
 
 $PortableExe = Join-Path $PortableRoot "AI Player\AI Player.exe"
 if ($RequireSignature) {

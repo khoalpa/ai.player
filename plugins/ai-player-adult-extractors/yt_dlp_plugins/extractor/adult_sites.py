@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import os
 import re
+from importlib import resources
+from pathlib import Path
 from urllib.parse import quote, urlencode, urlparse
 
 from yt_dlp.extractor.common import InfoExtractor
@@ -8,14 +12,89 @@ from yt_dlp.networking import HEADRequest
 from yt_dlp.utils import ExtractorError, determine_ext, int_or_none, js_to_json, unescapeHTML, url_or_none, urljoin
 
 
+def _load_site_registry() -> dict[str, dict[str, object]]:
+    registry = _read_bundled_site_registry()
+    for path in _local_registry_paths():
+        local_registry = _read_json_registry(path)
+        if local_registry:
+            registry = _merge_site_registry(registry, local_registry)
+    return registry
+
+
+def _read_bundled_site_registry() -> dict[str, dict[str, object]]:
+    try:
+        text = resources.files(__package__).joinpath("adult_sites_registry.json").read_text(encoding="utf-8")
+    except Exception:
+        try:
+            text = Path(__file__).with_name("adult_sites_registry.json").read_text(encoding="utf-8")
+        except OSError:
+            return {}
+    return _registry_from_text(text)
+
+
+def _read_json_registry(path: Path) -> dict[str, dict[str, object]]:
+    try:
+        return _registry_from_text(path.read_text(encoding="utf-8"))
+    except OSError:
+        return {}
+
+
+def _registry_from_text(text: str) -> dict[str, dict[str, object]]:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): value for key, value in data.items() if isinstance(value, dict)}
+
+
+def _local_registry_paths() -> tuple[Path, ...]:
+    paths = []
+    for raw_path in str(os.getenv("AI_PLAYER_ADULT_SITES_REGISTRY") or "").split(os.pathsep):
+        if raw_path.strip():
+            paths.append(Path(raw_path.strip()))
+    project_root = Path(os.getenv("AI_PLAYER_PROJECT_ROOT") or Path.cwd())
+    paths.append(project_root / "data" / "config" / "private" / "adult_sites.local.json")
+    return tuple(dict.fromkeys(paths))
+
+
+def _merge_site_registry(
+    base: dict[str, dict[str, object]],
+    override: dict[str, dict[str, object]],
+) -> dict[str, dict[str, object]]:
+    merged = {key: dict(value) for key, value in base.items()}
+    for key, value in override.items():
+        current = dict(merged.get(key, {}))
+        current.update(value)
+        merged[key] = current
+    return merged
+
+
+SITE_REGISTRY = _load_site_registry()
+
+
+def _registry_hosts() -> tuple[str, ...]:
+    hosts = []
+    for value in SITE_REGISTRY.values():
+        domains = value.get("domains")
+        if isinstance(domains, list):
+            hosts.extend(str(domain) for domain in domains if str(domain).strip())
+    return tuple(dict.fromkeys(hosts))
+
+
+ADULT_SITE_HOSTS = _registry_hosts()
+
+
 class _AdultSiteBaseIE(InfoExtractor):
     _DOMAINS: tuple[str, ...] = ()
     _IFRAME_DEPTH = 1
+    _SITE_KEY = ""
 
     def _extract_adult_site(self, url: str, video_id: str | None = None) -> dict:
         video_id = video_id or self._generic_id(url)
         webpage = self._download_webpage(url, video_id, headers=self._adult_site_headers(url))
-        return self._extract_from_webpage(url, video_id, webpage, self._IFRAME_DEPTH)
+        return self._extract_from_webpage(url, video_id, webpage, self._iframe_depth_for_url(url))
 
     def _extract_from_webpage(self, url: str, video_id: str, webpage: str, iframe_depth: int) -> dict:
         title = self._adult_site_title(url, webpage)
@@ -59,7 +138,7 @@ class _AdultSiteBaseIE(InfoExtractor):
                     video_id,
                     note="Downloading embedded player webpage",
                     fatal=False,
-                    headers=self._adult_site_headers(url),
+                    headers=self._adult_site_headers(iframe_url, referer=url),
                 )
             except ExtractorError:
                 iframe_webpage = None
@@ -161,17 +240,101 @@ class _AdultSiteBaseIE(InfoExtractor):
         ):
             candidates.append(match.group("quoted") or match.group("bare") or match.group("named"))
 
-        for json_ld in re.finditer(
-            r'(?is)<script[^>]+type=["\']application/ld\+json["\'][^>]*>(?P<json>.*?)</script>',
-            webpage,
-        ):
-            data = self._parse_json(json_ld.group("json"), self._generic_id(page_url), fatal=False)
-            if isinstance(data, dict):
-                candidates.extend(str(data.get(key) or "") for key in ("contentUrl", "embedUrl", "url"))
+        for payload in self._json_payloads_from_webpage(webpage):
+            candidates.extend(self._media_candidates_from_json(page_url, payload))
+        candidates.extend(self._configured_pattern_urls(page_url, webpage, "media_patterns"))
 
         return [url for url in (self._clean_media_url(page_url, candidate) for candidate in candidates) if url]
 
+    def _json_payloads_from_webpage(self, webpage: str) -> list[object]:
+        payloads = []
+        for match in re.finditer(
+            r"""(?is)<script(?P<attrs>[^>]*)>(?P<body>.*?)</script>""",
+            webpage,
+        ):
+            attrs = match.group("attrs") or ""
+            body = unescapeHTML(match.group("body") or "").strip()
+            if not body:
+                continue
+            if re.search(r"""(?i)\btype=["']application/(?:ld\+)?json["']""", attrs) or re.search(
+                r"""(?i)\bid=["']__NEXT_DATA__["']""", attrs
+            ):
+                data = self._parse_json(body, "json payload", fatal=False)
+                if data is not None:
+                    payloads.append(data)
+                continue
+            for state_match in re.finditer(
+                r"""(?is)(?:window\.)?(?:__INITIAL_STATE__|__NUXT__|playerConfig|PLAYER_CONFIG|videoConfig)\s*=\s*(?P<json>\{.*?\}|\[.*?\])\s*;""",
+                body,
+            ):
+                data = self._parse_json(
+                    state_match.group("json"),
+                    "state payload",
+                    transform_source=js_to_json,
+                    fatal=False,
+                )
+                if data is not None:
+                    payloads.append(data)
+        return payloads
+
+    def _media_candidates_from_json(self, page_url: str, value: object) -> list[str]:
+        candidates = []
+        stack = [value]
+        seen_ids = set()
+        while stack:
+            item = stack.pop()
+            item_id = id(item)
+            if item_id in seen_ids:
+                continue
+            seen_ids.add(item_id)
+            if isinstance(item, dict):
+                for key, child in item.items():
+                    key_text = str(key).lower()
+                    if isinstance(child, str):
+                        candidates.extend(self._media_candidates_from_string(page_url, child, key_text))
+                    else:
+                        stack.append(child)
+            elif isinstance(item, list | tuple):
+                stack.extend(item)
+            elif isinstance(item, str):
+                candidates.extend(self._media_candidates_from_string(page_url, item, ""))
+        return candidates
+
+    def _media_candidates_from_string(self, page_url: str, value: str, key: str) -> list[str]:
+        text = unescapeHTML(str(value or "")).replace("\\/", "/").strip()
+        if not text:
+            return []
+        looks_like_media_key = key in {
+            "contenturl",
+            "embedurl",
+            "file",
+            "hls",
+            "manifest",
+            "mp4",
+            "playurl",
+            "src",
+            "source",
+            "stream",
+            "url",
+            "videourl",
+            "video_url",
+        }
+        if looks_like_media_key and re.search(r"\.(?:m3u8|mpd|mp4|m4v|webm|mov|vl)(?:[?#]|$)", text, flags=re.I):
+            return [text]
+        return [
+            match.group(0)
+            for match in re.finditer(
+                r"""https?://[^\s"'<>\\]+\.(?:m3u8|mpd|mp4|m4v|webm|mov|vl)(?:\?[^\s"'<>\\]+)?""",
+                text,
+                flags=re.I,
+            )
+        ]
+
     def _find_iframe_url(self, page_url: str, webpage: str) -> str | None:
+        for iframe_url in self._configured_pattern_urls(page_url, webpage, "iframe_patterns"):
+            cleaned = self._clean_media_url(page_url, iframe_url)
+            if cleaned:
+                return cleaned
         for pattern in (
             r"""(?is)<iframe[^>]+(?:src|data-src)=["'](?P<url>[^"']+)["']""",
             r"""(?is)<embed[^>]+src=["'](?P<url>[^"']+)["']""",
@@ -182,6 +345,43 @@ class _AdultSiteBaseIE(InfoExtractor):
                 if iframe_url:
                     return iframe_url
         return None
+
+    def _configured_pattern_urls(self, page_url: str, webpage: str, key: str) -> list[str]:
+        urls = []
+        patterns = self._site_profile(page_url).get(key)
+        if not isinstance(patterns, list):
+            return urls
+        for pattern_spec in patterns:
+            pattern = ""
+            group: str | int = "url"
+            if isinstance(pattern_spec, str):
+                pattern = pattern_spec
+            elif isinstance(pattern_spec, dict):
+                pattern = str(pattern_spec.get("pattern") or "")
+                raw_group = pattern_spec.get("group", "url")
+                group = int(raw_group) if isinstance(raw_group, int) else str(raw_group or "url")
+            if not pattern:
+                continue
+            try:
+                matches = re.finditer(pattern, webpage)
+            except re.error:
+                continue
+            for match in matches:
+                value = self._match_group_value(match, group)
+                if value:
+                    urls.append(value)
+        return urls
+
+    @staticmethod
+    def _match_group_value(match: re.Match, group: str | int) -> str:
+        try:
+            value = match.group(group)
+        except (IndexError, KeyError):
+            try:
+                value = match.group(1)
+            except IndexError:
+                value = ""
+        return str(value or "")
 
     def _clean_media_url(self, page_url: str, media_url: str | None) -> str | None:
         if not media_url:
@@ -203,19 +403,58 @@ class _AdultSiteBaseIE(InfoExtractor):
             or self._generic_id(url)
         )
 
-    @staticmethod
-    def _adult_site_headers(url: str) -> dict:
-        return {
-            "Referer": url,
+    @classmethod
+    def _adult_site_headers(cls, url: str, *, referer: str | None = None) -> dict:
+        profile = cls._site_profile(url)
+        headers = {
+            "Referer": referer or url,
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/125 Safari/537.36"
             ),
         }
+        accept_language = str(profile.get("accept_language") or "").strip()
+        if accept_language:
+            headers["Accept-Language"] = accept_language
+        return headers
+
+    @classmethod
+    def _iframe_depth_for_url(cls, url: str) -> int:
+        profile = cls._site_profile(url)
+        value = profile.get("iframe_depth")
+        return int(value) if isinstance(value, int) and value >= 0 else cls._IFRAME_DEPTH
+
+    @classmethod
+    def _site_profile(cls, url: str) -> dict[str, object]:
+        if cls._SITE_KEY and cls._SITE_KEY in SITE_REGISTRY:
+            return SITE_REGISTRY[cls._SITE_KEY]
+        host = str(urlparse(url).hostname or "").lower().removeprefix("www.")
+        for profile in SITE_REGISTRY.values():
+            domains = profile.get("domains")
+            if not isinstance(domains, list):
+                continue
+            for domain in domains:
+                if cls._host_matches(host, str(domain)):
+                    return profile
+        return {}
+
+    @staticmethod
+    def _host_matches(host: str, pattern: str) -> bool:
+        pattern = pattern.lower().strip()
+        if not host or not pattern:
+            return False
+        if pattern.startswith("*."):
+            suffix = pattern[2:]
+            return host == suffix or host.endswith(f".{suffix}")
+        if pattern.endswith(".*"):
+            prefix = pattern[:-2]
+            return host == prefix or host.startswith(f"{prefix}.")
+        return host == pattern or host.endswith(f".{pattern}")
 
 
 class MissAVIE(_AdultSiteBaseIE):
     IE_NAME = "missav"
+    _SITE_KEY = "missav"
     _VALID_URL = r"https?://(?:[^/]+\.)?missav\.(?:ai|com|ws)/(?:[a-z]{2}/)?(?P<id>[^/?#&]+)"
 
     def _real_extract(self, url: str) -> dict:
@@ -224,6 +463,7 @@ class MissAVIE(_AdultSiteBaseIE):
 
 class SupJavIE(_AdultSiteBaseIE):
     IE_NAME = "supjav"
+    _SITE_KEY = "supjav"
     _VALID_URL = r"https?://(?:[^/]+\.)?supjav\.com/(?:[^/?#]+/)*(?P<id>[^/?#&]+)"
 
     def _real_extract(self, url: str) -> dict:
@@ -232,6 +472,7 @@ class SupJavIE(_AdultSiteBaseIE):
 
 class JAVMostIE(_AdultSiteBaseIE):
     IE_NAME = "javmost"
+    _SITE_KEY = "javmost"
     _VALID_URL = r"https?://(?:[^/]+\.)?javmost\.(?:com|cx)/(?:[^/?#]+/)*(?P<id>[^/?#&]+)"
 
     def _real_extract(self, url: str) -> dict:
@@ -240,6 +481,7 @@ class JAVMostIE(_AdultSiteBaseIE):
 
 class JAVGGIE(_AdultSiteBaseIE):
     IE_NAME = "javgg"
+    _SITE_KEY = "javgg"
     _VALID_URL = r"https?://(?:[^/]+\.)?javgg\.(?:net|to)/(?:[^/?#]+/)*(?P<id>[^/?#&]+)"
 
     def _real_extract(self, url: str) -> dict:
@@ -248,6 +490,7 @@ class JAVGGIE(_AdultSiteBaseIE):
 
 class R18IE(_AdultSiteBaseIE):
     IE_NAME = "r18"
+    _SITE_KEY = "r18"
     _VALID_URL = r"https?://(?:[^/]+\.)?r18\.com/(?:.*?id=(?P<id>[^/?#&]+)|(?P<slug>[^?#]+))"
 
     def _real_extract(self, url: str) -> dict:
@@ -256,6 +499,7 @@ class R18IE(_AdultSiteBaseIE):
 
 class JAVLibraryIE(_AdultSiteBaseIE):
     IE_NAME = "javlibrary"
+    _SITE_KEY = "javlibrary"
     _VALID_URL = r"https?://(?:[^/]+\.)?javlibrary\.com/(?:[a-z]{2}/)?(?:\?(?:[^#]*&)?v=(?P<id>[^&#]+)|(?P<slug>[^?#]+))"
 
     def _real_extract(self, url: str) -> dict:
@@ -264,6 +508,7 @@ class JAVLibraryIE(_AdultSiteBaseIE):
 
 class JAVHDIE(_AdultSiteBaseIE):
     IE_NAME = "javhd"
+    _SITE_KEY = "javhd"
     _VALID_URL = r"https?://(?:[^/]+\.)?javhd\.com/(?:[^/?#]+/)*(?P<id>[^/?#&]+)"
 
     def _real_extract(self, url: str) -> dict:
@@ -272,6 +517,7 @@ class JAVHDIE(_AdultSiteBaseIE):
 
 class NJAVIE(_AdultSiteBaseIE):
     IE_NAME = "njav"
+    _SITE_KEY = "njav"
     _VALID_URL = r"https?://(?:[^/]+\.)?njav\.com/(?:[a-z]{2}/)?(?:xvideos|video|videos)/(?P<id>[^/?#&]+)"
     _IFRAME_DEPTH = 2
 
@@ -395,6 +641,7 @@ class NJAVIE(_AdultSiteBaseIE):
 
 class LiveJasminIE(_AdultSiteBaseIE):
     IE_NAME = "livejasmin"
+    _SITE_KEY = "livejasmin"
     _VALID_URL = r"https?://(?:[^/]+\.)?livejasmin\.com/(?:[a-z]{2}/)?(?P<id>[^?#]+)"
 
     def _real_extract(self, url: str) -> dict:
@@ -403,6 +650,7 @@ class LiveJasminIE(_AdultSiteBaseIE):
 
 class VLXXIE(_AdultSiteBaseIE):
     IE_NAME = "vlxx"
+    _SITE_KEY = "vlxx"
     _VALID_URL = r"https?://(?:[^/]+\.)?vlxx\.[^/]+/(?:video/)?(?P<id>[^/?#&]+)(?:/(?P<numeric_id>\d+))?/?"
     _IFRAME_DEPTH = 2
 
@@ -435,6 +683,7 @@ class VLXXIE(_AdultSiteBaseIE):
 
 class BuomTVIE(_AdultSiteBaseIE):
     IE_NAME = "buomtv"
+    _SITE_KEY = "buomtv"
     _VALID_URL = (
         r"https?://(?:[^/]+\.)?buomtv\.[^/]+/(?:[a-z]{2}/)?"
         r"(?:(?P<long_type>movie)/[^/]+/(?P<long_id>[^/?#&]+)|(?P<short_type>video|anime)/(?P<short_id>[^/?#&]+))"
@@ -523,8 +772,22 @@ class BuomTVIE(_AdultSiteBaseIE):
         return headers
 
 
+class GenericAdultIE(_AdultSiteBaseIE):
+    IE_NAME = "ai_player_adult_generic"
+    _VALID_URL = r"https?://(?P<host>[^/?#]+)/(?P<id>[^?#]+)"
+    _IFRAME_DEPTH = 2
+
+    @classmethod
+    def suitable(cls, url: str) -> bool:
+        return bool(cls._site_profile(url)) and super().suitable(url)
+
+    def _real_extract(self, url: str) -> dict:
+        return self._extract_adult_site(url, self._generic_id(url))
+
+
 __all__ = [
     "BuomTVIE",
+    "GenericAdultIE",
     "JAVGGIE",
     "JAVHDIE",
     "JAVLibraryIE",

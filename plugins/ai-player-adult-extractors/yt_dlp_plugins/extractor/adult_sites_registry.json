@@ -1,0 +1,57 @@
+{
+  "missav": {
+    "domains": ["missav.ai", "missav.com", "missav.ws"],
+    "iframe_depth": 1,
+    "accept_language": "en-US,en;q=0.9"
+  },
+  "supjav": {
+    "domains": ["supjav.com"],
+    "iframe_depth": 1,
+    "accept_language": "en-US,en;q=0.9"
+  },
+  "javmost": {
+    "domains": ["javmost.com", "javmost.cx"],
+    "iframe_depth": 1,
+    "accept_language": "en-US,en;q=0.9"
+  },
+  "javgg": {
+    "domains": ["javgg.net", "javgg.to"],
+    "iframe_depth": 1,
+    "accept_language": "en-US,en;q=0.9"
+  },
+  "r18": {
+    "domains": ["r18.com"],
+    "iframe_depth": 1,
+    "accept_language": "en-US,en;q=0.9"
+  },
+  "javlibrary": {
+    "domains": ["javlibrary.com"],
+    "iframe_depth": 1,
+    "accept_language": "en-US,en;q=0.9"
+  },
+  "javhd": {
+    "domains": ["javhd.com"],
+    "iframe_depth": 1,
+    "accept_language": "en-US,en;q=0.9"
+  },
+  "njav": {
+    "domains": ["njav.com"],
+    "iframe_depth": 2,
+    "accept_language": "en-US,en;q=0.9"
+  },
+  "livejasmin": {
+    "domains": ["livejasmin.com"],
+    "iframe_depth": 1,
+    "accept_language": "en-US,en;q=0.9"
+  },
+  "vlxx": {
+    "domains": ["vlxx.*", "*.vlxx.*"],
+    "iframe_depth": 2,
+    "accept_language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
+  },
+  "buomtv": {
+    "domains": ["buomtv.*", "*.buomtv.*"],
+    "iframe_depth": 1,
+    "accept_language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
+  }
+}

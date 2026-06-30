@@ -98,7 +98,7 @@ BARE_ANSI_COLOR_RE = re.compile(r"(?:\[\])?\[[0-9;]{1,12}m")
 
 def resolve_video_source(
     value: str,
-    playback_quality: str = "720p",
+    playback_quality: str = "best",
     progress_callback=None,
     cancel_callback=None,
     *,
@@ -393,8 +393,8 @@ def _resolve_page_url(
 
 
 def _normalize_playback_quality(playback_quality: str) -> str:
-    quality = str(playback_quality or "720p").strip().lower()
-    return quality if quality in {"360p", "480p", "720p", "1080p", "best"} else "720p"
+    quality = str(playback_quality or "best").strip().lower()
+    return quality if quality in {"360p", "480p", "720p", "1080p", "best"} else "best"
 
 
 def _format_selector(playback_quality: str) -> str:
@@ -563,9 +563,9 @@ def default_video_cache_root() -> Path:
     return Path(tempfile.gettempdir()) / "ai-player-sources"
 
 
-def _source_cache_dir(provider: str, playback_quality: str = "720p", *, cache_root: str | Path | None = None) -> Path:
+def _source_cache_dir(provider: str, playback_quality: str = "best", *, cache_root: str | Path | None = None) -> Path:
     safe_provider = re.sub(r"[^a-z0-9_-]+", "-", provider.lower()).strip("-") or "url"
-    safe_quality = re.sub(r"[^a-z0-9_-]+", "-", _normalize_playback_quality(playback_quality)).strip("-") or "720p"
+    safe_quality = re.sub(r"[^a-z0-9_-]+", "-", _normalize_playback_quality(playback_quality)).strip("-") or "best"
     root = _video_cache_root(cache_root)
     _cleanup_cache_root(root)
     path = root / safe_provider / safe_quality

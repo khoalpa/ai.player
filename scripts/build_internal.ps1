@@ -32,6 +32,13 @@ if ($PrivateTelegramPackage) {
 }
 
 if ($PrivateYtdlpPluginPackage -and -not $ExtraYtdlpHosts) {
+    $DetectedHosts = & $Python -c "import importlib; m=importlib.import_module('yt_dlp_plugins.extractor.adult_sites'); print(','.join(getattr(m, 'ADULT_SITE_HOSTS', ())))"
+    if ($LASTEXITCODE -eq 0 -and "$DetectedHosts".Trim()) {
+        $ExtraYtdlpHosts = "$DetectedHosts".Trim()
+    }
+}
+
+if ($PrivateYtdlpPluginPackage -and -not $ExtraYtdlpHosts) {
     throw "Pass -ExtraYtdlpHosts or set AI_PLAYER_EXTRA_YTDLP_HOSTS for the internal plugin hosts."
 }
 

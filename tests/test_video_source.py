@@ -201,6 +201,12 @@ def test_format_selector_does_not_fallback_to_video_only_best() -> None:
     assert not video_source._format_selector("720p").endswith("/best")
 
 
+def test_default_playback_quality_prefers_best(tmp_path) -> None:
+    assert video_source._normalize_playback_quality("") == "best"
+    assert video_source._normalize_playback_quality("unknown") == "best"
+    assert video_source._source_cache_dir("Demo", cache_root=tmp_path).name == "best"
+
+
 def test_stream_format_selector_prefers_single_playable_stream() -> None:
     selector = video_source._stream_format_selector("720p")
 
@@ -481,7 +487,7 @@ def test_resolve_page_url_uses_custom_cache_dir(monkeypatch, tmp_path) -> None:
 
         def extract_info(self, _url, download):
             assert download is True
-            downloaded = tmp_path / "ai-player-sources" / "youtube" / "720p" / "demo.mp4"
+            downloaded = tmp_path / "ai-player-sources" / "youtube" / "best" / "demo.mp4"
             downloaded.parent.mkdir(parents=True, exist_ok=True)
             downloaded.write_text("video", encoding="utf-8")
             return {
@@ -495,8 +501,8 @@ def test_resolve_page_url_uses_custom_cache_dir(monkeypatch, tmp_path) -> None:
 
     source = video_source.resolve_video_source("https://youtu.be/demo", full_cache=True, cache_dir=tmp_path)
 
-    assert source.playback_url == str(tmp_path / "ai-player-sources" / "youtube" / "720p" / "demo.mp4")
-    assert str(tmp_path / "ai-player-sources" / "youtube" / "720p") in captured_options["outtmpl"]
+    assert source.playback_url == str(tmp_path / "ai-player-sources" / "youtube" / "best" / "demo.mp4")
+    assert str(tmp_path / "ai-player-sources" / "youtube" / "best") in captured_options["outtmpl"]
     assert captured_options["ffmpeg_location"]
 
 

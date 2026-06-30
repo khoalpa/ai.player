@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-PLAYBACK_COMPAT_CACHE_VERSION = "qt-playback-main-h264-720p-v2"
+PLAYBACK_COMPAT_CACHE_VERSION = "qt-playback-main-h264-source-v3"
 
 
 def playback_compat_cached_output_valid(output_path: Path, source_path: str, cache_key: str) -> bool:

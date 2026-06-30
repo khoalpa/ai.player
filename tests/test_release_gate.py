@@ -58,6 +58,8 @@ def test_public_build_rejects_internal_plugin_environment() -> None:
     assert "AI_PLAYER_INCLUDE_EXTRA_YTDLP_PLUGINS" in build_script
     assert "AI_PLAYER_INCLUDE_PRIVATE_TELEGRAM_PLUGIN" in build_script
     assert "AI_PLAYER_EXTRA_YTDLP_HOSTS" in build_script
+    assert "ADULT_SITE_HOSTS" in internal_build_script
+    assert "$DetectedHosts" in internal_build_script
     assert "Public portable builds must not include internal/private plugin configuration." in build_script
     assert "-AllowInternalPlugins" in internal_build_script
     assert "AI_PLAYER_INCLUDE_EXTRA_YTDLP_PLUGINS" in spec

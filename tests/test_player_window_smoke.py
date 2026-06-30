@@ -109,9 +109,9 @@ def test_player_window_constructs_offscreen(qapp) -> None:
         assert window._subtitle_color_combo.currentData() == "#ffd54a"
         assert window._subtitle_background_combo.currentData() == "rgba(0, 0, 0, 0)"
         assert window._source_filter_check.isChecked() is False
-        assert window._video_url_full_cache_check.isChecked() is False
+        assert window._video_url_full_cache_check.isChecked() is True
         assert window._config.original_audio_voice_filter is False
-        assert window._config.video_url_full_cache is False
+        assert window._config.video_url_full_cache is True
         assert window._aspect_combo.currentData() == DEFAULT_MEDIA_ASPECT_RATIO
         assert not window._panel_toggle_button.icon().isNull()
         assert window._panel_toggle_button.icon().cacheKey() != window._panel_collapse_button.icon().cacheKey()
@@ -3536,6 +3536,50 @@ def test_video_url_forces_full_cache_when_source_filter_is_enabled(qapp) -> None
         assert window._source_filter_forces_video_url_full_cache() is False
         window._settings_save_timer.stop()
     finally:
+        window.close()
+
+
+def test_page_video_url_uses_full_cache_for_smoother_playback(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    started: list[dict[str, object]] = []
+    try:
+        window._video_url_full_cache_check.setChecked(False)
+        window._source_filter_check.setChecked(False)
+        monkeypatch.setattr(window, "_save_settings", lambda: None)
+        monkeypatch.setattr(
+            window._video_url,
+            "start",
+            lambda url, quality, **kwargs: started.append({"url": url, "quality": quality, **kwargs}) or True,
+        )
+
+        window._open_resolved_video_url("https://www.njav.com/vi/xvideos/rki-729-uncensored-leak")
+
+        assert started[-1]["full_cache"] is True
+        assert window._last_video_url_request["full_cache"] is True
+    finally:
+        window._settings_save_timer.stop()
+        window.close()
+
+
+def test_direct_media_url_keeps_selected_cache_mode(qapp, monkeypatch) -> None:
+    window = PlayerWindow()
+    started: list[dict[str, object]] = []
+    try:
+        window._video_url_full_cache_check.setChecked(False)
+        window._source_filter_check.setChecked(False)
+        monkeypatch.setattr(window, "_save_settings", lambda: None)
+        monkeypatch.setattr(
+            window._video_url,
+            "start",
+            lambda url, quality, **kwargs: started.append({"url": url, "quality": quality, **kwargs}) or True,
+        )
+
+        window._open_resolved_video_url("https://cdn.example.test/video.mp4")
+
+        assert started[-1]["full_cache"] is False
+        assert window._last_video_url_request["full_cache"] is False
+    finally:
+        window._settings_save_timer.stop()
         window.close()
 
 

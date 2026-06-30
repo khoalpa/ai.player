@@ -45,6 +45,9 @@ def test_fast_source_voice_filter_uses_ffmpeg(tmp_path) -> None:
     assert output.exists()
     assert [command[0] for command in commands] == ["ffmpeg"]
     assert any("pan=stereo" in part for part in commands[0])
+    assert "-vf" not in commands[0]
+    assert "scale=-2:min(720\\,ih)" not in commands[0]
+    assert commands[0][commands[0].index("-crf") + 1] == "18"
 
 
 def test_fast_source_voice_filter_copies_safe_h264_video(tmp_path, monkeypatch) -> None:

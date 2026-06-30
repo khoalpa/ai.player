@@ -10,8 +10,11 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "plugins" / "ai-player-adult
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
-VLXXIE = import_module("yt_dlp_plugins.extractor.adult_sites").VLXXIE
-NJAVIE = import_module("yt_dlp_plugins.extractor.adult_sites").NJAVIE
+ADULT_SITES = import_module("yt_dlp_plugins.extractor.adult_sites")
+VLXXIE = ADULT_SITES.VLXXIE
+NJAVIE = ADULT_SITES.NJAVIE
+GenericAdultIE = ADULT_SITES.GenericAdultIE
+FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "adult_extractors"
 
 
 class _FakeHeadResponse:
@@ -32,6 +35,81 @@ def test_njav_ie_matches_video_urls() -> None:
     assert NJAVIE.suitable("https://www.njav.com/vi/xvideos/rki-729-uncensored-leak")
     assert NJAVIE.suitable("https://njav.com/xvideos/rki-729-uncensored-leak")
     assert not NJAVIE.suitable("https://example.com/vi/xvideos/rki-729-uncensored-leak")
+
+
+def test_adult_site_registry_lists_internal_hosts() -> None:
+    assert "missav.ai" in ADULT_SITES.ADULT_SITE_HOSTS
+    assert "vlxx.*" in ADULT_SITES.ADULT_SITE_HOSTS
+    assert ADULT_SITES.SITE_REGISTRY["njav"]["iframe_depth"] == 2
+
+
+def test_site_profile_adds_language_header() -> None:
+    headers = VLXXIE._adult_site_headers("https://vlxx.moi/video/demo-title/3170/")
+
+    assert headers["Referer"] == "https://vlxx.moi/video/demo-title/3170/"
+    assert headers["Accept-Language"].startswith("vi-VN")
+
+
+def test_generic_adult_ie_only_matches_registry_hosts(monkeypatch) -> None:
+    monkeypatch.setitem(
+        ADULT_SITES.SITE_REGISTRY,
+        "example_generic",
+        {"domains": ["new-adult.example"], "iframe_depth": 2},
+    )
+
+    assert GenericAdultIE.suitable("https://new-adult.example/watch/demo")
+    assert not GenericAdultIE.suitable("https://not-allowed.example/watch/demo")
+
+
+def test_generic_adult_ie_uses_registry_media_patterns(monkeypatch) -> None:
+    monkeypatch.setitem(
+        ADULT_SITES.SITE_REGISTRY,
+        "example_patterns",
+        {
+            "domains": ["pattern.example"],
+            "media_patterns": [r"""data-stream=["'](?P<url>[^"']+)["']"""],
+        },
+    )
+    extractor = GenericAdultIE(YoutubeDL({"quiet": True, "no_warnings": True}))
+
+    result = extractor._extract_from_webpage(
+        "https://pattern.example/watch/demo",
+        "demo",
+        """<html><body><div data-stream="/media/demo.mp4"></div></body></html>""",
+        iframe_depth=0,
+    )
+
+    assert result["formats"][0]["url"] == "https://pattern.example/media/demo.mp4"
+
+
+def test_generic_adult_ie_uses_registry_iframe_patterns(monkeypatch) -> None:
+    monkeypatch.setitem(
+        ADULT_SITES.SITE_REGISTRY,
+        "example_iframe_patterns",
+        {
+            "domains": ["frame.example"],
+            "iframe_patterns": [{"pattern": r"""data-player=["'](?P<url>[^"']+)["']"""}],
+        },
+    )
+    extractor = GenericAdultIE(YoutubeDL({"quiet": True, "no_warnings": True}))
+
+    assert (
+        extractor._find_iframe_url(
+            "https://frame.example/watch/demo",
+            """<div data-player="/embed/demo"></div>""",
+        )
+        == "https://frame.example/embed/demo"
+    )
+
+
+def test_site_registry_merge_extends_profiles() -> None:
+    merged = ADULT_SITES._merge_site_registry(
+        {"demo": {"domains": ["demo.example"], "iframe_depth": 1}},
+        {"demo": {"iframe_depth": 3}, "new": {"domains": ["new.example"]}},
+    )
+
+    assert merged["demo"] == {"domains": ["demo.example"], "iframe_depth": 3}
+    assert merged["new"] == {"domains": ["new.example"]}
 
 
 def test_njav_ie_extracts_mp4_url_from_webpage() -> None:
@@ -56,6 +134,48 @@ def test_njav_ie_extracts_mp4_url_from_webpage() -> None:
         {
             "url": "https://cdn.example.test/demo.mp4",
             "ext": "mp4",
+            "http_headers": NJAVIE._adult_site_headers(
+                "https://www.njav.com/vi/xvideos/rki-729-uncensored-leak",
+            ),
+        }
+    ]
+
+
+def test_base_extractor_reads_nested_next_data_media_urls(monkeypatch) -> None:
+    extractor = VLXXIE(YoutubeDL({"quiet": True, "no_warnings": True}))
+    monkeypatch.setattr(
+        extractor,
+        "_extract_m3u8_formats",
+        lambda media_url, *_args, **_kwargs: [{"url": media_url, "format_id": "hls"}],
+    )
+
+    result = extractor._extract_from_webpage(
+        "https://vlxx.moi/video/demo-title/3170/",
+        "3170",
+        (FIXTURE_ROOT / "nested_next_data.html").read_text(encoding="utf-8"),
+        iframe_depth=0,
+    )
+
+    assert {item["url"] for item in result["formats"]} == {
+        "https://vlxx.moi/media/demo-360.mp4",
+        "https://cdn.example.test/demo-720.m3u8?token=abc",
+    }
+
+
+def test_base_extractor_reads_initial_state_media_urls() -> None:
+    extractor = NJAVIE(YoutubeDL({"quiet": True, "no_warnings": True}))
+
+    result = extractor._extract_from_webpage(
+        "https://www.njav.com/vi/xvideos/rki-729-uncensored-leak",
+        "rki-729-uncensored-leak",
+        (FIXTURE_ROOT / "state_payload.html").read_text(encoding="utf-8"),
+        iframe_depth=0,
+    )
+
+    assert result["formats"] == [
+        {
+            "url": "https://cdn.example.test/state-video.webm",
+            "ext": "webm",
             "http_headers": NJAVIE._adult_site_headers(
                 "https://www.njav.com/vi/xvideos/rki-729-uncensored-leak",
             ),

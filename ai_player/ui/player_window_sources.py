@@ -543,6 +543,8 @@ class PlayerSourceMixin:
         self._remember_video_url(url)
         forced_full_cache = self._source_filter_forces_video_url_full_cache()
         full_cache = self._effective_video_url_full_cache()
+        if not full_cache and full_cache_override is None and inspect_video_url(url).requires_ytdlp:
+            full_cache = True
         if full_cache_override is not None and not forced_full_cache:
             full_cache = bool(full_cache_override)
         self.statusBar().showMessage(
@@ -573,11 +575,14 @@ class PlayerSourceMixin:
             "keep_telegram_context": keep_telegram_context,
             "browser_fallback_on_unavailable": browser_fallback_on_unavailable,
         }
+        self._video_url_stream_source = None
+        self._set_cache_play_now_enabled(False)
         self._video_url.start(
             url,
             self._config.playback_video_quality,
             full_cache=full_cache,
             cache_dir=self._config.video_cache_dir,
+            play_after_cache_percent=self._config.video_url_play_after_cache_percent if full_cache else 0,
             language_id=self._config.gui_language,
         )
 
@@ -1697,6 +1702,9 @@ class PlayerSourceMixin:
 
     def _video_url_resolved(self, source) -> None:
         self._close_cache_dialog()
+        self._set_cache_status_visible(False)
+        self._video_url_stream_source = None
+        self._set_cache_play_now_enabled(False)
         if self._telegram_open_result_is_stale():
             self._telegram_channel_state.loading_item_key = ""
             QTimer.singleShot(0, self._open_pending_telegram_channel_item)
@@ -1722,6 +1730,28 @@ class PlayerSourceMixin:
             self._dub_button.setChecked(True)
             self._start_dubbing()
         self._play_pending_telegram_navigation(source_path=source.playback_url, require_runtime_match=True)
+
+    def _video_url_stream_ready(self, source) -> None:
+        if self._telegram_open_result_is_stale():
+            return
+        self._video_url_stream_source = source
+        self._set_cache_play_now_enabled(True)
+
+    def _play_video_url_stream_now(self) -> None:
+        source = getattr(self, "_video_url_stream_source", None)
+        if source is None:
+            return
+        self._set_cache_play_now_enabled(False)
+        self._reset_document_state_for_video()
+        self._video_path = source.playback_url
+        self._auto_select_video_aspect_ratio(source)
+        self._load_current_video_for_playback()
+        self._show_video_output()
+        self._sync_telegram_browser_button()
+        label = source.title if source.is_resolved else source.input_url
+        self._source_label.setText(label)
+        self.statusBar().showMessage(self._tr("cache_playing_stream_while_caching"))
+        self._play_active_source()
 
     def _reset_document_state_for_video(self) -> None:
         self._set_document_mode(False)

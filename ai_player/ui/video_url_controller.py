@@ -25,6 +25,7 @@ class VideoUrlController:
         *,
         full_cache: bool,
         cache_dir: str = "",
+        play_after_cache_percent: int = 0,
         language_id: str | None = None,
     ) -> bool:
         if self.is_opening():
@@ -35,11 +36,13 @@ class VideoUrlController:
             playback_quality,
             full_cache=full_cache,
             cache_dir=cache_dir,
+            play_after_cache_percent=play_after_cache_percent,
             language_id=language_id,
             parent=self._owner,
         )
         self._worker = worker
         worker.progress_changed.connect(self._owner._video_cache_progress_changed)
+        worker.stream_ready.connect(self._owner._video_url_stream_ready)
         worker.resolved.connect(self._owner._video_url_resolved)
         worker.failed.connect(self._owner._video_url_failed)
         worker.finished.connect(self.finished)

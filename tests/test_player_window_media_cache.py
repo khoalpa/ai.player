@@ -90,6 +90,34 @@ def test_playback_compat_worker_removes_partial_output_when_stopped(monkeypatch,
     assert not output.with_suffix(".mp4.json").exists()
 
 
+def test_playback_compat_worker_preserves_source_resolution(monkeypatch, tmp_path) -> None:
+    source = tmp_path / "demo.mp4"
+    output = tmp_path / "cached.mp4"
+    source.write_bytes(b"source")
+    captured_command = []
+    worker = player_window_workers.PlaybackCompatibilityWorker(str(source), output, "cache-key")
+
+    class FakeProcess:
+        def wait(self):
+            output.write_bytes(b"cached")
+            return 0
+
+    def fake_popen(command):
+        captured_command.extend(command)
+        return FakeProcess()
+
+    monkeypatch.setattr(player_window_workers, "ffmpeg_executable", lambda: "ffmpeg")
+    monkeypatch.setattr(player_window_workers.subprocess, "Popen", fake_popen)
+
+    worker.run()
+
+    assert "-vf" not in captured_command
+    assert "scale=-2:min(720\\,ih)" not in captured_command
+    assert captured_command[captured_command.index("-crf") + 1] == "18"
+    assert captured_command[captured_command.index("-level:v") + 1] == "5.1"
+    assert captured_command[captured_command.index("-b:a") + 1] == "256k"
+
+
 def test_ytdlp_cache_compatible_video_does_not_need_playback_transcode(monkeypatch, tmp_path) -> None:
     cache_root = tmp_path / "ai-player-sources"
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))

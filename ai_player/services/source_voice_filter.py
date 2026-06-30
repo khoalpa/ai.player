@@ -87,8 +87,8 @@ def source_voice_filter_signature(mode: str, backend: str | None = None, model: 
     if actual_backend in {"ai", "fast"}:
         normalized = actual_backend
     if normalized == "ai":
-        return f"ai-{selected_model}-h264-720p-copy-safe-v2"
-    return "fast-ffmpeg-center-h264-720p-copy-safe-v5"
+        return f"ai-{selected_model}-h264-source-copy-safe-v3"
+    return "fast-ffmpeg-center-h264-source-copy-safe-v6"
 
 
 def source_voice_filter_cached_output_valid(
@@ -321,13 +321,11 @@ def _h264_playback_args() -> list[str]:
         "-profile:v",
         "main",
         "-level:v",
-        "4.0",
+        "5.1",
         "-crf",
-        "20",
+        "18",
         "-pix_fmt",
         "yuv420p",
-        "-vf",
-        "scale=-2:min(720\\,ih)",
     ]
 
 

@@ -28,4 +28,12 @@ function Invoke-NativeCommand {
 Write-Host "Installing yt-dlp adult extractor plugin: $Package"
 Invoke-NativeCommand $Python -m pip install --upgrade $Package
 Invoke-NativeCommand $Python -c "import importlib.util; raise SystemExit(0 if importlib.util.find_spec('yt_dlp_plugins.extractor.adult_sites') else 1)"
+$HostList = & $Python -c "import importlib; m=importlib.import_module('yt_dlp_plugins.extractor.adult_sites'); print(','.join(getattr(m, 'ADULT_SITE_HOSTS', ())))"
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to read adult extractor registry."
+}
+if (-not "$HostList".Trim()) {
+    throw "Adult extractor registry did not expose any hosts."
+}
+Write-Host "Adult extractor hosts: $HostList"
 Write-Host "Adult extractors plugin ready."

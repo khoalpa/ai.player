@@ -109,6 +109,7 @@ class VideoSourceWorker(QThread):
     resolved = Signal(object)
     failed = Signal(str)
     progress_changed = Signal(object)
+    stream_ready = Signal(object)
 
     def __init__(
         self,
@@ -116,6 +117,7 @@ class VideoSourceWorker(QThread):
         playback_quality: str,
         full_cache: bool = True,
         cache_dir: str = "",
+        play_after_cache_percent: int = 0,
         language_id: str | None = None,
         parent=None,
     ) -> None:
@@ -124,8 +126,11 @@ class VideoSourceWorker(QThread):
         self._playback_quality = playback_quality
         self._full_cache = full_cache
         self._cache_dir = cache_dir
+        self._play_after_cache_percent = max(0, min(100, int(play_after_cache_percent or 0)))
         self._language_id = language_id
         self._stop_requested = False
+        self._stream_source = None
+        self._stream_ready_emitted = False
 
     def stop(self) -> None:
         self._stop_requested = True
@@ -133,13 +138,15 @@ class VideoSourceWorker(QThread):
 
     def run(self) -> None:
         try:
+            if self._full_cache and self._play_after_cache_percent > 0:
+                self._prepare_stream_source()
             self.resolved.emit(
                 resolve_video_source(
                     self._url,
                     self._playback_quality,
                     full_cache=self._full_cache,
                     cache_dir=self._cache_dir,
-                    progress_callback=self.progress_changed.emit if self._full_cache else None,
+                    progress_callback=self._progress_changed if self._full_cache else None,
                     cancel_callback=lambda: self._stop_requested or self.isInterruptionRequested(),
                     language_id=self._language_id,
                 )
@@ -148,6 +155,43 @@ class VideoSourceWorker(QThread):
             if not self._stop_requested and not self.isInterruptionRequested():
                 LOGGER.exception("Video source worker failed.")
                 self.failed.emit(redact_secrets(exc))
+
+    def _prepare_stream_source(self) -> None:
+        try:
+            self._stream_source = resolve_video_source(
+                self._url,
+                self._playback_quality,
+                full_cache=False,
+                cache_dir=self._cache_dir,
+                cancel_callback=lambda: self._stop_requested or self.isInterruptionRequested(),
+                language_id=self._language_id,
+            )
+        except Exception:
+            LOGGER.info("Could not prepare early stream URL while caching.", exc_info=True)
+
+    def _progress_changed(self, data) -> None:
+        self.progress_changed.emit(data)
+        if self._stream_ready_emitted or self._stream_source is None:
+            return
+        if _download_percent(data) < self._play_after_cache_percent:
+            return
+        self._stream_ready_emitted = True
+        self.stream_ready.emit(self._stream_source)
+
+
+def _download_percent(data) -> int:
+    if not isinstance(data, dict):
+        return 0
+    downloaded = data.get("downloaded_bytes")
+    total = data.get("total_bytes")
+    try:
+        downloaded_value = float(downloaded)
+        total_value = float(total)
+    except (TypeError, ValueError):
+        return 0
+    if downloaded_value <= 0 or total_value <= 0:
+        return 0
+    return max(0, min(100, int(downloaded_value * 100 / total_value)))
 
 
 class DocumentTranscriptWorker(QThread):
@@ -529,17 +573,15 @@ class PlaybackCompatibilityWorker(QThread):
                 "-profile:v",
                 "main",
                 "-level:v",
-                "4.0",
+                "5.1",
                 "-crf",
-                "23",
+                "18",
                 "-pix_fmt",
                 "yuv420p",
-                "-vf",
-                "scale=-2:min(720\\,ih)",
                 "-c:a",
                 "aac",
                 "-b:a",
-                "160k",
+                "256k",
                 "-ac",
                 "2",
                 "-ar",

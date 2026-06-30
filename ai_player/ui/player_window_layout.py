@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -852,6 +853,8 @@ class PlayerLayoutMixin:
         )
         self._workflow_health_action = QAction(self._tr("workflow_health_title"), self)
         self._workflow_health_action.triggered.connect(self._show_workflow_health)
+        self._adult_health_action = QAction(self._tr("adult_health_title"), self)
+        self._adult_health_action.triggered.connect(self._show_adult_extractor_health)
         self._cache_inspector_action = QAction(self._tr("cache_inspector_title"), self)
         self._cache_inspector_action.triggered.connect(self._show_cache_inspector)
         self._clear_workflow_cache_action = QAction(self._tr("task_center_clear_cache"), self)
@@ -907,6 +910,7 @@ class PlayerLayoutMixin:
             self._advanced_settings_action,
             self._runtime_details_action,
             self._workflow_health_action,
+            self._adult_health_action,
             self._cache_inspector_action,
             self._clear_workflow_cache_action,
         ):
@@ -1385,6 +1389,26 @@ class PlayerLayoutMixin:
         self._time_label.setObjectName("timeLabel")
         self._time_label.setMinimumWidth(104)
 
+        self._cache_status_panel = QFrame()
+        self._cache_status_panel.setObjectName("cacheStatusPanel")
+        cache_status_layout = QHBoxLayout(self._cache_status_panel)
+        cache_status_layout.setContentsMargins(0, 0, 0, 0)
+        cache_status_layout.setSpacing(8)
+        self._cache_status_progress = QProgressBar()
+        self._cache_status_progress.setRange(0, 100)
+        self._cache_status_progress.setValue(0)
+        self._cache_status_progress.setFixedWidth(180)
+        self._cache_status_label = QLabel(self._tr("cache_status_starting"))
+        self._cache_status_label.setWordWrap(False)
+        self._cache_status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._cache_play_now_button = QPushButton(self._tr("cache_play_now"))
+        self._cache_play_now_button.setEnabled(False)
+        self._cache_play_now_button.clicked.connect(self._play_video_url_stream_now)
+        cache_status_layout.addWidget(self._cache_status_progress)
+        cache_status_layout.addWidget(self._cache_status_label, 1)
+        cache_status_layout.addWidget(self._cache_play_now_button)
+        self._cache_status_panel.hide()
+
         self._volume_slider = QSlider(Qt.Horizontal)
         self._volume_slider.setRange(0, 100)
         self._volume_slider.setValue(self._config.original_audio_volume)
@@ -1466,6 +1490,7 @@ class PlayerLayoutMixin:
         display_options_layout.addStretch(1)
         display_options.hide()
         controls_layout.addLayout(timeline_layout)
+        controls_layout.addWidget(self._cache_status_panel)
         controls_layout.addLayout(playback_layout)
         controls_layout.addWidget(display_options)
 

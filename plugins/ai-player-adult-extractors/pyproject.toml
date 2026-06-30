@@ -14,3 +14,6 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 include = ["yt_dlp_plugins*"]
+
+[tool.setuptools.package-data]
+"yt_dlp_plugins.extractor" = ["adult_sites_registry.json"]
