@@ -115,6 +115,9 @@ from ai_player.workers.export_utils import (
     _translate_texts,
     _trim_leading_silence,
     _tts_disabled,
+    export_rejects_audio_source,
+    export_requires_asr,
+    export_uses_transcript_source,
 )
 from ai_player.workers.export_utils import (
     _source_cues_from_segments as _source_cues_from_segments_data,
@@ -281,14 +284,14 @@ class DubbingExportWorker(QThread):
             self._tts_provider = create_tts_provider(self._config)
             self._translator = get_shared_vietnamese_translator(self._config)
             self._set_progress(8)
-            if self._config.audio_source in {"system", "microphone", "system_microphone", "subtitle"}:
+            if export_rejects_audio_source(self._config.audio_source):
                 raise RuntimeError(self._tr("export_error_source_unsupported"))
-            if self._config.audio_source not in {"transcript", "document_editor"}:
+            if export_requires_asr(self._config.audio_source):
                 self._validate_whisper_model()
             self._temp_dir = Path(tempfile.mkdtemp(prefix="ai-player-export-"))
             self._output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            if self._config.audio_source in {"transcript", "document_editor"}:
+            if export_uses_transcript_source(self._config.audio_source):
                 self._emit_progress("export_progress_reading_transcript")
                 self._set_progress(12)
                 cues = self._build_transcript_cues()

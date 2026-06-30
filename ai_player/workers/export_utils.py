@@ -41,6 +41,23 @@ class SegmentExportItem:
     duration_seconds: float
 
 
+EXPORT_TRANSCRIPT_AUDIO_SOURCES = {"transcript", "document_editor"}
+EXPORT_UNSUPPORTED_LIVE_AUDIO_SOURCES = {"system", "microphone", "system_microphone", "subtitle"}
+
+
+def export_uses_transcript_source(audio_source: object) -> bool:
+    return str(audio_source or "").strip().lower() in EXPORT_TRANSCRIPT_AUDIO_SOURCES
+
+
+def export_requires_asr(audio_source: object) -> bool:
+    source = str(audio_source or "").strip().lower()
+    return bool(source) and source not in EXPORT_TRANSCRIPT_AUDIO_SOURCES
+
+
+def export_rejects_audio_source(audio_source: object) -> bool:
+    return str(audio_source or "").strip().lower() in EXPORT_UNSUPPORTED_LIVE_AUDIO_SOURCES
+
+
 def _ffmpeg_escape(path: Path) -> str:
     return concat_escape(path)
 

@@ -28,6 +28,10 @@ AI Player là ứng dụng Windows dùng PySide6 để xem video, đọc tài li
 
 ## Cài Đặt
 
+Các lệnh dưới đây cố ý dùng `.\.venv\Scripts\python.exe` thay vì `python`.
+Trên một số máy Windows, `python` không có trong `PATH` hoặc trỏ tới Microsoft
+Store alias; dùng interpreter trong `.venv` giúp chạy đúng môi trường của dự án.
+
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip

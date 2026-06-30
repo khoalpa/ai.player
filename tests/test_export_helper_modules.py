@@ -68,6 +68,26 @@ def test_full_quality_audio_args_preserve_stereo_pcm(tmp_path) -> None:
     assert args[-1] == str(tmp_path / "source-full.wav")
 
 
+@pytest.mark.parametrize("source", ["transcript", "document_editor", " Transcript "])
+def test_export_audio_source_helpers_identify_transcript_sources(source: str) -> None:
+    assert export_worker.export_uses_transcript_source(source)
+    assert not export_worker.export_requires_asr(source)
+    assert not export_worker.export_rejects_audio_source(source)
+
+
+@pytest.mark.parametrize("source", ["system", "microphone", "system_microphone", "subtitle"])
+def test_export_audio_source_helpers_reject_live_sources(source: str) -> None:
+    assert export_worker.export_rejects_audio_source(source)
+    assert export_worker.export_requires_asr(source)
+    assert not export_worker.export_uses_transcript_source(source)
+
+
+def test_export_audio_source_helpers_require_asr_for_original_media() -> None:
+    assert export_worker.export_requires_asr("original")
+    assert not export_worker.export_rejects_audio_source("original")
+    assert not export_worker.export_uses_transcript_source("original")
+
+
 def test_document_video_concat_extends_last_page_to_audio_duration(tmp_path) -> None:
     pages = [
         SimpleNamespace(duration_seconds=1.0),

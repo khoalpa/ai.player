@@ -87,3 +87,21 @@ def test_release_verify_runs_required_short_gate_and_ordered_builds() -> None:
     assert "smoke_launch_app.ps1" in script
     assert "release_verify.ps1" in checklist
     assert "workflow_smoke_baseline.json" in checklist
+
+
+def test_release_signing_contract_is_documented_and_guarded() -> None:
+    build_script = (PROJECT_ROOT / "scripts" / "build_portable.ps1").read_text(encoding="utf-8")
+    verify_script = (PROJECT_ROOT / "scripts" / "release_verify.ps1").read_text(encoding="utf-8")
+    profiles = (PROJECT_ROOT / "docs" / "release_profiles.md").read_text(encoding="utf-8")
+    checklist = (PROJECT_ROOT / "docs" / "release_checklist.md").read_text(encoding="utf-8")
+
+    assert "[switch]$RequireSignature" in build_script
+    assert "[switch]$RequireSignature" in verify_script
+    assert "No code-signing certificates found" in build_script
+    assert "Get-AuthenticodeSignature" in build_script
+    assert "Assert-ValidAuthenticodeSignatures" in build_script
+    assert "Enterprise Application Control policies can block unsigned builds" in build_script
+    assert '$BuildArgs += "-RequireSignature"' in verify_script
+    assert "require_signature = [bool]$RequireSignature" in verify_script
+    assert "Public or enterprise release: require `-RequireSignature`" in profiles
+    assert '"dist\\portable\\AI Player Lite\\AI Player\\AI Player.exe"' in checklist
