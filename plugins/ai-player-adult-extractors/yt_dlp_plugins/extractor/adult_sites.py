@@ -265,11 +265,21 @@ class _AdultSiteBaseIE(InfoExtractor):
             |
             (?P<bare>https?://[^\s"'<>\\]+\.(?:m3u8|mpd|mp4|m4v|webm|vl)(?:\?[^\s"'<>\\]+)?)
             |
-            (?:contentUrl|content_url|downloadUrl|download_url|file|hls|hlsUrl|hls_url|manifest|mp4Url|mp4_url|playUrl|play_url|src|source|streamUrl|stream_url|url|videoSrc|video_src|videoUrl|video_url)\s*[:=]\s*["'](?P<named>[^"']+\.(?:m3u8|mpd|mp4|m4v|webm|vl)(?:\?[^"']*)?)["']
+            (?:contentUrl|content_url|dashUrl|dash_url|downloadUrl|download_url|file|fileUrl|file_url|hls|hlsUrl|hls_url|manifest|master|masterUrl|master_url|media|mp4Url|mp4_url|playUrl|play_url|src|source|sourceUrl|source_url|stream|streamUrl|stream_url|url|video|videoSrc|video_src|videoUrl|video_url)\s*[:=]\s*["'](?P<named>[^"']+\.(?:m3u8|mpd|mp4|m4v|webm|vl)(?:\?[^"']*)?)["']
+            |
+            (?:file|quality|src|source|video)[_-]?(?:\d{3,4}p?|hd|sd)\s*[:=]\s*["'](?P<quality>[^"']+\.(?:m3u8|mpd|mp4|m4v|webm|vl)(?:\?[^"']*)?)["']
+            |
+            \.src\(\s*["'](?P<src_call>[^"']+\.(?:m3u8|mpd|mp4|m4v|webm|vl)(?:\?[^"']*)?)["']\s*\)
             """,
             webpage,
         ):
-            candidates.append(match.group("quoted") or match.group("bare") or match.group("named"))
+            candidates.append(
+                match.group("quoted")
+                or match.group("bare")
+                or match.group("named")
+                or match.group("quality")
+                or match.group("src_call")
+            )
 
         for payload in self._json_payloads_from_webpage(webpage):
             candidates.extend(self._media_candidates_from_json(page_url, payload))
@@ -324,6 +334,18 @@ class _AdultSiteBaseIE(InfoExtractor):
                 )
                 if data is not None:
                     payloads.append(data)
+            for player_match in re.finditer(
+                r"""(?is)(?:jwplayer\s*\([^)]*\)\s*\.\s*setup|videojs\s*\([^)]*\)\s*\.\s*src)\s*\(\s*(?P<json>\{.*?\}|\[.*?\])\s*\)""",
+                body,
+            ):
+                data = self._parse_json(
+                    player_match.group("json"),
+                    "player payload",
+                    transform_source=js_to_json,
+                    fatal=False,
+                )
+                if data is not None:
+                    payloads.append(data)
         return payloads
 
     def _media_candidates_from_json(self, page_url: str, value: object) -> list[str]:
@@ -355,23 +377,47 @@ class _AdultSiteBaseIE(InfoExtractor):
             return []
         looks_like_media_key = key in {
             "contenturl",
+            "content_url",
+            "dashurl",
+            "dash_url",
+            "downloadurl",
+            "download_url",
             "embedurl",
             "file",
+            "files",
+            "fileurl",
+            "file_url",
             "hls",
             "hlsurl",
+            "hls_url",
             "manifest",
+            "master",
+            "masterurl",
+            "master_url",
+            "media",
             "mp4",
             "mp4url",
+            "mp4_url",
             "playurl",
+            "play_url",
             "src",
             "source",
+            "sources",
+            "sourceurl",
+            "source_url",
             "stream",
+            "streams",
             "streamurl",
+            "stream_url",
             "url",
+            "video",
             "videosrc",
+            "video_src",
             "videourl",
             "video_url",
-        }
+            "videosources",
+            "video_sources",
+        } or bool(re.match(r"(?:file|quality|src|source|video)_?(?:\d{3,4}p?|hd|sd)$", key))
         if looks_like_media_key and re.search(r"\.(?:m3u8|mpd|mp4|m4v|webm|mov|vl)(?:[?#]|$)", text, flags=re.I):
             return [text]
         return [
@@ -389,9 +435,9 @@ class _AdultSiteBaseIE(InfoExtractor):
             if cleaned:
                 return cleaned
         for pattern in (
-            r"""(?is)<iframe[^>]+(?:src|data-src|data-embed|data-player|data-player-url)=["'](?P<url>[^"']+)["']""",
+            r"""(?is)<iframe[^>]+(?:src|data-src|data-embed|data-embed-url|data-iframe|data-player|data-player-src|data-player-url)=["'](?P<url>[^"']+)["']""",
             r"""(?is)<embed[^>]+(?:src|data-src)=["'](?P<url>[^"']+)["']""",
-            r"""(?is)(?:embedUrl|embed_url|iframeUrl|iframe_url|playerUrl|player_url)\s*[:=]\s*["'](?P<url>[^"']+)["']""",
+            r"""(?is)(?:embedUrl|embed_url|iframeUrl|iframe_url|playerSrc|player_src|playerUrl|player_url)\s*[:=]\s*["'](?P<url>[^"']+)["']""",
         ):
             for match in re.finditer(pattern, webpage):
                 iframe_url = self._clean_media_url(page_url, match.group("url"))

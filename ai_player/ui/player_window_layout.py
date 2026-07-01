@@ -855,6 +855,8 @@ class PlayerLayoutMixin:
         self._workflow_health_action.triggered.connect(self._show_workflow_health)
         self._adult_health_action = QAction(self._tr("adult_health_title"), self)
         self._adult_health_action.triggered.connect(self._show_adult_extractor_health)
+        self._adult_hosts_action = QAction(self._tr("adult_hosts_title"), self)
+        self._adult_hosts_action.triggered.connect(self._show_adult_supported_hosts)
         self._cache_inspector_action = QAction(self._tr("cache_inspector_title"), self)
         self._cache_inspector_action.triggered.connect(self._show_cache_inspector)
         self._clear_workflow_cache_action = QAction(self._tr("task_center_clear_cache"), self)
@@ -911,6 +913,7 @@ class PlayerLayoutMixin:
             self._runtime_details_action,
             self._workflow_health_action,
             self._adult_health_action,
+            self._adult_hosts_action,
             self._cache_inspector_action,
             self._clear_workflow_cache_action,
         ):
@@ -2647,6 +2650,8 @@ class PlayerLayoutMixin:
             ("_advanced_settings_action", "advanced_tab"),
             ("_runtime_details_action", "runtime_tab"),
             ("_workflow_health_action", "workflow_health_title"),
+            ("_adult_health_action", "adult_health_title"),
+            ("_adult_hosts_action", "adult_hosts_title"),
             ("_cache_inspector_action", "cache_inspector_title"),
             ("_clear_workflow_cache_action", "task_center_clear_cache"),
             ("_fullscreen_action", "fullscreen"),

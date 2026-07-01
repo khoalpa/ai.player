@@ -6,11 +6,14 @@ from pathlib import Path
 
 from yt_dlp import YoutubeDL
 
+from ai_player.services.adult_extractors import supported_adult_host_summary, supported_adult_hosts
+
 PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "plugins" / "ai-player-adult-extractors"
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
 ADULT_SITES = import_module("yt_dlp_plugins.extractor.adult_sites")
+ADULT_PROBE = import_module("scripts.probe_adult_site")
 VLXXIE = ADULT_SITES.VLXXIE
 NJAVIE = ADULT_SITES.NJAVIE
 GenericAdultIE = ADULT_SITES.GenericAdultIE
@@ -42,13 +45,56 @@ def test_adult_site_registry_lists_internal_hosts() -> None:
     assert "vlxx.*" in ADULT_SITES.ADULT_SITE_HOSTS
     assert "eporner.com" in ADULT_SITES.ADULT_SITE_HOSTS
     assert "pornhub.com" in ADULT_SITES.ADULT_SITE_HOSTS
+    assert "manyvids.com" in ADULT_SITES.ADULT_SITE_HOSTS
+    assert "thisvid.com" in ADULT_SITES.ADULT_SITE_HOSTS
+    assert "fc2.com" in ADULT_SITES.ADULT_SITE_HOSTS
+    assert "jable.tv" in ADULT_SITES.ADULT_SITE_HOSTS
+    assert "hellporno.com" in ADULT_SITES.ADULT_SITE_HOSTS
+    assert "members.nubiles-porn.com" in ADULT_SITES.ADULT_SITE_HOSTS
+    assert "txxx.com" in ADULT_SITES.ADULT_SITE_HOSTS
+    assert "myvidster.com" in ADULT_SITES.ADULT_SITE_HOSTS
+    assert "videos.toypics.net" in ADULT_SITES.ADULT_SITE_HOSTS
     assert ADULT_SITES.SITE_REGISTRY["njav"]["iframe_depth"] == 2
     assert ADULT_SITES.SITE_REGISTRY["eporner"]["delegate_to_ytdlp"] is True
+    assert ADULT_SITES.SITE_REGISTRY["manyvids"]["delegate_to_ytdlp"] is True
+    assert ADULT_SITES.SITE_REGISTRY["hellporno"]["delegate_to_ytdlp"] is True
+    assert ADULT_SITES.SITE_REGISTRY["myvidster"]["delegate_to_ytdlp"] is True
+    assert ADULT_SITES.SITE_REGISTRY["jable"]["iframe_depth"] == 2
+
+
+def test_supported_adult_hosts_service_lists_registry_modes() -> None:
+    rows = {row.site_key: row for row in supported_adult_hosts()}
+    summary = supported_adult_host_summary()
+
+    assert rows["hellporno"].mode == "yt-dlp native"
+    assert "hellporno.com" in rows["hellporno"].domains
+    assert "delegated to yt-dlp" in rows["hellporno"].description
+    assert rows["hellporno"].open_url == "https://hellporno.com"
+    assert rows["jable"].mode == "generic"
+    assert "JAV/Asia" in rows["jable"].description
+    assert rows["jable"].iframe_depth == 2
+    assert rows["jable"].open_url == "https://jable.tv"
+    assert rows["vlxx"].open_url == ""
+    assert summary["sites"] == len(rows)
+    assert summary["hosts"] >= len(rows)
+    assert summary["delegate"] > summary["generic"]
 
 
 def test_generic_adult_ie_skips_native_ytdlp_delegate_hosts() -> None:
     assert not GenericAdultIE.suitable("https://www.eporner.com/video-demo/demo-title/")
     assert not GenericAdultIE.suitable("https://www.pornhub.com/view_video.php?viewkey=demo")
+    assert not GenericAdultIE.suitable("https://www.manyvids.com/Video/123/demo/")
+    assert not GenericAdultIE.suitable("https://video.fc2.com/en/content/20200101demo/")
+    assert not GenericAdultIE.suitable("https://hellporno.com/videos/demo/")
+    assert not GenericAdultIE.suitable("https://members.nubiles-porn.com/video/watch/12345/demo")
+    assert not GenericAdultIE.suitable("https://txxx.com/videos/12345/demo/")
+    assert not GenericAdultIE.suitable("https://www.myvidster.com/video/12345")
+
+
+def test_generic_adult_ie_matches_jav_asia_registry_hosts() -> None:
+    assert GenericAdultIE.suitable("https://jable.tv/videos/demo/")
+    assert GenericAdultIE.suitable("https://netflav.com/video?id=demo")
+    assert GenericAdultIE.suitable("https://avgle.com/video/123/demo")
 
 
 def test_site_profile_adds_language_header() -> None:
@@ -127,7 +173,10 @@ def test_generic_adult_ie_reads_common_html_and_json_media_urls(monkeypatch) -> 
         <html>
           <head><meta itemprop="contentUrl" content="/media/meta-demo.mp4"></head>
           <body>
-            <script type="application/json">{"streamUrl":"/media/json-demo.webm"}</script>
+            <script type="application/json">{"streamUrl":"/media/json-demo.webm","sources":"/media/source-demo.mp4"}</script>
+            <script>jwplayer("demo").setup({sources: [{file: "/media/jwplayer-demo.mp4", label: "720p"}]});</script>
+            <script>videojs("demo").src([{src: "/media/videojs-demo.mp4", type: "video/mp4"}]);</script>
+            <script>quality_720p = "/media/quality-demo.mp4";</script>
           </body>
         </html>
         """,
@@ -137,6 +186,10 @@ def test_generic_adult_ie_reads_common_html_and_json_media_urls(monkeypatch) -> 
     assert {item["url"] for item in result["formats"]} == {
         "https://common-player.example/media/meta-demo.mp4",
         "https://common-player.example/media/json-demo.webm",
+        "https://common-player.example/media/source-demo.mp4",
+        "https://common-player.example/media/jwplayer-demo.mp4",
+        "https://common-player.example/media/videojs-demo.mp4",
+        "https://common-player.example/media/quality-demo.mp4",
     }
 
 
@@ -146,10 +199,91 @@ def test_generic_adult_ie_reads_common_iframe_attributes() -> None:
     assert (
         extractor._find_iframe_url(
             "https://frame.example/watch/demo",
-            """<iframe data-player-url="/player/demo"></iframe>""",
+            """<iframe data-player-src="/player/demo"></iframe>""",
         )
         == "https://frame.example/player/demo"
     )
+
+
+def test_probe_registry_draft_delegates_to_native_ytdlp() -> None:
+    draft = ADULT_PROBE._registry_draft(
+        "eporner",
+        "eporner.com",
+        accept_language="en-US,en;q=0.9",
+        iframe_url=None,
+        native_ytdlp_extractors=["eporner"],
+    )
+
+    assert draft == {"eporner": {"domains": ["eporner.com"], "delegate_to_ytdlp": True}}
+    assert ADULT_PROBE._suggested_registry_mode(["eporner"]) == "delegate_to_ytdlp"
+
+
+def test_probe_registry_draft_uses_generic_when_no_native_extractor() -> None:
+    draft = ADULT_PROBE._registry_draft(
+        "new_site",
+        "new-site.example",
+        accept_language="en-US,en;q=0.9",
+        iframe_url="https://player.example/embed/demo",
+        native_ytdlp_extractors=[],
+    )
+
+    assert draft == {
+        "new_site": {
+            "domains": ["new-site.example"],
+            "iframe_depth": 2,
+            "accept_language": "en-US,en;q=0.9",
+            "media_patterns": [],
+            "iframe_patterns": [],
+        }
+    }
+    assert ADULT_PROBE._suggested_registry_mode([]) == "generic"
+
+
+def test_probe_native_ytdlp_candidates_ignore_plugin_and_generic_extractors(monkeypatch) -> None:
+    class NativeIE:
+        IE_NAME = "native_site"
+        __module__ = "yt_dlp.extractor.native_site"
+
+        @classmethod
+        def suitable(cls, _url):
+            return True
+
+    class PluginIE:
+        IE_NAME = "plugin_site"
+        __module__ = "yt_dlp_plugins.extractor.plugin_site"
+
+        @classmethod
+        def suitable(cls, _url):
+            return True
+
+    class GenericIE:
+        IE_NAME = "generic"
+        __module__ = "yt_dlp.extractor.generic"
+
+        @classmethod
+        def suitable(cls, _url):
+            return True
+
+    class NonMatchingIE:
+        IE_NAME = "non_matching"
+        __module__ = "yt_dlp.extractor.non_matching"
+
+        @classmethod
+        def suitable(cls, _url):
+            return False
+
+    class FakeYoutubeDL:
+        def __init__(self, _options):
+            self._ies = {
+                "Native": NativeIE,
+                "Plugin": PluginIE,
+                "Generic": GenericIE,
+                "NonMatching": NonMatchingIE,
+            }
+
+    monkeypatch.setattr(ADULT_PROBE, "YoutubeDL", FakeYoutubeDL)
+
+    assert ADULT_PROBE._matching_native_ytdlp_extractors("https://native.example/watch/demo") == ["native_site"]
 
 
 def test_site_registry_merge_extends_profiles() -> None:

@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -25,6 +25,11 @@ from PySide6.QtWidgets import (
 )
 
 from ai_player.core.config import PROJECT_ROOT, RUNTIME_DIR
+from ai_player.services.adult_extractors import (
+    AdultHostSupport,
+    supported_adult_host_summary,
+    supported_adult_hosts,
+)
 from ai_player.services.asr import asr_transcript_cache_stats, clear_asr_transcript_cache
 from ai_player.services.tts_base import clear_tts_cache, tts_cache_stats
 from ai_player.services.video_source import CACHE_MAX_AGE_SECONDS, default_video_cache_root
@@ -616,6 +621,97 @@ class PlayerTaskCenterMixin:
                 return "\n".join(lines)
         stderr = str(result.stderr or "").strip()
         return "\n\n".join(part for part in (text, stderr, f"exit={result.returncode}") if part)
+
+    def _show_adult_supported_hosts(self) -> None:
+        rows = supported_adult_hosts()
+        summary = supported_adult_host_summary()
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._tr("adult_hosts_title"))
+        layout = QVBoxLayout(dialog)
+        intro = QLabel(
+            self._tr("adult_hosts_summary").format(
+                sites=summary["sites"],
+                hosts=summary["hosts"],
+                delegate=summary["delegate"],
+                generic=summary["generic"],
+                site_specific=summary["site_specific"],
+            ),
+            dialog,
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        table = QTableWidget(0, 6, dialog)
+        table.setHorizontalHeaderLabels(
+            [
+                self._tr("adult_hosts_open"),
+                self._tr("adult_hosts_site"),
+                self._tr("adult_hosts_domains"),
+                self._tr("adult_hosts_intro"),
+                self._tr("adult_hosts_mode"),
+                self._tr("adult_hosts_notes"),
+            ]
+        )
+        table.setRowCount(len(rows))
+        for row, support in enumerate(rows):
+            table.setCellWidget(row, 0, self._adult_host_open_button(support))
+            values = self._adult_host_row_values(support)
+            for column, value in enumerate(values, start=1):
+                item = QTableWidgetItem(value)
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                table.setItem(row, column, item)
+        table.resizeColumnsToContents()
+        table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(table, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dialog)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.resize(1080, 560)
+        dialog.exec()
+
+    def _adult_host_row_values(self, support: AdultHostSupport) -> tuple[str, str, str, str, str]:
+        notes = []
+        if support.iframe_depth is not None:
+            notes.append(f"iframe_depth={support.iframe_depth}")
+        if support.accept_language:
+            notes.append(f"lang={support.accept_language}")
+        return (
+            support.site_key,
+            ", ".join(support.domains),
+            support.description,
+            self._adult_host_mode_label(support.mode),
+            "; ".join(notes),
+        )
+
+    def _adult_host_open_button(self, support: AdultHostSupport) -> QPushButton:
+        button = QPushButton(self._tr("adult_hosts_open"))
+        button.setEnabled(bool(support.open_url))
+        if support.open_url:
+            button.setToolTip(support.open_url)
+            button.clicked.connect(lambda _checked=False, url=support.open_url: self._open_adult_host_url(url))
+        return button
+
+    def _open_adult_host_url(self, url: str) -> None:
+        opener = getattr(self, "_open_video_url_in_browser", None)
+        if callable(opener) and opener(url):
+            return
+        placeholder = getattr(self, "_video_placeholder", None)
+        media_stack = getattr(self, "_media_stack", None)
+        set_url = getattr(placeholder, "setUrl", None)
+        if callable(set_url):
+            set_url(QUrl(url))
+            if media_stack is not None:
+                media_stack.setCurrentWidget(placeholder)
+            sync = getattr(self, "_sync_media_browser_state", None)
+            if callable(sync):
+                sync()
+
+    def _adult_host_mode_label(self, mode: str) -> str:
+        labels = {
+            "yt-dlp native": self._tr("adult_hosts_mode_ytdlp"),
+            "generic": self._tr("adult_hosts_mode_generic"),
+            "site-specific": self._tr("adult_hosts_mode_specific"),
+        }
+        return labels.get(mode, mode)
 
     def _workflow_health_action_label(self) -> str:
         title = self._tr("workflow_health_title")

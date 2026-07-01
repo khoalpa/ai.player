@@ -41,6 +41,8 @@ def main() -> int:
     media_urls = extractor._find_media_urls(args.url, redacted_html)
     iframe_url = extractor._find_iframe_url(args.url, redacted_html)
     json_payload_count = len(extractor._json_payloads_from_webpage(redacted_html))
+    plugin_candidates = _matching_extractors(args.url)
+    native_candidates = _matching_native_ytdlp_extractors(args.url)
 
     host = _normalized_host(args.url)
     site_key = args.site_key or re.sub(r"[^a-z0-9]+", "_", host).strip("_") or "adult_site"
@@ -49,23 +51,23 @@ def main() -> int:
     report_path = output_dir / f"{site_key}.probe.json"
 
     html_path.write_text(redacted_html, encoding="utf-8")
-    draft = {
-        site_key: {
-            "domains": [host],
-            "iframe_depth": 2 if iframe_url else 1,
-            "accept_language": args.accept_language,
-            "media_patterns": [],
-            "iframe_patterns": [],
-        }
-    }
+    draft = _registry_draft(
+        site_key,
+        host,
+        accept_language=args.accept_language,
+        iframe_url=iframe_url,
+        native_ytdlp_extractors=native_candidates,
+    )
     draft_path.write_text(json.dumps(draft, indent=2, ensure_ascii=False), encoding="utf-8")
     report = {
         "url": _redact_sensitive_values(args.url),
         "host": host,
         "html_fixture": str(html_path),
         "registry_draft": str(draft_path),
+        "suggested_registry_mode": _suggested_registry_mode(native_candidates),
         "json_payload_count": json_payload_count,
-        "extractor_candidates": _matching_extractors(args.url),
+        "extractor_candidates": plugin_candidates,
+        "native_ytdlp_extractors": native_candidates,
         "iframe_candidate": iframe_url,
         "media_candidates": media_urls,
     }
@@ -102,15 +104,65 @@ def _matching_extractors(url: str) -> list[str]:
     names = []
     for name in getattr(ADULT_SITES, "__all__", ()):
         extractor = getattr(ADULT_SITES, name, None)
-        suitable = getattr(extractor, "suitable", None)
-        if not callable(suitable):
+        if _extractor_suitable(extractor, url):
+            names.append(str(name))
+    return sorted(dict.fromkeys(names))
+
+
+def _matching_native_ytdlp_extractors(url: str) -> list[str]:
+    try:
+        extractors = YoutubeDL({"quiet": True, "no_warnings": True})._ies.values()
+    except Exception:
+        return []
+    names = []
+    for extractor in extractors:
+        module_name = str(getattr(extractor, "__module__", ""))
+        ie_name = str(getattr(extractor, "IE_NAME", "") or "")
+        if not ie_name or ie_name == "generic" or module_name.startswith("yt_dlp_plugins."):
             continue
-        try:
-            if suitable(url):
-                names.append(str(name))
-        except Exception:
-            continue
-    return names
+        if _extractor_suitable(extractor, url):
+            names.append(ie_name)
+    return sorted(dict.fromkeys(names))
+
+
+def _extractor_suitable(extractor: object, url: str) -> bool:
+    suitable = getattr(extractor, "suitable", None)
+    if not callable(suitable):
+        return False
+    try:
+        return bool(suitable(url))
+    except Exception:
+        return False
+
+
+def _registry_draft(
+    site_key: str,
+    host: str,
+    *,
+    accept_language: str,
+    iframe_url: str | None,
+    native_ytdlp_extractors: list[str],
+) -> dict[str, dict[str, object]]:
+    if native_ytdlp_extractors:
+        return {
+            site_key: {
+                "domains": [host],
+                "delegate_to_ytdlp": True,
+            }
+        }
+    return {
+        site_key: {
+            "domains": [host],
+            "iframe_depth": 2 if iframe_url else 1,
+            "accept_language": accept_language,
+            "media_patterns": [],
+            "iframe_patterns": [],
+        }
+    }
+
+
+def _suggested_registry_mode(native_ytdlp_extractors: list[str]) -> str:
+    return "delegate_to_ytdlp" if native_ytdlp_extractors else "generic"
 
 
 def _redact_sensitive_values(value: str) -> str:

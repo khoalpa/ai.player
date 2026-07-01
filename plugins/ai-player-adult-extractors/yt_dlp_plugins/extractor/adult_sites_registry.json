@@ -129,5 +129,142 @@
   "camsoda": {
     "domains": ["camsoda.com"],
     "delegate_to_ytdlp": true
+  },
+  "manyvids": {
+    "domains": ["manyvids.com"],
+    "delegate_to_ytdlp": true
+  },
+  "thisvid": {
+    "domains": ["thisvid.com"],
+    "delegate_to_ytdlp": true
+  },
+  "tube8": {
+    "domains": ["tube8.com"],
+    "delegate_to_ytdlp": true
+  },
+  "youjizz": {
+    "domains": ["youjizz.com"],
+    "delegate_to_ytdlp": true
+  },
+  "porntube": {
+    "domains": ["porntube.com"],
+    "delegate_to_ytdlp": true
+  },
+  "nuvid": {
+    "domains": ["nuvid.com"],
+    "delegate_to_ytdlp": true
+  },
+  "pornoxo": {
+    "domains": ["pornoxo.com"],
+    "delegate_to_ytdlp": true
+  },
+  "rule34video": {
+    "domains": ["rule34video.com"],
+    "delegate_to_ytdlp": true
+  },
+  "fc2": {
+    "domains": ["fc2.com"],
+    "delegate_to_ytdlp": true
+  },
+  "jable": {
+    "domains": ["jable.tv"],
+    "iframe_depth": 2,
+    "accept_language": "en-US,en;q=0.9"
+  },
+  "netflav": {
+    "domains": ["netflav.com"],
+    "iframe_depth": 2,
+    "accept_language": "en-US,en;q=0.9"
+  },
+  "avgle": {
+    "domains": ["avgle.com"],
+    "iframe_depth": 2,
+    "accept_language": "en-US,en;q=0.9"
+  },
+  "alphaporno": {
+    "domains": ["alphaporno.com"],
+    "delegate_to_ytdlp": true
+  },
+  "hellporno": {
+    "domains": ["hellporno.com", "hellporno.net"],
+    "delegate_to_ytdlp": true
+  },
+  "lovehomeporn": {
+    "domains": ["lovehomeporn.com"],
+    "delegate_to_ytdlp": true
+  },
+  "nubilesporn": {
+    "domains": ["members.nubiles-porn.com"],
+    "delegate_to_ytdlp": true
+  },
+  "peekvids": {
+    "domains": ["peekvids.com"],
+    "delegate_to_ytdlp": true
+  },
+  "playvids": {
+    "domains": ["playvids.com"],
+    "delegate_to_ytdlp": true
+  },
+  "pornbox": {
+    "domains": ["pornbox.com"],
+    "delegate_to_ytdlp": true
+  },
+  "pornerbros": {
+    "domains": ["pornerbros.com"],
+    "delegate_to_ytdlp": true
+  },
+  "pornflip": {
+    "domains": ["pornflip.com"],
+    "delegate_to_ytdlp": true
+  },
+  "pornotube": {
+    "domains": ["pornotube.com"],
+    "delegate_to_ytdlp": true
+  },
+  "porntop": {
+    "domains": ["porntop.com"],
+    "delegate_to_ytdlp": true
+  },
+  "txxx": {
+    "domains": [
+      "hclips.com",
+      "hdzog.com",
+      "hdzog.tube",
+      "hotmovs.com",
+      "hotmovs.tube",
+      "inporn.com",
+      "privatehomeclips.com",
+      "tubepornclassic.com",
+      "txxx.com",
+      "txxx.tube",
+      "upornia.com",
+      "upornia.tube",
+      "vjav.com",
+      "vjav.tube",
+      "vxxx.com",
+      "voyeurhit.com",
+      "voyeurhit.tube"
+    ],
+    "delegate_to_ytdlp": true
+  },
+  "xxxymovies": {
+    "domains": ["xxxymovies.com"],
+    "delegate_to_ytdlp": true
+  },
+  "zenporn": {
+    "domains": ["zenporn.com"],
+    "delegate_to_ytdlp": true
+  },
+  "myvidster": {
+    "domains": ["myvidster.com"],
+    "delegate_to_ytdlp": true
+  },
+  "murrtube": {
+    "domains": ["murrtube.net"],
+    "delegate_to_ytdlp": true
+  },
+  "toypics": {
+    "domains": ["videos.toypics.net"],
+    "delegate_to_ytdlp": true
   }
 }

@@ -29,6 +29,10 @@ Add a new site without code changes:
 
 2. Review the redacted HTML fixture and generated registry draft under
    `data\tmp\adult-site-probe`.
+   When upstream `yt-dlp` already has a matching native extractor, the probe
+   marks the draft with `"delegate_to_ytdlp": true`; otherwise it creates a
+   generic extractor draft with `iframe_depth`, `media_patterns`, and
+   `iframe_patterns`.
 3. Copy the registry entry into either:
    - `yt_dlp_plugins/extractor/adult_sites_registry.json` for committed/shared sites.
    - `data/config/private/adult_sites.local.json` for private local-only sites.
@@ -37,7 +41,9 @@ Add a new site without code changes:
 
 The generic parser already checks common HTML5 and player patterns such as
 `contentUrl`, `streamUrl`, `hlsUrl`, `mp4Url`, `videoSrc`, media attributes, and
-`data-player-url` iframe embeds.
+`data-player-url` iframe embeds. It also handles common `jwplayer().setup(...)`
+and `videojs().src(...)` payloads, quality keys such as `quality_720p`, and
+iframe attributes like `data-iframe`, `data-embed-url`, and `data-player-src`.
 
 Example local registry:
 
@@ -59,6 +65,14 @@ API, multi-step player, login-only flow, or anti-bot behavior.
 For hosts already supported by upstream `yt-dlp`, add the domains to the registry
 with `"delegate_to_ytdlp": true`. This lets AI Player accept the URL and pass it
 to the native `yt-dlp` extractor instead of the generic adult parser.
+Current delegated host groups include mainstream tube/creator sites such as
+Eporner, ManyVids, ThisVid, Tube8, YouJizz, PornTube, Nuvid, PornoXO,
+Rule34Video, FC2, AlphaPorno, HellPorno, LoveHomePorn, NubilesPorn, PeekVids,
+PlayVids, Pornbox, PornerBros, PornFlip, Pornotube, PornTop, Txxx-family hosts,
+XXXYMovies, ZenPorn, MyVidster, Murrtube, Toypics, and the previously added major
+tube/live hosts. JAV/Asia hosts without a native extractor should start as
+generic registry entries and graduate to a site-specific extractor only when
+probing shows token or multi-step player requirements.
 
 Run the source/dev app with the private host list:
 
