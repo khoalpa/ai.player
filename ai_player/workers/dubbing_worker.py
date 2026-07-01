@@ -123,10 +123,12 @@ class DubbingWorker(QThread):
         get_time_ms: Callable[[], int],
         is_playing: Callable[[], bool],
         config: AppConfig,
+        source_http_headers: dict[str, str] | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self._video_path = video_path
+        self._source_http_headers = _clean_http_headers(source_http_headers or {})
         self._get_time_ms = get_time_ms
         self._is_playing = is_playing
         self._config = config
@@ -926,16 +928,7 @@ class DubbingWorker(QThread):
 
         args: list[object] = []
         if self._is_http_source(self._video_path):
-            args.extend(
-                [
-                    "-reconnect",
-                    "1",
-                    "-reconnect_streamed",
-                    "1",
-                    "-reconnect_delay_max",
-                    "5",
-                ]
-            )
+            args.extend(self._http_input_args())
         args.extend(
             [
                 "-ss",
@@ -963,12 +956,7 @@ class DubbingWorker(QThread):
             if not self._is_http_source(self._video_path):
                 raise
             fallback_args = [
-                "-reconnect",
-                "1",
-                "-reconnect_streamed",
-                "1",
-                "-reconnect_delay_max",
-                "5",
+                *self._http_input_args(),
                 "-i",
                 self._video_path,
                 "-ss",
@@ -1040,16 +1028,7 @@ class DubbingWorker(QThread):
             with measure_stage("dubbing", "source_audio_cache"):
                 input_args: list[object] = []
                 if self._is_http_source(source_path):
-                    input_args.extend(
-                        [
-                            "-reconnect",
-                            "1",
-                            "-reconnect_streamed",
-                            "1",
-                            "-reconnect_delay_max",
-                            "5",
-                        ]
-                    )
+                    input_args.extend(self._http_input_args())
                 run_ffmpeg_cancelable(
                     [
                         *input_args,
@@ -1084,6 +1063,29 @@ class DubbingWorker(QThread):
         if self._source_audio_cache_ready and path is not None and path.exists() and path.stat().st_size > 0:
             return path
         return None
+
+    def _http_input_args(self) -> list[object]:
+        args: list[object] = [
+            "-reconnect",
+            "1",
+            "-reconnect_streamed",
+            "1",
+            "-reconnect_delay_max",
+            "5",
+        ]
+        user_agent = _header_value(self._source_http_headers, "user-agent")
+        if user_agent:
+            args.extend(["-user_agent", user_agent])
+        referer = _header_value(self._source_http_headers, "referer", "referrer")
+        if referer:
+            args.extend(["-referer", referer])
+        cookies = _header_value(self._source_http_headers, "cookie")
+        if cookies:
+            args.extend(["-cookies", cookies])
+        header_text = _ffmpeg_header_text(self._source_http_headers)
+        if header_text:
+            args.extend(["-headers", header_text])
+        return args
 
     def _stop_source_audio_cache(self) -> None:
         self._source_audio_cache_cancel = True
@@ -1333,6 +1335,33 @@ class DubbingWorker(QThread):
         self._last_video_time = None
         self._last_wall_time = None
         self._sync_hold_requested = False
+
+
+def _clean_http_headers(raw_headers: dict[str, str]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for key, value in raw_headers.items():
+        name = str(key or "").strip()
+        text = str(value or "").strip()
+        if not name or not text or "\r" in name or "\n" in name or "\r" in text or "\n" in text:
+            continue
+        headers[name] = text
+    return headers
+
+
+def _ffmpeg_header_text(headers: dict[str, str]) -> str:
+    cleaned = _clean_http_headers(headers)
+    if not cleaned:
+        return ""
+    protocol_options = {"cookie", "referer", "referrer", "user-agent"}
+    return "".join(f"{key}: {value}\r\n" for key, value in cleaned.items() if key.casefold() not in protocol_options)
+
+
+def _header_value(headers: dict[str, str], *names: str) -> str:
+    wanted = {name.casefold() for name in names}
+    for key, value in _clean_http_headers(headers).items():
+        if key.casefold() in wanted:
+            return value
+    return ""
 
 
 _terminate_process = terminate_process

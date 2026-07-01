@@ -1488,7 +1488,17 @@ def test_dubbing_worker_source_cache_rejects_stream_manifest(qapp) -> None:
 
 def test_dubbing_worker_http_extract_retries_with_output_seek(monkeypatch, qapp, tmp_path) -> None:
     config = AppConfig(audio_source="original", segment_seconds=6)
-    worker = DubbingWorker("https://cdn.example.test/video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker(
+        "https://cdn.example.test/video.mp4",
+        lambda: 0,
+        lambda: False,
+        config,
+        source_http_headers={
+            "Accept": "*/*",
+            "Referer": "https://www.njav.com/vi/xvideos/demo",
+            "User-Agent": "DemoAgent/1.0",
+        },
+    )
     calls: list[tuple[list[object], dict[str, object]]] = []
 
     def fake_run(args, **kwargs):
@@ -1504,8 +1514,17 @@ def test_dubbing_worker_http_extract_retries_with_output_seek(monkeypatch, qapp,
     assert len(calls) == 2
     assert calls[0][1]["stderr"] == subprocess.PIPE
     assert calls[0][1]["stdout"] == subprocess.PIPE
+    assert calls[0][0].index("-user_agent") < calls[0][0].index("-i")
+    assert calls[0][0][calls[0][0].index("-user_agent") + 1] == "DemoAgent/1.0"
+    assert calls[0][0].index("-referer") < calls[0][0].index("-i")
+    assert calls[0][0][calls[0][0].index("-referer") + 1] == "https://www.njav.com/vi/xvideos/demo"
+    assert calls[0][0].index("-headers") < calls[0][0].index("-i")
+    assert "Accept: */*\r\n" in calls[0][0][calls[0][0].index("-headers") + 1]
     fallback = calls[1][0]
     assert fallback.index("-i") < fallback.index("-ss")
+    assert fallback.index("-user_agent") < fallback.index("-i")
+    assert fallback.index("-referer") < fallback.index("-i")
+    assert fallback.index("-headers") < fallback.index("-i")
     assert calls[1][1]["loglevel"] == "error"
 
 

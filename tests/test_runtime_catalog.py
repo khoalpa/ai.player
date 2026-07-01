@@ -327,7 +327,15 @@ def test_vieneu_defaults_use_southern_voice() -> None:
 def test_performance_preset_comparison_orders_latency_and_quality() -> None:
     rows = {row.preset: row for row in compare_presets("en")}
 
-    assert set(rows) == {"low_latency", "subtitles", "offline_lite", "balanced", "online_lite", "quality"}
+    assert set(rows) == {
+        "low_latency",
+        "subtitles",
+        "offline_lite",
+        "balanced",
+        "adult_stable",
+        "online_lite",
+        "quality",
+    }
     assert rows["subtitles"].latency_score < rows["low_latency"].latency_score
     assert rows["online_lite"].latency_score < rows["balanced"].latency_score
     assert rows["balanced"].quality_score > rows["low_latency"].quality_score

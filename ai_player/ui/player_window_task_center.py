@@ -27,8 +27,8 @@ from PySide6.QtWidgets import (
 from ai_player.core.config import PROJECT_ROOT, RUNTIME_DIR
 from ai_player.services.asr import asr_transcript_cache_stats, clear_asr_transcript_cache
 from ai_player.services.tts_base import clear_tts_cache, tts_cache_stats
-from ai_player.services.workflow_cache import clear_workflow_text_cache, workflow_text_cache_stats
 from ai_player.services.video_source import CACHE_MAX_AGE_SECONDS, default_video_cache_root
+from ai_player.services.workflow_cache import clear_workflow_text_cache, workflow_text_cache_stats
 from ai_player.ui.task_center import BackgroundTask, collect_background_tasks, stop_background_tasks
 
 
@@ -368,6 +368,7 @@ class PlayerTaskCenterMixin:
             ("cache_inspector_clear_asr", self._clear_asr_cache_only),
             ("cache_inspector_clear_text", self._clear_text_cache_only),
             ("cache_inspector_clear_tts", self._clear_tts_cache_only),
+            ("cache_inspector_clear_url_site", self._clear_video_url_cache_site),
             ("cache_inspector_clear_url_old", self._clear_old_video_url_cache),
             ("cache_inspector_clear_url", self._clear_video_url_cache),
             ("cache_inspector_clear_all", self._clear_workflow_caches),
@@ -457,6 +458,29 @@ class PlayerTaskCenterMixin:
         self._refresh_task_center()
         self.statusBar().showMessage(self._tr("cache_inspector_url_old_cleared"))
 
+    def _clear_video_url_cache_site(self) -> None:
+        root = self._video_url_cache_root()
+        sites = self._video_cache_site_names(root)
+        if not sites:
+            self.statusBar().showMessage(self._tr("cache_inspector_url_empty"))
+            return
+        site, accepted = QInputDialog.getItem(
+            self,
+            self._tr("cache_inspector_clear_url_site"),
+            self._tr("cache_inspector_url_site"),
+            sites,
+            0,
+            False,
+        )
+        if not accepted or not site:
+            return
+        try:
+            shutil.rmtree(root / str(site))
+        except OSError:
+            pass
+        self._refresh_task_center()
+        self.statusBar().showMessage(self._tr("cache_inspector_url_site_cleared").format(site=site))
+
     def _clear_video_url_cache(self) -> None:
         root = self._video_url_cache_root()
         try:
@@ -472,6 +496,13 @@ class PlayerTaskCenterMixin:
     def _cache_files(root) -> list[Path]:
         try:
             return [item for item in Path(root).glob("**/*") if item.is_file()]
+        except OSError:
+            return []
+
+    @staticmethod
+    def _video_cache_site_names(root) -> list[str]:
+        try:
+            return sorted(item.name for item in Path(root).iterdir() if item.is_dir())
         except OSError:
             return []
 
@@ -565,10 +596,16 @@ class PlayerTaskCenterMixin:
                 report = None
             if isinstance(report, dict):
                 media = report.get("media_candidates") if isinstance(report.get("media_candidates"), list) else []
+                extractors = (
+                    report.get("extractor_candidates")
+                    if isinstance(report.get("extractor_candidates"), list)
+                    else []
+                )
                 lines = [
                     f"{self._tr('adult_health_status')}: "
                     f"{self._tr('adult_health_ok') if result.returncode == 0 else self._tr('adult_health_attention')}",
                     f"Host: {report.get('host') or '-'}",
+                    f"Extractor: {', '.join(str(item) for item in extractors) or '-'}",
                     f"JSON payloads: {report.get('json_payload_count') or 0}",
                     f"Iframe: {report.get('iframe_candidate') or '-'}",
                     f"Media candidates: {len(media)}",

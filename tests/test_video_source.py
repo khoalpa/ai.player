@@ -119,6 +119,14 @@ def test_should_resolve_private_plugin_extractor_without_extra_hosts(monkeypatch
     assert video_source._should_resolve_with_ytdlp("https://private.example/watch/demo") is True
 
 
+def test_should_resolve_plugin_registry_hosts_without_extra_hosts(monkeypatch) -> None:
+    monkeypatch.delenv("AI_PLAYER_EXTRA_YTDLP_HOSTS", raising=False)
+    monkeypatch.setattr(video_source, "_plugin_ytdlp_hosts", lambda: ("eporner.com",))
+    monkeypatch.setattr(video_source, "_has_plugin_ytdlp_extractor", lambda _value: False)
+
+    assert video_source._should_resolve_with_ytdlp("https://www.eporner.com/video-demo/demo-title/") is True
+
+
 def test_plugin_ytdlp_extractors_only_keeps_plugin_classes(monkeypatch) -> None:
     class PluginIE:
         IE_NAME = "private"
@@ -199,6 +207,7 @@ def test_format_selector_contains_quality_constraints(quality: str, needle: str)
 def test_format_selector_does_not_fallback_to_video_only_best() -> None:
     assert not video_source._format_selector("best").endswith("/best")
     assert not video_source._format_selector("720p").endswith("/best")
+    assert "best*[vcodec!=none]" in video_source._format_selector("best")
 
 
 def test_default_playback_quality_prefers_best(tmp_path) -> None:
@@ -212,8 +221,24 @@ def test_stream_format_selector_prefers_single_playable_stream() -> None:
 
     assert "height<=720" in selector
     assert "acodec!=none" in selector
+    assert "best*[vcodec!=none]" in selector
     assert "bestvideo" not in selector
     assert not selector.endswith("/best")
+
+
+def test_buomtv_uses_relaxed_format_selector_for_unknown_codecs() -> None:
+    assert video_source._provider_format_selector("buomtv-baby", "best", full_cache=False) == "best/best*"
+    assert video_source._provider_format_selector("buomtv-baby", "best", full_cache=True) == "best/best*"
+    assert video_source._provider_format_selector("youtube", "best", full_cache=False) != "best/best*"
+
+
+def test_prefer_local_ytdlp_plugins_adds_workspace_plugin_first(monkeypatch) -> None:
+    plugin_root = str(video_source.LOCAL_ADULT_EXTRACTOR_PLUGIN)
+    monkeypatch.setattr(sys, "path", [item for item in sys.path if item != plugin_root])
+
+    video_source._prefer_local_ytdlp_plugins()
+
+    assert sys.path[0] == plugin_root
 
 
 def test_resolve_page_url_without_full_cache_returns_stream_url(monkeypatch) -> None:
@@ -236,6 +261,10 @@ def test_resolve_page_url_without_full_cache_returns_stream_url(monkeypatch) -> 
                 "id": "demo",
                 "title": "Demo",
                 "url": "https://cdn.example.test/demo.mp4",
+                "http_headers": {
+                    "Referer": "https://youtu.be/demo",
+                    "User-Agent": "DemoAgent/1.0",
+                },
                 "width": 1080,
                 "height": 1920,
             }
@@ -248,9 +277,54 @@ def test_resolve_page_url_without_full_cache_returns_stream_url(monkeypatch) -> 
     assert source.title == "Demo"
     assert source.provider == "youtube"
     assert (source.width, source.height) == (1080, 1920)
+    assert source.http_headers == {
+        "Referer": "https://youtu.be/demo",
+        "User-Agent": "DemoAgent/1.0",
+    }
     assert captured_options["skip_download"] is True
     assert "outtmpl" not in captured_options
     assert "progress_hooks" not in captured_options
+
+
+def test_resolve_page_url_preserves_selected_format_headers(monkeypatch) -> None:
+    class FakeYoutubeDL:
+        def __init__(self, _options):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, url, download):
+            assert url == "https://www.njav.com/vi/xvideos/demo"
+            assert download is False
+            return {
+                "id": "demo",
+                "title": "Demo",
+                "formats": [
+                    {
+                        "url": "https://media.example.test/demo.m3u8",
+                        "vcodec": "h264",
+                        "acodec": "aac",
+                        "http_headers": {
+                            "Referer": "https://www.njav.com/vi/xvideos/demo",
+                            "User-Agent": "DemoAgent/1.0",
+                        },
+                    }
+                ],
+            }
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", SimpleNamespace(YoutubeDL=FakeYoutubeDL))
+
+    source = video_source.resolve_video_source("https://www.njav.com/vi/xvideos/demo", full_cache=False)
+
+    assert source.playback_url == "https://media.example.test/demo.m3u8"
+    assert source.http_headers == {
+        "Referer": "https://www.njav.com/vi/xvideos/demo",
+        "User-Agent": "DemoAgent/1.0",
+    }
 
 
 def test_resolve_telegram_limits_ytdlp_extractors(monkeypatch) -> None:

@@ -53,5 +53,81 @@
     "domains": ["buomtv.*", "*.buomtv.*"],
     "iframe_depth": 1,
     "accept_language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
+  },
+  "eporner": {
+    "domains": ["eporner.com"],
+    "delegate_to_ytdlp": true
+  },
+  "spankbang": {
+    "domains": ["spankbang.com"],
+    "delegate_to_ytdlp": true
+  },
+  "drtuber": {
+    "domains": ["drtuber.com"],
+    "delegate_to_ytdlp": true
+  },
+  "tnaflix": {
+    "domains": ["tnaflix.com"],
+    "delegate_to_ytdlp": true
+  },
+  "empflix": {
+    "domains": ["empflix.com"],
+    "delegate_to_ytdlp": true
+  },
+  "4tube": {
+    "domains": ["4tube.com"],
+    "delegate_to_ytdlp": true
+  },
+  "beeg": {
+    "domains": ["beeg.com"],
+    "delegate_to_ytdlp": true
+  },
+  "sunporno": {
+    "domains": ["sunporno.com"],
+    "delegate_to_ytdlp": true
+  },
+  "xvideos": {
+    "domains": ["xvideos.com"],
+    "delegate_to_ytdlp": true
+  },
+  "xnxx": {
+    "domains": ["xnxx.com"],
+    "delegate_to_ytdlp": true
+  },
+  "xhamster": {
+    "domains": ["xhamster.com"],
+    "delegate_to_ytdlp": true
+  },
+  "youporn": {
+    "domains": ["youporn.com"],
+    "delegate_to_ytdlp": true
+  },
+  "redtube": {
+    "domains": ["redtube.com"],
+    "delegate_to_ytdlp": true
+  },
+  "pornhub": {
+    "domains": ["pornhub.com"],
+    "delegate_to_ytdlp": true
+  },
+  "chaturbate": {
+    "domains": ["chaturbate.com", "chaturbate.eu", "chaturbate.global"],
+    "delegate_to_ytdlp": true
+  },
+  "stripchat": {
+    "domains": ["stripchat.com"],
+    "delegate_to_ytdlp": true
+  },
+  "bongacams": {
+    "domains": ["bongacams.com", "bongacams.net"],
+    "delegate_to_ytdlp": true
+  },
+  "cam4": {
+    "domains": ["cam4.com"],
+    "delegate_to_ytdlp": true
+  },
+  "camsoda": {
+    "domains": ["camsoda.com"],
+    "delegate_to_ytdlp": true
   }
 }

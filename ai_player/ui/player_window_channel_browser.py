@@ -12,6 +12,7 @@ class PlayerChannelBrowserMixin:
         self._player.stop()
         self._reset_document_state_for_video()
         self._video_path = None
+        self._video_source_http_headers = {}
         self._runtime_media_path = ""
         self._telegram_channel_state.reset_loaded_channel()
         self._telegram_channel_list.clear()
@@ -50,6 +51,7 @@ class PlayerChannelBrowserMixin:
         self._player.stop()
         self._reset_document_state_for_video()
         self._video_path = None
+        self._video_source_http_headers = {}
         self._runtime_media_path = ""
         title_key = (
             "youtube_channel_browser_title"

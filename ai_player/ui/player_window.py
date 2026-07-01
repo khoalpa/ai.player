@@ -105,6 +105,7 @@ class PlayerWindow(
             blacklisted_content_keys=set(self._config.telegram_blacklisted_content_keys),
         )
         self._video_path: str | None = None
+        self._video_source_http_headers: dict[str, str] = {}
         self._document_mode = False
         self._document_elapsed_ms = 0
         self._document_started_at: float | None = None

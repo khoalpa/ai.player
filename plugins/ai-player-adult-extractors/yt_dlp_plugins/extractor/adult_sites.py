@@ -86,6 +86,10 @@ def _registry_hosts() -> tuple[str, ...]:
 ADULT_SITE_HOSTS = _registry_hosts()
 
 
+def _profile_delegates_to_ytdlp(profile: dict[str, object]) -> bool:
+    return bool(profile.get("delegate_to_ytdlp"))
+
+
 class _AdultSiteBaseIE(InfoExtractor):
     _DOMAINS: tuple[str, ...] = ()
     _IFRAME_DEPTH = 1
@@ -162,21 +166,46 @@ class _AdultSiteBaseIE(InfoExtractor):
             if ext in {"m3u8", "vl"}:
                 if ext == "vl" and self._hls_playlist_looks_like_image_sequence(page_url, video_id, media_url):
                     continue
+                headers = self._adult_site_headers(page_url)
                 formats.extend(
-                    self._extract_m3u8_formats(
-                        media_url,
-                        video_id,
-                        "mp4",
-                        m3u8_id="hls",
-                        fatal=False,
-                        headers=self._adult_site_headers(page_url),
+                    self._formats_with_headers(
+                        self._extract_m3u8_formats(
+                            media_url,
+                            video_id,
+                            "mp4",
+                            m3u8_id="hls",
+                            fatal=False,
+                            headers=headers,
+                        ),
+                        headers,
                     )
                 )
             elif ext == "mpd":
-                formats.extend(self._extract_mpd_formats(media_url, video_id, mpd_id="dash", fatal=False))
+                headers = self._adult_site_headers(page_url)
+                formats.extend(
+                    self._formats_with_headers(
+                        self._extract_mpd_formats(media_url, video_id, mpd_id="dash", fatal=False),
+                        headers,
+                    )
+                )
             elif ext in {"mp4", "m4v", "webm", "mov"}:
                 formats.append({"url": media_url, "ext": ext, "http_headers": self._adult_site_headers(page_url)})
         return formats
+
+    @staticmethod
+    def _formats_with_headers(formats: list[dict], headers: dict) -> list[dict]:
+        updated = []
+        for item in formats or []:
+            if not isinstance(item, dict):
+                continue
+            cloned = dict(item)
+            current_headers = cloned.get("http_headers")
+            if isinstance(current_headers, dict):
+                cloned["http_headers"] = {**headers, **current_headers}
+            else:
+                cloned["http_headers"] = dict(headers)
+            updated.append(cloned)
+        return updated
 
     def _hls_playlist_looks_like_image_sequence(self, page_url: str, video_id: str, media_url: str) -> bool:
         playlist = self._download_webpage(
@@ -228,13 +257,15 @@ class _AdultSiteBaseIE(InfoExtractor):
         )
         if meta_video_url:
             candidates.append(meta_video_url)
+        candidates.extend(self._html_content_url_meta_urls(webpage))
+        candidates.extend(self._html_media_attribute_urls(webpage))
         for match in re.finditer(
             r"""(?ix)
             ["'](?P<quoted>https?:\\/\\/[^"']+\.(?:m3u8|mpd|mp4|m4v|webm|vl)(?:\?[^"']*)?)["']
             |
             (?P<bare>https?://[^\s"'<>\\]+\.(?:m3u8|mpd|mp4|m4v|webm|vl)(?:\?[^\s"'<>\\]+)?)
             |
-            (?:file|src|source|videoUrl|video_url|hls|url)\s*[:=]\s*["'](?P<named>[^"']+\.(?:m3u8|mpd|mp4|m4v|webm|vl)(?:\?[^"']*)?)["']
+            (?:contentUrl|content_url|downloadUrl|download_url|file|hls|hlsUrl|hls_url|manifest|mp4Url|mp4_url|playUrl|play_url|src|source|streamUrl|stream_url|url|videoSrc|video_src|videoUrl|video_url)\s*[:=]\s*["'](?P<named>[^"']+\.(?:m3u8|mpd|mp4|m4v|webm|vl)(?:\?[^"']*)?)["']
             """,
             webpage,
         ):
@@ -245,6 +276,24 @@ class _AdultSiteBaseIE(InfoExtractor):
         candidates.extend(self._configured_pattern_urls(page_url, webpage, "media_patterns"))
 
         return [url for url in (self._clean_media_url(page_url, candidate) for candidate in candidates) if url]
+
+    def _html_content_url_meta_urls(self, webpage: str) -> list[str]:
+        urls = []
+        for match in re.finditer(
+            r"""(?is)<meta[^>]+(?:itemprop|property|name)=["'](?:contentUrl|video|video:url)["'][^>]+content=["'](?P<url>[^"']+)["']""",
+            webpage,
+        ):
+            urls.append(match.group("url"))
+        return urls
+
+    def _html_media_attribute_urls(self, webpage: str) -> list[str]:
+        urls = []
+        for match in re.finditer(
+            r"""(?is)<(?:video|source|a|div|span)[^>]+(?:src|href|data-file|data-hls|data-mp4|data-source|data-stream|data-video|data-video-src)=["'](?P<url>[^"']+\.(?:m3u8|mpd|mp4|m4v|webm|vl)(?:\?[^"']*)?)["']""",
+            webpage,
+        ):
+            urls.append(match.group("url"))
+        return urls
 
     def _json_payloads_from_webpage(self, webpage: str) -> list[object]:
         payloads = []
@@ -264,7 +313,7 @@ class _AdultSiteBaseIE(InfoExtractor):
                     payloads.append(data)
                 continue
             for state_match in re.finditer(
-                r"""(?is)(?:window\.)?(?:__INITIAL_STATE__|__NUXT__|playerConfig|PLAYER_CONFIG|videoConfig)\s*=\s*(?P<json>\{.*?\}|\[.*?\])\s*;""",
+                r"""(?is)(?:window\.)?(?:__INITIAL_STATE__|__NUXT__|flashvars|jwplayerConfig|JWPLAYER_CONFIG|mediaData|MEDIA_DATA|playerConfig|PLAYER_CONFIG|playerData|PLAYER_DATA|playerSettings|PLAYER_SETTINGS|sources|videoConfig|videoData|VIDEO_DATA|videoSources)\s*=\s*(?P<json>\{.*?\}|\[.*?\])\s*;""",
                 body,
             ):
                 data = self._parse_json(
@@ -309,13 +358,17 @@ class _AdultSiteBaseIE(InfoExtractor):
             "embedurl",
             "file",
             "hls",
+            "hlsurl",
             "manifest",
             "mp4",
+            "mp4url",
             "playurl",
             "src",
             "source",
             "stream",
+            "streamurl",
             "url",
+            "videosrc",
             "videourl",
             "video_url",
         }
@@ -336,9 +389,9 @@ class _AdultSiteBaseIE(InfoExtractor):
             if cleaned:
                 return cleaned
         for pattern in (
-            r"""(?is)<iframe[^>]+(?:src|data-src)=["'](?P<url>[^"']+)["']""",
-            r"""(?is)<embed[^>]+src=["'](?P<url>[^"']+)["']""",
-            r"""(?is)(?:embedUrl|embed_url|player_url)\s*[:=]\s*["'](?P<url>[^"']+)["']""",
+            r"""(?is)<iframe[^>]+(?:src|data-src|data-embed|data-player|data-player-url)=["'](?P<url>[^"']+)["']""",
+            r"""(?is)<embed[^>]+(?:src|data-src)=["'](?P<url>[^"']+)["']""",
+            r"""(?is)(?:embedUrl|embed_url|iframeUrl|iframe_url|playerUrl|player_url)\s*[:=]\s*["'](?P<url>[^"']+)["']""",
         ):
             for match in re.finditer(pattern, webpage):
                 iframe_url = self._clean_media_url(page_url, match.group("url"))
@@ -407,6 +460,9 @@ class _AdultSiteBaseIE(InfoExtractor):
     def _adult_site_headers(cls, url: str, *, referer: str | None = None) -> dict:
         profile = cls._site_profile(url)
         headers = {
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive",
             "Referer": referer or url,
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -557,13 +613,16 @@ class NJAVIE(_AdultSiteBaseIE):
             raise ExtractorError("Unable to find HLS media URL", expected=True)
 
         headers = self._adult_site_headers(final_player_url)
-        formats = self._extract_m3u8_formats(
-            m3u8_url,
-            video_id,
-            "mp4",
-            m3u8_id="hls",
-            fatal=False,
-            headers=headers,
+        formats = self._formats_with_headers(
+            self._extract_m3u8_formats(
+                m3u8_url,
+                video_id,
+                "mp4",
+                m3u8_id="hls",
+                fatal=False,
+                headers=headers,
+            ),
+            headers,
         )
         if not formats:
             formats = [
@@ -726,7 +785,10 @@ class BuomTVIE(_AdultSiteBaseIE):
 
         ext = determine_ext(stream_url)
         if ext == "m3u8":
-            formats = self._extract_m3u8_formats(stream_url, video_id, "mp4", fatal=False, headers=headers)
+            formats = self._formats_with_headers(
+                self._extract_m3u8_formats(stream_url, video_id, "mp4", fatal=False, headers=headers),
+                headers,
+            )
         else:
             formats = [{"url": stream_url, "ext": ext, "http_headers": headers}]
 
@@ -779,7 +841,8 @@ class GenericAdultIE(_AdultSiteBaseIE):
 
     @classmethod
     def suitable(cls, url: str) -> bool:
-        return bool(cls._site_profile(url)) and super().suitable(url)
+        profile = cls._site_profile(url)
+        return bool(profile) and not _profile_delegates_to_ytdlp(profile) and super().suitable(url)
 
     def _real_extract(self, url: str) -> dict:
         return self._extract_adult_site(url, self._generic_id(url))

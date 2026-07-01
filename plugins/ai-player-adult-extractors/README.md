@@ -35,6 +35,10 @@ Add a new site without code changes:
 4. Add `media_patterns` or `iframe_patterns` when the generic parser does not find
    media automatically.
 
+The generic parser already checks common HTML5 and player patterns such as
+`contentUrl`, `streamUrl`, `hlsUrl`, `mp4Url`, `videoSrc`, media attributes, and
+`data-player-url` iframe embeds.
+
 Example local registry:
 
 ```json
@@ -51,6 +55,10 @@ Example local registry:
 
 Use a site-specific extractor only when the generic extractor cannot handle a token
 API, multi-step player, login-only flow, or anti-bot behavior.
+
+For hosts already supported by upstream `yt-dlp`, add the domains to the registry
+with `"delegate_to_ytdlp": true`. This lets AI Player accept the URL and pass it
+to the native `yt-dlp` extractor instead of the generic adult parser.
 
 Run the source/dev app with the private host list:
 

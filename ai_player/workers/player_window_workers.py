@@ -153,6 +153,10 @@ class VideoSourceWorker(QThread):
             )
         except Exception as exc:
             if not self._stop_requested and not self.isInterruptionRequested():
+                if self._full_cache and self._stream_source is not None and _can_fallback_to_prepared_stream(exc):
+                    LOGGER.info("Full video cache failed; falling back to prepared stream source.")
+                    self.resolved.emit(self._stream_source)
+                    return
                 LOGGER.exception("Video source worker failed.")
                 self.failed.emit(redact_secrets(exc))
 
@@ -192,6 +196,16 @@ def _download_percent(data) -> int:
     if downloaded_value <= 0 or total_value <= 0:
         return 0
     return max(0, min(100, int(downloaded_value * 100 / total_value)))
+
+
+def _can_fallback_to_prepared_stream(exc: Exception) -> bool:
+    message = str(redact_secrets(exc)).casefold()
+    return (
+        "403" in message
+        or "forbidden" in message
+        or "requested format is not available" in message
+        or "--list-formats" in message
+    )
 
 
 class DocumentTranscriptWorker(QThread):

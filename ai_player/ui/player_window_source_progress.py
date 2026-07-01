@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from ai_player.ui.cache_progress_dialog import _format_bytes, _format_seconds
-from ai_player.ui.cache_progress_dialog import CacheProgressDialog
+from ai_player.ui.cache_progress_dialog import CacheProgressDialog, _format_bytes, _format_seconds
 
 
 class PlayerSourceProgressMixin:

@@ -30,6 +30,7 @@ class _FakeWorker:
         *,
         full_cache: bool = True,
         cache_dir: str = "",
+        play_after_cache_percent: int = 0,
         language_id: str | None = None,
         parent=None,
     ) -> None:
@@ -37,9 +38,11 @@ class _FakeWorker:
         self.playback_quality = playback_quality
         self.full_cache = full_cache
         self.cache_dir = cache_dir
+        self.play_after_cache_percent = play_after_cache_percent
         self.language_id = language_id
         self.parent = parent
         self.progress_changed = _FakeSignal()
+        self.stream_ready = _FakeSignal()
         self.resolved = _FakeSignal()
         self.failed = _FakeSignal()
         self.finished = _FakeSignal()
@@ -82,6 +85,9 @@ class _FakeOwner:
     def _video_cache_progress_changed(self, _data) -> None:
         pass
 
+    def _video_url_stream_ready(self, _source) -> None:
+        pass
+
     def _video_url_resolved(self, _source) -> None:
         pass
 
@@ -100,6 +106,7 @@ def test_video_url_controller_starts_and_finishes_worker(monkeypatch) -> None:
         "720p",
         full_cache=False,
         cache_dir="D:/cache",
+        play_after_cache_percent=20,
         language_id="en",
     )
 
@@ -108,6 +115,7 @@ def test_video_url_controller_starts_and_finishes_worker(monkeypatch) -> None:
     assert worker.playback_quality == "720p"
     assert worker.full_cache is False
     assert worker.cache_dir == "D:/cache"
+    assert worker.play_after_cache_percent == 20
     assert worker.language_id == "en"
     assert worker.started is True
     assert owner._open_url_button.enabled is False

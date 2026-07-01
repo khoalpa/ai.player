@@ -15,6 +15,7 @@ LOCAL_PLUGIN = PROJECT_ROOT / "plugins" / "ai-player-adult-extractors"
 if LOCAL_PLUGIN.exists() and str(LOCAL_PLUGIN) not in sys.path:
     sys.path.insert(0, str(LOCAL_PLUGIN))
 
+from yt_dlp_plugins.extractor import adult_sites as ADULT_SITES  # noqa: E402,I001
 from yt_dlp_plugins.extractor.adult_sites import GenericAdultIE  # noqa: E402,I001
 
 
@@ -64,6 +65,7 @@ def main() -> int:
         "html_fixture": str(html_path),
         "registry_draft": str(draft_path),
         "json_payload_count": json_payload_count,
+        "extractor_candidates": _matching_extractors(args.url),
         "iframe_candidate": iframe_url,
         "media_candidates": media_urls,
     }
@@ -94,6 +96,21 @@ def _download_html(url: str, *, timeout: float) -> str:
 
 def _normalized_host(url: str) -> str:
     return str(urlparse(url).hostname or "").lower().removeprefix("www.")
+
+
+def _matching_extractors(url: str) -> list[str]:
+    names = []
+    for name in getattr(ADULT_SITES, "__all__", ()):
+        extractor = getattr(ADULT_SITES, name, None)
+        suitable = getattr(extractor, "suitable", None)
+        if not callable(suitable):
+            continue
+        try:
+            if suitable(url):
+                names.append(str(name))
+        except Exception:
+            continue
+    return names
 
 
 def _redact_sensitive_values(value: str) -> str:

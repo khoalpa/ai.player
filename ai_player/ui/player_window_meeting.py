@@ -24,6 +24,7 @@ class PlayerMeetingMixin:
         self._set_document_mode(False)
         self._document_editor_active = False
         self._video_path = None
+        self._video_source_http_headers = {}
         self._media_stack.setCurrentWidget(self._document_view)
         self._document_view.setReadOnly(True)
         self._document_view.setPlainText(self._tr("meeting_recording_text"))

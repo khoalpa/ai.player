@@ -441,6 +441,7 @@ class PlayerSourceMixin:
 
         self._set_document_mode(True, total_duration_ms, transcript.pages)
         self._video_path = str(transcript.source_path)
+        self._video_source_http_headers = {}
         self._transcript_path_edit.setText(str(transcript.transcript_path))
         self._invalidate_subtitle_entries()
         self._set_combo_data(self._audio_source_combo, "transcript")
@@ -1490,6 +1491,7 @@ class PlayerSourceMixin:
         self._stop_dubbing()
         self._reset_document_state_for_video()
         self._video_path = path
+        self._video_source_http_headers = {}
         self._auto_select_video_aspect_ratio()
         self._load_current_video_for_playback()
         self._show_video_output()
@@ -1713,6 +1715,7 @@ class PlayerSourceMixin:
         self._refresh_telegram_channel_item_statuses()
         self._reset_document_state_for_video()
         self._video_path = source.playback_url
+        self._video_source_http_headers = self._http_headers_for_video_source(source)
         self._auto_select_video_aspect_ratio(source)
         self._load_current_video_for_playback()
         self._show_video_output()
@@ -1721,7 +1724,9 @@ class PlayerSourceMixin:
         self._source_label.setText(label)
         provider = f" ({source.provider})" if source.is_resolved else ""
         self.statusBar().showMessage(self._tr("status_opened_url").format(provider=provider, label=label))
-        if bool(getattr(self, "_last_video_url_request", {}).get("full_cache")):
+        parsed_playback_url = urlparse(str(source.playback_url or "").strip())
+        playback_is_local = parsed_playback_url.scheme.lower() not in {"http", "https"}
+        if bool(getattr(self, "_last_video_url_request", {}).get("full_cache")) and playback_is_local:
             self._url_cache_completed_count = int(getattr(self, "_url_cache_completed_count", 0) or 0) + 1
             if hasattr(self, "_set_background_task_detail"):
                 self._set_background_task_detail("URL/cache loading", self._tr("task_center_url_cached"))
@@ -1744,6 +1749,7 @@ class PlayerSourceMixin:
         self._set_cache_play_now_enabled(False)
         self._reset_document_state_for_video()
         self._video_path = source.playback_url
+        self._video_source_http_headers = self._http_headers_for_video_source(source)
         self._auto_select_video_aspect_ratio(source)
         self._load_current_video_for_playback()
         self._show_video_output()
@@ -1752,6 +1758,27 @@ class PlayerSourceMixin:
         self._source_label.setText(label)
         self.statusBar().showMessage(self._tr("cache_playing_stream_while_caching"))
         self._play_active_source()
+
+    @staticmethod
+    def _http_headers_for_video_source(source) -> dict[str, str]:
+        headers = dict(getattr(source, "http_headers", {}) or {})
+        if headers:
+            return headers
+        playback_url = str(getattr(source, "playback_url", "") or "").strip()
+        input_url = str(getattr(source, "input_url", "") or "").strip()
+        playback_scheme = urlparse(playback_url).scheme.lower()
+        input_scheme = urlparse(input_url).scheme.lower()
+        if playback_scheme in {"http", "https"} and input_scheme in {"http", "https"} and input_url != playback_url:
+            return {
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": input_url,
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/125 Safari/537.36"
+                ),
+            }
+        return {}
 
     def _reset_document_state_for_video(self) -> None:
         self._set_document_mode(False)
@@ -1843,7 +1870,11 @@ class PlayerSourceMixin:
         if not unrecoverable:
             retry_button = box.addButton(self._tr("open_video_url_retry"), QMessageBox.AcceptRole)
         lower_button = None
-        if not unrecoverable and self._lower_playback_quality_value(str(request.get("quality") or "")):
+        if (
+            not unrecoverable
+            and not self._video_url_failure_is_forbidden(detail)
+            and self._lower_playback_quality_value(str(request.get("quality") or ""))
+        ):
             lower_button = box.addButton(self._tr("open_video_url_retry_lower_quality"), QMessageBox.ActionRole)
         toggle_button = None
         if not unrecoverable and not self._source_filter_forces_video_url_full_cache():
@@ -1875,6 +1906,11 @@ class PlayerSourceMixin:
     @staticmethod
     def _video_url_failure_is_unrecoverable(detail: str) -> bool:
         return video_url_failure_is_unrecoverable(detail)
+
+    @staticmethod
+    def _video_url_failure_is_forbidden(detail: str) -> bool:
+        normalized = " ".join(str(detail or "").casefold().split())
+        return "403" in normalized or "forbidden" in normalized
 
     def _retry_last_video_url_request(self, *, lower_quality: bool = False, toggle_cache: bool = False) -> None:
         request = getattr(self, "_last_video_url_request", None)
@@ -1916,6 +1952,7 @@ class PlayerSourceMixin:
         self._reset_document_state_for_video()
         self._clear_active_telegram_channel_video()
         self._video_path = None
+        self._video_source_http_headers = {}
         self._runtime_media_path = ""
         self._video_placeholder.setUrl(QUrl(url))
         self._media_stack.setCurrentWidget(self._video_placeholder)
@@ -2003,6 +2040,7 @@ class PlayerSourceMixin:
         self._document_pages = []
         self._document_current_page_index = -1
         self._video_path = None
+        self._video_source_http_headers = {}
         self._transcript_path_edit.clear()
         self._invalidate_subtitle_entries()
         self._media_stack.setCurrentWidget(self._document_view)
@@ -2033,6 +2071,7 @@ class PlayerSourceMixin:
         total_duration_ms = sum(page.duration_seconds for page in transcript.pages) * 1000
         self._set_document_mode(True, total_duration_ms, transcript.pages)
         self._video_path = str(transcript.transcript_path)
+        self._video_source_http_headers = {}
         self._transcript_path_edit.setText(str(transcript.transcript_path))
         self._invalidate_subtitle_entries()
         self._clear_transcript()

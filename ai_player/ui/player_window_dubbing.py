@@ -82,6 +82,7 @@ class PlayerDubbingMixin:
         self._document_audio_sync_active = False
         self._document_duration_ms = 0
         self._video_path = None
+        self._video_source_http_headers = {}
         self._runtime_media_path = ""
         self._runtime_media_info_path = ""
         self._runtime_media_info_text = self._tr("status_no_video")
@@ -154,7 +155,8 @@ class PlayerDubbingMixin:
             get_time_ms,
             is_playing,
             dubbing_config,
-            self,
+            source_http_headers=getattr(self, "_video_source_http_headers", {}) or {},
+            parent=self,
         )
         self._dub_worker.status_changed.connect(self._dubbing_status_changed)
         self._dub_worker.segment_ready.connect(self._append_dubbing_segment)

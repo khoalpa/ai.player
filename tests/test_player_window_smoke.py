@@ -15,6 +15,7 @@ from ai_player.services import document_reader
 from ai_player.services.document_reader import DocumentPage
 from ai_player.services.ffmpeg import probe_duration_seconds, run_ffmpeg
 from ai_player.services.telegram_channel import TelegramChannelVideo
+from ai_player.services.video_source import VideoSource
 from ai_player.services.youtube_channel import YouTubeChannelItem
 from ai_player.ui import (
     player_window_readiness,
@@ -3555,6 +3556,7 @@ def test_page_video_url_uses_full_cache_for_smoother_playback(qapp, monkeypatch)
         window._open_resolved_video_url("https://www.njav.com/vi/xvideos/rki-729-uncensored-leak")
 
         assert started[-1]["full_cache"] is True
+        assert started[-1]["play_after_cache_percent"] == window._config.video_url_play_after_cache_percent
         assert window._last_video_url_request["full_cache"] is True
     finally:
         window._settings_save_timer.stop()
@@ -3577,10 +3579,31 @@ def test_direct_media_url_keeps_selected_cache_mode(qapp, monkeypatch) -> None:
         window._open_resolved_video_url("https://cdn.example.test/video.mp4")
 
         assert started[-1]["full_cache"] is False
+        assert started[-1]["play_after_cache_percent"] == 0
         assert window._last_video_url_request["full_cache"] is False
     finally:
         window._settings_save_timer.stop()
         window.close()
+
+
+def test_video_url_forbidden_failure_is_not_quality_issue() -> None:
+    assert PlayerWindow._video_url_failure_is_forbidden("HTTP Error 403: Forbidden")
+    assert not PlayerWindow._video_url_failure_is_forbidden("HTTP Error 429: Too Many Requests")
+
+
+def test_video_url_source_headers_fallback_to_input_url() -> None:
+    source = VideoSource(
+        input_url="https://www.njav.com/vi/xvideos/demo",
+        playback_url="https://upload18.org/play/token_hash?hash=abc",
+        title="Demo",
+        provider="njav-com",
+        is_resolved=True,
+    )
+
+    headers = PlayerWindow._http_headers_for_video_source(source)
+
+    assert headers["Referer"] == "https://www.njav.com/vi/xvideos/demo"
+    assert headers["User-Agent"].startswith("Mozilla/5.0")
 
 
 def test_subtitle_background_combo_updates_overlay_style(qapp) -> None:

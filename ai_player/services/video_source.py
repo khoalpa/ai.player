@@ -4,9 +4,10 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -22,6 +23,7 @@ VIDEO_ERROR_YTDLP_MISSING = "YTDLP_MISSING"
 VIDEO_ERROR_YTDLP_DOWNLOAD_FAILED = "YTDLP_DOWNLOAD_FAILED"
 VIDEO_ERROR_YTDLP_FORMAT_MISSING = "YTDLP_FORMAT_MISSING"
 VIDEO_ERROR_VIDEO_NO_AUDIO = "VIDEO_NO_AUDIO"
+LOCAL_ADULT_EXTRACTOR_PLUGIN = Path(__file__).resolve().parents[2] / "plugins" / "ai-player-adult-extractors"
 
 
 class VideoSourceError(RuntimeError):
@@ -44,6 +46,7 @@ class VideoSource:
     is_resolved: bool = False
     width: int = 0
     height: int = 0
+    http_headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -195,6 +198,7 @@ def is_telegram_web_progressive_url(value: str) -> bool:
 
 
 def _should_resolve_with_ytdlp(value: str) -> bool:
+    _prefer_local_ytdlp_plugins()
     parsed = urlparse(value.strip())
     host = _url_host(parsed)
     if parsed.scheme.lower() not in {"http", "https"}:
@@ -220,6 +224,7 @@ def _resolve_page_url(
     *,
     cache_dir: str | Path | None = None,
 ) -> VideoSource:
+    _prefer_local_ytdlp_plugins()
     try:
         import yt_dlp
     except ImportError as exc:
@@ -275,7 +280,7 @@ def _resolve_page_url(
         "socket_timeout": 30,
         "retries": 3,
         "fragment_retries": 3,
-        "format": _format_selector(quality) if full_cache else _stream_format_selector(quality),
+        "format": _provider_format_selector(provider, quality, full_cache=full_cache),
         "windowsfilenames": True,
     }
     allowed_extractors = _allowed_extractors(provider)
@@ -333,7 +338,8 @@ def _resolve_page_url(
         ) from exc
 
     if not full_cache:
-        playback_url = _stream_playback_url(info)
+        stream_item = _stream_playback_item(info)
+        playback_url = str((stream_item or {}).get("url") or "").strip()
         if not playback_url:
             raise VideoSourceError(
                 ui_text("video_error_stream_url_missing", language_id, provider=provider),
@@ -341,6 +347,7 @@ def _resolve_page_url(
                 provider=provider,
             )
         width, height = _video_dimensions_from_info(info)
+        http_headers = _stream_http_headers(info, stream_item)
         return VideoSource(
             input_url=url,
             playback_url=playback_url,
@@ -349,6 +356,7 @@ def _resolve_page_url(
             is_resolved=True,
             width=width,
             height=height,
+            http_headers=http_headers,
         )
 
     if source_cache_dir is None:
@@ -413,7 +421,9 @@ def _format_selector(playback_quality: str) -> str:
             "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
             "bestvideo+bestaudio/"
             "best[ext=mp4][vcodec!=none][acodec!=none]/"
-            "best[vcodec!=none][acodec!=none]"
+            "best[vcodec!=none][acodec!=none]/"
+            "best*[vcodec!=none][acodec!=none]/"
+            "best*[vcodec!=none]"
         )
     return (
         f"bestvideo[ext=mp4][vcodec^=avc1][height<={max_height}]+bestaudio[ext=m4a]/"
@@ -423,8 +433,38 @@ def _format_selector(playback_quality: str) -> str:
         f"best[ext=mp4][vcodec!=none][acodec!=none][height<={max_height}]/"
         f"best[vcodec!=none][acodec!=none][height<={max_height}]/"
         "best[ext=mp4][vcodec!=none][acodec!=none]/"
-        "best[vcodec!=none][acodec!=none]"
+        "best[vcodec!=none][acodec!=none]/"
+        f"best*[vcodec!=none][acodec!=none][height<={max_height}]/"
+        f"best*[vcodec!=none][height<={max_height}]/"
+        "best*[vcodec!=none][acodec!=none]/"
+        "best*[vcodec!=none]"
     )
+
+
+def _provider_format_selector(provider: str, playback_quality: str, *, full_cache: bool) -> str:
+    if _provider_uses_unknown_codec_formats(provider):
+        return _relaxed_format_selector(playback_quality)
+    return _format_selector(playback_quality) if full_cache else _stream_format_selector(playback_quality)
+
+
+def _provider_uses_unknown_codec_formats(provider: str) -> bool:
+    return str(provider or "").strip().lower() in {"buomtv", "buomtv-baby"}
+
+
+def _relaxed_format_selector(playback_quality: str) -> str:
+    quality = _normalize_playback_quality(playback_quality)
+    if quality == "best":
+        return "best/best*"
+    max_height_by_quality = {
+        "360p": 360,
+        "480p": 480,
+        "720p": 720,
+        "1080p": 1080,
+    }
+    max_height = max_height_by_quality.get(quality)
+    if max_height is None:
+        return "best/best*"
+    return f"best[height<={max_height}]/best*[height<={max_height}]/best/best*"
 
 
 def _allowed_extractors(provider: str) -> list[str]:
@@ -451,7 +491,11 @@ def _stream_format_selector(playback_quality: str) -> str:
         f"best[vcodec!=none][acodec!=none]{height_filter}/"
         "best[ext=mp4][vcodec^=avc1][acodec!=none]/"
         "best[ext=mp4][vcodec!=none][acodec!=none]/"
-        "best[vcodec!=none][acodec!=none]"
+        "best[vcodec!=none][acodec!=none]/"
+        f"best*[vcodec!=none][acodec!=none]{height_filter}/"
+        f"best*[vcodec!=none]{height_filter}/"
+        "best*[vcodec!=none][acodec!=none]/"
+        "best*[vcodec!=none]"
     )
 
 
@@ -502,15 +546,22 @@ def _host_matches(host: str, domain: str) -> bool:
 
 
 def _is_extra_ytdlp_host(host: str) -> bool:
-    return any(_host_matches(host, extra_host) for extra_host in _extra_ytdlp_hosts())
+    return any(_host_matches(host, extra_host) for extra_host in (*_extra_ytdlp_hosts(), *_plugin_ytdlp_hosts()))
 
 
 def _has_plugin_ytdlp_extractor(value: str) -> bool:
     return any(_extractor_suitable(extractor, value) for extractor in _plugin_ytdlp_extractors())
 
 
+def _prefer_local_ytdlp_plugins() -> None:
+    plugin_root = str(LOCAL_ADULT_EXTRACTOR_PLUGIN)
+    if LOCAL_ADULT_EXTRACTOR_PLUGIN.exists() and plugin_root not in sys.path:
+        sys.path.insert(0, plugin_root)
+
+
 @lru_cache(maxsize=1)
 def _plugin_ytdlp_extractors() -> tuple[object, ...]:
+    _prefer_local_ytdlp_plugins()
     try:
         import yt_dlp
     except ImportError:
@@ -525,6 +576,19 @@ def _plugin_ytdlp_extractors() -> tuple[object, ...]:
         if getattr(extractor, "IE_NAME", "") != "generic"
         and str(getattr(extractor, "__module__", "")).startswith("yt_dlp_plugins.")
     )
+
+
+@lru_cache(maxsize=1)
+def _plugin_ytdlp_hosts() -> tuple[str, ...]:
+    _prefer_local_ytdlp_plugins()
+    try:
+        from yt_dlp_plugins.extractor import adult_sites
+    except Exception:
+        return ()
+    hosts = getattr(adult_sites, "ADULT_SITE_HOSTS", ())
+    if not isinstance(hosts, list | tuple):
+        return ()
+    return tuple(str(host).strip() for host in hosts if str(host).strip())
 
 
 def _extractor_suitable(extractor: object, value: str) -> bool:
@@ -984,9 +1048,14 @@ def _clean_download_error(value: object) -> str:
 
 
 def _stream_playback_url(info: dict) -> str:
+    item = _stream_playback_item(info)
+    return str((item or {}).get("url") or "").strip()
+
+
+def _stream_playback_item(info: dict) -> dict:
     direct_url = str(info.get("url") or "").strip()
     if direct_url:
-        return direct_url
+        return info
 
     requested_formats = info.get("requested_formats") or []
     requested_formats = (
@@ -995,7 +1064,7 @@ def _stream_playback_url(info: dict) -> str:
         else []
     )
     if len(requested_formats) == 1:
-        return str(requested_formats[0].get("url") or "").strip()
+        return requested_formats[0]
 
     formats = info.get("formats") or []
     formats = [item for item in formats if isinstance(item, dict)] if isinstance(formats, list) else []
@@ -1007,8 +1076,31 @@ def _stream_playback_url(info: dict) -> str:
         and str(video_format.get("acodec") or "none") != "none"
     ]
     if playable_formats:
-        return str(playable_formats[-1].get("url") or "").strip()
-    return ""
+        return playable_formats[-1]
+    return {}
+
+
+def _stream_http_headers(info: dict, stream_item: dict | None) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for source in (info, stream_item or {}):
+        if not isinstance(source, dict):
+            continue
+        for key in ("http_headers", "headers"):
+            raw_headers = source.get(key)
+            if isinstance(raw_headers, dict):
+                headers.update(_clean_http_headers(raw_headers))
+    return headers
+
+
+def _clean_http_headers(raw_headers: dict) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for key, value in raw_headers.items():
+        name = str(key or "").strip()
+        text = str(value or "").strip()
+        if not name or not text or "\r" in name or "\n" in name or "\r" in text or "\n" in text:
+            continue
+        headers[name] = text
+    return headers
 
 
 def _video_dimensions_from_info(info: dict) -> tuple[int, int]:

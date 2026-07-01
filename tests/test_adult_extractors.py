@@ -40,7 +40,15 @@ def test_njav_ie_matches_video_urls() -> None:
 def test_adult_site_registry_lists_internal_hosts() -> None:
     assert "missav.ai" in ADULT_SITES.ADULT_SITE_HOSTS
     assert "vlxx.*" in ADULT_SITES.ADULT_SITE_HOSTS
+    assert "eporner.com" in ADULT_SITES.ADULT_SITE_HOSTS
+    assert "pornhub.com" in ADULT_SITES.ADULT_SITE_HOSTS
     assert ADULT_SITES.SITE_REGISTRY["njav"]["iframe_depth"] == 2
+    assert ADULT_SITES.SITE_REGISTRY["eporner"]["delegate_to_ytdlp"] is True
+
+
+def test_generic_adult_ie_skips_native_ytdlp_delegate_hosts() -> None:
+    assert not GenericAdultIE.suitable("https://www.eporner.com/video-demo/demo-title/")
+    assert not GenericAdultIE.suitable("https://www.pornhub.com/view_video.php?viewkey=demo")
 
 
 def test_site_profile_adds_language_header() -> None:
@@ -48,6 +56,8 @@ def test_site_profile_adds_language_header() -> None:
 
     assert headers["Referer"] == "https://vlxx.moi/video/demo-title/3170/"
     assert headers["Accept-Language"].startswith("vi-VN")
+    assert "Origin" not in headers
+    assert not any(key.startswith("Sec-Fetch-") for key in headers)
 
 
 def test_generic_adult_ie_only_matches_registry_hosts(monkeypatch) -> None:
@@ -99,6 +109,46 @@ def test_generic_adult_ie_uses_registry_iframe_patterns(monkeypatch) -> None:
             """<div data-player="/embed/demo"></div>""",
         )
         == "https://frame.example/embed/demo"
+    )
+
+
+def test_generic_adult_ie_reads_common_html_and_json_media_urls(monkeypatch) -> None:
+    monkeypatch.setitem(
+        ADULT_SITES.SITE_REGISTRY,
+        "example_common_player",
+        {"domains": ["common-player.example"]},
+    )
+    extractor = GenericAdultIE(YoutubeDL({"quiet": True, "no_warnings": True}))
+
+    result = extractor._extract_from_webpage(
+        "https://common-player.example/watch/demo",
+        "demo",
+        """
+        <html>
+          <head><meta itemprop="contentUrl" content="/media/meta-demo.mp4"></head>
+          <body>
+            <script type="application/json">{"streamUrl":"/media/json-demo.webm"}</script>
+          </body>
+        </html>
+        """,
+        iframe_depth=0,
+    )
+
+    assert {item["url"] for item in result["formats"]} == {
+        "https://common-player.example/media/meta-demo.mp4",
+        "https://common-player.example/media/json-demo.webm",
+    }
+
+
+def test_generic_adult_ie_reads_common_iframe_attributes() -> None:
+    extractor = GenericAdultIE(YoutubeDL({"quiet": True, "no_warnings": True}))
+
+    assert (
+        extractor._find_iframe_url(
+            "https://frame.example/watch/demo",
+            """<iframe data-player-url="/player/demo"></iframe>""",
+        )
+        == "https://frame.example/player/demo"
     )
 
 
@@ -272,7 +322,14 @@ def test_njav_ie_real_extract_follows_embed_player_and_hls(monkeypatch) -> None:
         "title": "Demo NJAV title",
         "thumbnail": "https://www.njav.com/thumb.webp",
         "age_limit": 18,
-        "formats": [{"url": hls_url, "format_id": "hls-720p", "height": 720}],
+        "formats": [
+            {
+                "url": hls_url,
+                "format_id": "hls-720p",
+                "height": 720,
+                "http_headers": NJAVIE._adult_site_headers(final_player_url),
+            }
+        ],
     }
     assert downloaded_pages == [
         (page_url, "rki-729-uncensored-leak", None, NJAVIE._adult_site_headers(page_url)),
@@ -357,7 +414,13 @@ def test_vlxx_ie_treats_media_vl_manifest_as_hls(monkeypatch) -> None:
         '<script>SRC = [{"type":"hls","file":"https://cdn.example.test/manifest-s1/03170.vl"}];</script>',
     )
 
-    assert formats == [{"url": "https://cdn.example.test/manifest-s1/03170.vl", "format_id": "hls"}]
+    assert formats == [
+        {
+            "url": "https://cdn.example.test/manifest-s1/03170.vl",
+            "format_id": "hls",
+            "http_headers": VLXXIE._adult_site_headers("https://play.vlstream.net/embed/token/s1"),
+        }
+    ]
     assert captured["video_id"] == "3170"
     assert captured["ext"] == "mp4"
     assert captured["m3u8_id"] == "hls"
