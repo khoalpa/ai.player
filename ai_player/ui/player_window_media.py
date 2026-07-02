@@ -384,13 +384,10 @@ class PlayerMediaMixin:
         return f":{source_stat.st_mtime_ns}:{source_stat.st_size}"
 
     def _set_document_mode(self, enabled: bool, duration_ms: int = 0, pages=None) -> None:
-        self._document_mode = enabled
-        self._document_elapsed_ms = 0
-        self._document_started_at = None
-        self._document_audio_sync_active = False
-        self._document_duration_ms = max(0, int(duration_ms))
-        self._document_pages = list(pages or [])
-        self._document_current_page_index = -1
+        if enabled:
+            self._document_state.enter_document(duration_ms=duration_ms, pages=pages)
+        else:
+            self._document_state.reset_for_video(reset_duration=True)
         if enabled:
             self._media_stack.setCurrentWidget(self._document_view)
             self._apply_media_aspect_ratio()

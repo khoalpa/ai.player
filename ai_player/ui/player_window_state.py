@@ -15,6 +15,29 @@ class DocumentPlaybackState:
     current_page_index: int = -1
     editor_active: bool = False
 
+    def reset_timeline(self, *, duration_ms: int = 0, pages: Iterable[object] | None = None) -> None:
+        self.elapsed_ms = 0
+        self.started_at = None
+        self.audio_sync_active = False
+        self.duration_ms = max(0, int(duration_ms or 0))
+        self.pages = list(pages or [])
+        self.current_page_index = -1
+
+    def enter_document(self, *, duration_ms: int, pages: Iterable[object] | None) -> None:
+        self.mode = True
+        self.editor_active = False
+        self.reset_timeline(duration_ms=duration_ms, pages=pages)
+
+    def reset_for_video(self, *, reset_duration: bool = False) -> None:
+        self.mode = False
+        self.editor_active = False
+        self.reset_timeline(duration_ms=0 if reset_duration else self.duration_ms, pages=())
+
+    def enter_editor(self) -> None:
+        self.mode = False
+        self.editor_active = True
+        self.reset_timeline(duration_ms=0, pages=())
+
 
 @dataclass
 class SubtitleOverlayState:

@@ -1781,14 +1781,9 @@ class PlayerSourceMixin:
         return {}
 
     def _reset_document_state_for_video(self) -> None:
+        self._document_state.reset_for_video()
         self._set_document_mode(False)
-        self._document_editor_active = False
         self._document_view.setReadOnly(True)
-        self._document_pages = []
-        self._document_current_page_index = -1
-        self._document_elapsed_ms = 0
-        self._document_started_at = None
-        self._document_audio_sync_active = False
         if self._selected_audio_source() in {"transcript", "document_editor"}:
             self._set_combo_data(self._audio_source_combo, "original")
         self._transcript_path_edit.clear()
@@ -2035,10 +2030,9 @@ class PlayerSourceMixin:
             return
         self._stop_dubbing()
         self._player.stop()
+        self._document_state.enter_editor()
         self._set_document_mode(False)
         self._document_editor_active = True
-        self._document_pages = []
-        self._document_current_page_index = -1
         self._video_path = None
         self._video_source_http_headers = {}
         self._transcript_path_edit.clear()

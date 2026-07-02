@@ -64,6 +64,58 @@ try {
         throw $Message
     }
 
+    $ArtifactInventoryPath = Join-Path $ProjectRoot "docs\release_artifact_inventory.md"
+    $ArtifactInventory = if (Test-Path $ArtifactInventoryPath) {
+        Get-Content -LiteralPath $ArtifactInventoryPath -Raw
+    } else {
+        ""
+    }
+    $TrackedFiles = & $Git.Source ls-files
+    if ($LASTEXITCODE -ne 0) {
+        throw "git ls-files failed."
+    }
+    $ArtifactExtensions = @(
+        ".7z",
+        ".dll",
+        ".dylib",
+        ".exe",
+        ".msi",
+        ".pdf",
+        ".pyd",
+        ".so",
+        ".zip"
+    )
+    $UndocumentedArtifacts = New-Object System.Collections.Generic.List[string]
+    foreach ($Path in $TrackedFiles) {
+        $Normalized = ($Path -replace "\\", "/").Trim("/")
+        if (-not $Normalized) {
+            continue
+        }
+        $Extension = [System.IO.Path]::GetExtension($Normalized).ToLowerInvariant()
+        if ($ArtifactExtensions -notcontains $Extension) {
+            continue
+        }
+        $IsRootArtifact = -not $Normalized.Contains("/")
+        $IsBundledToolArtifact = $Normalized.ToLowerInvariant().StartsWith("tools/")
+        if (-not ($IsRootArtifact -or $IsBundledToolArtifact)) {
+            continue
+        }
+        $InventoryToken = "``$Normalized``"
+        if (-not $ArtifactInventory.Contains($InventoryToken)) {
+            $UndocumentedArtifacts.Add($Normalized)
+        }
+    }
+
+    if ($UndocumentedArtifacts.Count -gt 0) {
+        $ArtifactLines = $UndocumentedArtifacts | ForEach-Object { "  - $_" }
+        $Message = (@(
+            "Release worktree check failed: tracked root/tool binary artifacts are missing from docs\release_artifact_inventory.md.",
+            "Document the artifact, owner, license/source, and release decision before sharing a public build.",
+            ""
+        ) + $ArtifactLines) -join [Environment]::NewLine
+        throw $Message
+    }
+
     if ($FailOnModified) {
         $Modified = & $Git.Source status --porcelain
         if ($LASTEXITCODE -ne 0) {

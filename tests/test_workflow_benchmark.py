@@ -27,6 +27,25 @@ def test_workflow_benchmark_result_includes_stable_regression_metadata() -> None
     assert result["config"]["translator_provider"] == "nllb_ct2"
 
 
+def test_workflow_benchmark_summary_surfaces_user_visible_metrics() -> None:
+    summary = workflow_benchmark.summarize_benchmark_result(
+        {
+            "timings": {"asr_seconds": 2.0, "translation_seconds": 0.5, "tts_seconds": 1.0},
+            "details": {
+                "asr_segments": 3,
+                "asr_language": "en",
+                "tts_output_duration_seconds": 1.25,
+                "tts_output_bytes": 4096,
+            },
+        }
+    )
+
+    assert "asr: 2.00s" in summary
+    assert "translation: 0.50s" in summary
+    assert "tts_output_duration: 1.25s" in summary
+    assert "tts_output_bytes: 4096" in summary
+
+
 def test_workflow_benchmark_regression_compare_reports_slow_stages() -> None:
     current = {"timings": {"asr_seconds": 1.42, "tts_seconds": 1.0}}
     baseline = {"timings": {"asr_seconds": 1.0, "tts_seconds": 1.0, "missing_seconds": 1.0}}

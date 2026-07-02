@@ -73,14 +73,8 @@ class PlayerDubbingMixin:
             self._export_button.setEnabled(True)
         self._exit_video_fullscreen()
         self._player.stop()
+        self._document_state.reset_for_video(reset_duration=True)
         self._set_document_mode(False)
-        self._document_editor_active = False
-        self._document_pages = []
-        self._document_current_page_index = -1
-        self._document_elapsed_ms = 0
-        self._document_started_at = None
-        self._document_audio_sync_active = False
-        self._document_duration_ms = 0
         self._video_path = None
         self._video_source_http_headers = {}
         self._runtime_media_path = ""

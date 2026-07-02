@@ -13,6 +13,29 @@ def test_workflow_smoke_baseline_loads_and_checks_current_samples() -> None:
     assert metrics["samples"]["demo_transcript"]["segment_count"] == 2
 
 
+def test_workflow_smoke_summary_surfaces_sample_duration_and_failures() -> None:
+    result = {
+        "metrics": {
+            "samples": {
+                "demo_video": {
+                    "duration_seconds": 4.0,
+                    "has_audio_stream": True,
+                    "has_video_stream": True,
+                },
+                "demo_transcript": {"segment_count": 2},
+            }
+        },
+        "failures": [],
+    }
+
+    summary = workflow_smoke_check.summarize_smoke_result(result)
+
+    assert "demo_video: 4.00s" in summary
+    assert "audio=True" in summary
+    assert "demo_transcript_segments=2" in summary
+    assert "failures=0" in summary
+
+
 def test_workflow_smoke_compare_reports_media_regressions() -> None:
     metrics = {
         "samples": {

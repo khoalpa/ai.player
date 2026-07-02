@@ -54,6 +54,29 @@ def test_runtime_health_reports_local_model_paths_and_export_tools(monkeypatch, 
     assert _item(items, "Export").status == "READY"
 
 
+def test_runtime_health_reports_missing_local_models(monkeypatch, tmp_path) -> None:
+    missing = tmp_path / "missing-model"
+    monkeypatch.setattr(runtime_health, "_tool_exists", lambda _name: True)
+    monkeypatch.setattr(runtime_health, "_executable_exists", lambda _value: True)
+    config = AppConfig(
+        asr_provider="faster_whisper",
+        whisper_model=str(missing / "whisper"),
+        translator_provider="nllb_ct2",
+        local_translation_model=str(missing / "translation"),
+        tts_provider="vieneu",
+        vieneu_tts_model_name=str(missing / "tts.gguf"),
+    )
+
+    items = runtime_health.build_runtime_health(config)
+
+    assert _item(items, "ASR").status == "ATTENTION"
+    assert "Whisper model path is missing" in _item(items, "ASR").detail
+    assert _item(items, "Translation").status == "ATTENTION"
+    assert "Local translation model path is missing" in _item(items, "Translation").detail
+    assert _item(items, "TTS").status == "ATTENTION"
+    assert "VieNeu model path is missing" in _item(items, "TTS").detail
+
+
 def test_runtime_health_formats_summary() -> None:
     items = (
         runtime_health.RuntimeHealthItem("ASR", "READY", "ok"),

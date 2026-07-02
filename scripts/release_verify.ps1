@@ -264,6 +264,19 @@ try {
         Write-BuildProfileSummary -Profile $Profile -Status "passed"
     }
 
+    function Invoke-DependencyAuditIfNeeded {
+        param([string[]]$SelectedBuilds)
+
+        $NeedsAudit = @($SelectedBuilds | Where-Object { $_ -in @("OfflineCpu", "Gpu") }).Count -gt 0
+        if (-not $NeedsAudit) {
+            return
+        }
+        Invoke-ReleaseStep `
+            -Name "dependency-audit" `
+            -FilePath (Join-Path $ProjectRoot "scripts\audit_dependencies.ps1") `
+            -Arguments @("-ReviewAcceptedVulnerabilities")
+    }
+
     Invoke-ReleaseStep `
         -Name "worktree" `
         -FilePath (Join-Path $ProjectRoot "scripts\check_release_worktree.ps1") `
@@ -286,6 +299,7 @@ try {
 
     $BuildOrder = @("Lite", "OfflineCpu", "Gpu")
     $SelectedBuilds = @($BuildOrder | Where-Object { $BuildProfiles -contains $_ })
+    Invoke-DependencyAuditIfNeeded $SelectedBuilds
     foreach ($Profile in $SelectedBuilds) {
         Invoke-PortableBuild $Profile
     }

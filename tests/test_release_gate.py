@@ -35,14 +35,20 @@ def test_release_worktree_gate_checks_untracked_source_and_plugins() -> None:
     build_script = (PROJECT_ROOT / "scripts" / "build_portable.ps1").read_text(encoding="utf-8")
     checklist = (PROJECT_ROOT / "docs" / "release_checklist.md").read_text(encoding="utf-8")
     portable_build = (PROJECT_ROOT / "docs" / "portable_build.md").read_text(encoding="utf-8")
+    artifact_inventory = (PROJECT_ROOT / "docs" / "release_artifact_inventory.md").read_text(encoding="utf-8")
 
     assert "ls-files -o --exclude-standard" in script
     assert 'StartsWith("plugins/")' in script
+    assert "release_artifact_inventory.md" in script
+    assert "tracked root/tool binary artifacts" in script
+    assert "`App configuration.pdf`" in artifact_inventory
+    assert "`tools/ffmpeg/bin/ffmpeg.exe`" in artifact_inventory
     assert "-AllowUntrackedPath" in script
     assert "[switch]$FailOnModified" in script
     assert "[switch]$SkipReleaseWorktreeCheck" in build_script
     assert "& $ReleaseWorktreeCheck -FailOnModified" in build_script
     assert "check_release_worktree.ps1 -FailOnModified" in checklist
+    assert "release_artifact_inventory.md" in checklist
     assert "check_release_worktree.ps1 -FailOnModified" in portable_build
     assert "-SkipReleaseWorktreeCheck" in checklist
     assert "-SkipReleaseWorktreeCheck" in portable_build
@@ -83,12 +89,15 @@ def test_release_verify_runs_required_short_gate_and_ordered_builds() -> None:
     assert '"pip", "check"' in script
     assert "runtime_doctor.py" in script
     assert "workflow_smoke_check.py" in script
+    assert "audit_dependencies.ps1" in script
+    assert "-ReviewAcceptedVulnerabilities" in script
     assert "tests\\test_release_smoke.py" in script
     assert '$BuildOrder = @("Lite", "OfflineCpu", "Gpu")' in script
     assert "build_portable.ps1" in script
     assert "smoke_launch_app.ps1" in script
     assert "release_verify.ps1" in checklist
     assert "workflow_smoke_baseline.json" in checklist
+    assert "audit_dependencies.ps1 -ReviewAcceptedVulnerabilities" in checklist
 
 
 def test_release_signing_contract_is_documented_and_guarded() -> None:

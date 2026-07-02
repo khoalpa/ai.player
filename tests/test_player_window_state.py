@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from ai_player.ui.player_window_state import (
+    DocumentPlaybackState,
     MediaFrameState,
     MediaProcessingState,
     PlaybackUiState,
@@ -10,6 +11,48 @@ from ai_player.ui.player_window_state import (
     TelegramChannelState,
     WorkerLifecycleState,
 )
+
+
+def test_document_playback_state_owns_timeline_transitions() -> None:
+    page = object()
+    state = DocumentPlaybackState()
+
+    state.enter_document(duration_ms=1200, pages=[page])
+
+    assert state.mode is True
+    assert state.editor_active is False
+    assert state.duration_ms == 1200
+    assert state.pages == [page]
+    assert state.current_page_index == -1
+
+    state.elapsed_ms = 300
+    state.started_at = 1.5
+    state.audio_sync_active = True
+    state.enter_editor()
+
+    assert state.mode is False
+    assert state.editor_active is True
+    assert state.elapsed_ms == 0
+    assert state.started_at is None
+    assert state.audio_sync_active is False
+    assert state.duration_ms == 0
+    assert state.pages == []
+
+
+def test_document_playback_state_can_reset_for_video_without_dropping_duration() -> None:
+    state = DocumentPlaybackState(mode=True, duration_ms=5000, pages=[object()], current_page_index=2)
+
+    state.reset_for_video()
+
+    assert state.mode is False
+    assert state.editor_active is False
+    assert state.duration_ms == 5000
+    assert state.pages == []
+    assert state.current_page_index == -1
+
+    state.reset_for_video(reset_duration=True)
+
+    assert state.duration_ms == 0
 
 
 def test_media_processing_state_uses_independent_cache_maps() -> None:

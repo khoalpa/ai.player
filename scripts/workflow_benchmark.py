@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ai_player.core.cli_encoding import prefer_utf8_stdio
 from ai_player.core.config import RUNTIME_DIR, AppConfig
+from ai_player.services.ffmpeg import probe_duration_seconds
 from ai_player.services.translation_runtime import get_shared_vietnamese_translator
 from ai_player.services.tts import create_tts_provider
 from ai_player.services.tts_base import normalize_tts_provider, tts_output_suffix
@@ -108,6 +109,11 @@ def main() -> int:
             timings["tts_seconds"] = _time_call(
                 lambda: provider.synthesize(args.text, output_audio, voice=config.tts_voice)
             )
+            details["tts_output_path"] = str(output_audio)
+            details["tts_output_bytes"] = output_audio.stat().st_size if output_audio.exists() else 0
+            details["tts_output_duration_seconds"] = (
+                probe_duration_seconds(output_audio) if output_audio.exists() else 0.0
+            )
         finally:
             provider.close()
 
@@ -122,6 +128,7 @@ def main() -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result, indent=2))
+    print(summarize_benchmark_result(result))
     baseline = {}
     if args.baseline_workflow:
         baseline = load_named_workflow_baseline(
@@ -175,6 +182,32 @@ def build_benchmark_result(
         "timings": dict(sorted(timings.items())),
         "details": dict(sorted(details.items())),
     }
+
+
+def summarize_benchmark_result(result: dict[str, object]) -> str:
+    timings = result.get("timings") if isinstance(result, dict) else {}
+    details = result.get("details") if isinstance(result, dict) else {}
+    if not isinstance(timings, dict):
+        timings = {}
+    if not isinstance(details, dict):
+        details = {}
+
+    parts = ["Workflow benchmark summary"]
+    for key in ("asr_seconds", "translation_seconds", "tts_seconds"):
+        value = _positive_float(timings.get(key))
+        if value > 0:
+            parts.append(f"{key.removesuffix('_seconds')}: {value:.2f}s")
+    if "asr_segments" in details:
+        parts.append(f"asr_segments: {int(details.get('asr_segments') or 0)}")
+    if details.get("asr_language"):
+        parts.append(f"asr_language: {details['asr_language']}")
+    duration = _positive_float(details.get("tts_output_duration_seconds"))
+    if duration > 0:
+        parts.append(f"tts_output_duration: {duration:.2f}s")
+    bytes_value = int(details.get("tts_output_bytes") or 0)
+    if bytes_value > 0:
+        parts.append(f"tts_output_bytes: {bytes_value}")
+    return " | ".join(parts)
 
 
 def compare_timing_regressions(

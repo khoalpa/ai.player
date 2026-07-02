@@ -15,6 +15,9 @@ Use this checklist before sharing a build.
   explicitly allowed with `-AllowUntrackedPath`.
 - Review optional plugin scope against `docs\plugin_policy.md`, especially any
   untracked source under `plugins\`.
+- Review `docs\release_artifact_inventory.md` for tracked root documents and
+  bundled tool binaries before public release; move local/private artifacts out
+  of the repository or document the release decision there.
 - Review binary fixture changes separately with `git diff --stat` so regenerated samples are not bundled by accident.
 - Install the release dependency set with `.\.venv\Scripts\python.exe -m pip install -c constraints\windows-release-py310.txt -e ".[dev,packaging,offline-ai,gpu,audio-separation,audit]"`.
 - Run `.\.venv\Scripts\python.exe -m ruff check .`.
@@ -40,6 +43,10 @@ Use this checklist before sharing a build.
 - Leave `AI_PLAYER_INCLUDE_PRIVATE_TELEGRAM_PLUGIN` unset for public release
   builds. Use the Internal profile when authenticated client plugins are bundled.
 - Run `.\scripts\audit_dependencies.ps1` and triage any unresolved advisories. If audit tools are not installed yet, run it once with `-InstallTools`.
+- `.\scripts\release_verify.ps1 -BuildProfiles OfflineCpu` and
+  `.\scripts\release_verify.ps1 -BuildProfiles Gpu` run
+  `.\scripts\audit_dependencies.ps1 -ReviewAcceptedVulnerabilities`
+  automatically before building the portable artifact.
 - Run `.\scripts\audit_dependencies.ps1 -ReviewAcceptedVulnerabilities`
   before release approval to verify the only remaining findings are explicitly
   accepted in `docs\dependency_audit.md`.

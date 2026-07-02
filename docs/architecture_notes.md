@@ -23,9 +23,10 @@ Current extracted owners:
 - `ai_player.workers.dubbing_schedule.DubbingAudioSchedule` owns pending target
   audio ordering, subtitle duplicate keys, and nearby text duplicate windows for
   realtime dubbing.
-- `ai_player.ui.player_window_state.DocumentPlaybackState` and
-  `SubtitleOverlayState` hold the first document/subtitle state moved out of
-  `PlayerWindow` while preserving the old mixin attribute API.
+- `ai_player.ui.player_window_state.DocumentPlaybackState` owns document
+  timeline reset/entry transitions, and `SubtitleOverlayState` holds subtitle
+  overlay state moved out of `PlayerWindow` while preserving the old mixin
+  attribute API.
 - `ai_player.ui.player_window_state.MediaProcessingState` owns source voice
   filter worker state, playback compatibility worker state, and their cache maps
   while preserving the existing mixin attribute API.

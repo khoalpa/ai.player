@@ -32,6 +32,7 @@ def main() -> int:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result, indent=2))
+    print(summarize_smoke_result(result))
     return 2 if failures else 0
 
 
@@ -104,6 +105,28 @@ def compare_smoke_metrics(metrics: dict[str, object], baseline: dict[str, object
 def count_srt_segments(text: str) -> int:
     blocks = [block.strip() for block in str(text or "").replace("\r\n", "\n").split("\n\n")]
     return sum(1 for block in blocks if "-->" in block)
+
+
+def summarize_smoke_result(result: dict[str, object]) -> str:
+    metrics = result.get("metrics") if isinstance(result, dict) else {}
+    failures = result.get("failures") if isinstance(result, dict) else []
+    samples = metrics.get("samples") if isinstance(metrics, dict) else {}
+    if not isinstance(samples, dict):
+        samples = {}
+    demo_video = samples.get("demo_video") if isinstance(samples.get("demo_video"), dict) else {}
+    demo_transcript = samples.get("demo_transcript") if isinstance(samples.get("demo_transcript"), dict) else {}
+    parts = [
+        "Workflow smoke summary",
+        f"demo_video: {float(demo_video.get('duration_seconds') or 0.0):.2f}s",
+        f"audio={bool(demo_video.get('has_audio_stream'))}",
+        f"video={bool(demo_video.get('has_video_stream'))}",
+        f"demo_transcript_segments={int(demo_transcript.get('segment_count') or 0)}",
+    ]
+    if failures:
+        parts.append(f"failures={len(failures)}")
+    else:
+        parts.append("failures=0")
+    return " | ".join(parts)
 
 
 def _compare_sample(name: str, current: dict[str, object], expected: dict[str, object]) -> list[str]:
