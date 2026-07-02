@@ -63,6 +63,7 @@ from ai_player.services.source_voice_filter import (
 from ai_player.services.speaker_voice_selector import normalize_speaker_gender_provider, normalize_voice_gender_mode
 from ai_player.services.tts_base import available_vieneu_modes
 from ai_player.services.video_source import is_supported_browser_video_url
+from ai_player.ui.media_start_panel import recent_source_label
 from ai_player.ui.player_window_media import DEFAULT_SIDEBAR_PANEL_SIZES
 from ai_player.ui.player_window_media_browser import DEFAULT_MEDIA_HOME_URL, build_media_browser_buttons
 from ai_player.ui.player_window_readiness import READINESS_PROFILES
@@ -3282,13 +3283,7 @@ class PlayerLayoutMixin:
 
     @staticmethod
     def _media_start_recent_source_label(source: str) -> str:
-        value = str(source or "").strip()
-        parsed = urlparse(value)
-        if parsed.netloc:
-            label = f"{parsed.netloc}{parsed.path}"
-        else:
-            label = Path(value).name or value
-        return label if len(label) <= 48 else f"...{label[-45:]}"
+        return recent_source_label(source)
 
     def _media_start_button_tooltip(self, title_key: str, detail_key: str) -> str:
         return f"{self._tr(title_key)}\n{self._tr(detail_key)}"

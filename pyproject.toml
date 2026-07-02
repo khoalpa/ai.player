@@ -93,6 +93,11 @@ ai_player = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "fast: tests included in the regular fast feedback loop",
+  "slow: tests that exercise GUI, FFmpeg, packaging, or release-scale workflows and can take noticeably longer",
+  "smoke: high-level UI, workflow, or release smoke coverage",
+]
 
 [tool.ruff]
 line-length = 120

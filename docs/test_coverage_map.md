@@ -4,6 +4,14 @@ Use this map to keep release risk visible as the app grows. It is not a
 line-coverage report; it maps important user/runtime workflows to the tests that
 protect them.
 
+## Test Selection
+
+- Fast feedback loop: `.\.venv\Scripts\python.exe -m pytest -m fast`.
+- Slow workflow coverage: `.\.venv\Scripts\python.exe -m pytest -m slow`.
+- High-level smoke coverage: `.\.venv\Scripts\python.exe -m pytest -m smoke`.
+- Equivalent slow exclusion: `.\.venv\Scripts\python.exe -m pytest -m "not slow"`.
+- Full verification still uses `.\.venv\Scripts\python.exe -m pytest`.
+
 ## Covered Workflows
 
 - App startup and UI wiring:
