@@ -12,7 +12,6 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from difflib import SequenceMatcher
 from pathlib import Path
-from urllib.parse import urlparse
 
 from PySide6.QtCore import QThread, Signal
 
@@ -73,6 +72,14 @@ from ai_player.services.whisper_runtime import (
     effective_whisper_device as _effective_whisper_device,
 )
 from ai_player.workers.asr_fallback import transcribe_model_with_device_fallback
+from ai_player.workers.dubbing_runtime import (
+    can_process_segments_async,
+    is_http_source,
+    is_live_capture_source,
+    required_ready_ahead_seconds,
+    segment_worker_count,
+    source_audio_cache_input,
+)
 from ai_player.workers.dubbing_schedule import DubbingAudioSchedule, PendingAudio
 from ai_player.workers.worker_values import clamped_int as _clamped_int
 from ai_player.workers.worker_values import clean_language as _clean_language
@@ -89,14 +96,6 @@ LOGGER = get_logger(__name__)
 
 PLAYBACK_AUDIO_LEAD_SECONDS = 0.25
 PLAYBACK_SYNC_HOLD_TOLERANCE_SECONDS = 0.35
-DIRECT_HTTP_SOURCE_CACHE_SUFFIXES = {
-    ".avi",
-    ".m4v",
-    ".mkv",
-    ".mov",
-    ".mp4",
-    ".webm",
-}
 SUPPORTED_AUDIO_SOURCES = {
     "original",
     "system",
@@ -299,7 +298,7 @@ class DubbingWorker(QThread):
                 pop_hf_offline_environment(offline_env)
 
     def _is_live_capture_source(self) -> bool:
-        return self._config.audio_source in {"system", "microphone", "system_microphone"}
+        return is_live_capture_source(self._config.audio_source)
 
     def _segment_seconds(self) -> float:
         return max(0.25, _finite_seconds(self._config.segment_seconds, 5.0))
@@ -311,7 +310,7 @@ class DubbingWorker(QThread):
         return max(0.0, _finite_seconds(self._config.dubbing_start_delay_seconds, 0.0))
 
     def _can_process_segments_async(self) -> bool:
-        return self._config.audio_source in {"original", "subtitle"}
+        return can_process_segments_async(self._config.audio_source)
 
     def _run_transcript_source(self) -> None:
         entries = _load_transcript_entries(
@@ -510,16 +509,10 @@ class DubbingWorker(QThread):
             self._covered_until += self._segment_seconds()
 
     def _segment_worker_count(self) -> int:
-        configured = os.getenv("AI_PLAYER_DUBBING_SEGMENT_WORKERS", "").strip()
-        if configured:
-            try:
-                return max(1, min(8, int(configured)))
-            except (OverflowError, ValueError):
-                pass
-        if self._config.audio_source == "original":
-            return 1
-        cpu_count = os.cpu_count() or 2
-        return max(1, min(4, cpu_count // 2, _positive_int(self._config.dubbing_lookahead_segments, default=1)))
+        return segment_worker_count(
+            audio_source=self._config.audio_source,
+            lookahead_segments=self._config.dubbing_lookahead_segments,
+        )
 
     def _shutdown_segment_executor(self) -> None:
         self._cancel_segment_futures()
@@ -633,14 +626,12 @@ class DubbingWorker(QThread):
             self._request_resume(self._tr("worker_dubbing_ready"))
 
     def _required_ready_ahead_seconds(self) -> float:
-        if self._config.audio_source in {"transcript", "document_editor"}:
-            return 0.5
-        configured_ready_ahead = self._min_ready_ahead_seconds()
-        segment_ready_ahead = max(
-            0.5,
-            self._segment_seconds() * _positive_int(self._config.dubbing_prebuffer_segments, default=1),
+        return required_ready_ahead_seconds(
+            audio_source=self._config.audio_source,
+            min_ready_ahead_seconds=self._config.dubbing_min_ready_ahead_seconds,
+            segment_seconds=self._config.segment_seconds,
+            prebuffer_segments=self._config.dubbing_prebuffer_segments,
         )
-        return min(configured_ready_ahead, segment_ready_ahead)
 
     def _process_segment(self, start_seconds: float) -> None:
         if self._temp_dir is None:
@@ -1006,21 +997,7 @@ class DubbingWorker(QThread):
         self._source_audio_cache_thread.start()
 
     def _source_audio_cache_input(self) -> str | None:
-        if self._config.audio_source != "original":
-            return None
-        source = str(self._video_path or "").strip()
-        if not source:
-            return None
-        if self._is_http_source(source):
-            parsed = urlparse(source)
-            suffix = Path(parsed.path).suffix.lower()
-            if parsed.scheme.lower() in {"http", "https"} and suffix in DIRECT_HTTP_SOURCE_CACHE_SUFFIXES:
-                return source
-            return None
-        source_path = Path(source)
-        if source_path.exists() and source_path.is_file():
-            return str(source_path)
-        return None
+        return source_audio_cache_input(self._config.audio_source, self._video_path or "")
 
     def _build_source_audio_cache(self, source_path: str, cache_path: Path) -> None:
         temp_path = cache_path.with_suffix(".tmp.wav")
@@ -1204,7 +1181,7 @@ class DubbingWorker(QThread):
 
     @staticmethod
     def _is_http_source(value: str) -> bool:
-        return value.lower().startswith(("http://", "https://"))
+        return is_http_source(value)
 
     def _sync_hold_supported(self) -> bool:
         return self._config.audio_source not in {

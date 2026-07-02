@@ -63,7 +63,13 @@ from ai_player.services.source_voice_filter import (
 from ai_player.services.speaker_voice_selector import normalize_speaker_gender_provider, normalize_voice_gender_mode
 from ai_player.services.tts_base import available_vieneu_modes
 from ai_player.services.video_source import is_supported_browser_video_url
-from ai_player.ui.media_start_panel import recent_source_label
+from ai_player.ui.media_start_panel import (
+    auto_goal_profile,
+    auto_goal_profile_reason_keys,
+    preset_card_detail_key,
+    recent_source_label,
+    workflow_badge_key,
+)
 from ai_player.ui.player_window_media import DEFAULT_SIDEBAR_PANEL_SIZES
 from ai_player.ui.player_window_media_browser import DEFAULT_MEDIA_HOME_URL, build_media_browser_buttons
 from ai_player.ui.player_window_readiness import READINESS_PROFILES
@@ -2593,29 +2599,10 @@ class PlayerLayoutMixin:
         self._start_workflow(workflow, action)
 
     def _auto_goal_profile(self, workflow: str) -> str:
-        workflow_key = str(workflow or "").strip().lower()
-        if workflow_key == "export":
-            return "quality"
-        if workflow_key in {"document", "meeting"}:
-            return "meeting_document"
-        if workflow_key in {"video", "url"} and self._offline_goal_ready():
-            return "offline"
-        return "quick"
+        return auto_goal_profile(workflow, offline_ready=self._offline_goal_ready())
 
     def _auto_goal_profile_reason(self, workflow: str, profile_key: str) -> str:
-        profile_title_key = {
-            "quick": "first_run_profile_quick",
-            "offline": "first_run_profile_offline",
-            "quality": "first_run_profile_quality",
-            "meeting_document": "first_run_profile_meeting_document",
-        }.get(profile_key, "first_run_profile_auto")
-        reason_key = {
-            "export": "auto_preset_reason_export",
-            "document": "auto_preset_reason_document",
-            "meeting": "auto_preset_reason_meeting",
-            "url": "auto_preset_reason_url",
-            "video": "auto_preset_reason_video",
-        }.get(workflow, "auto_preset_reason_default")
+        profile_title_key, reason_key = auto_goal_profile_reason_keys(workflow, profile_key)
         return self._tr("auto_preset_selected").format(
             profile=self._tr(profile_title_key),
             reason=self._tr(reason_key),
@@ -2837,14 +2824,7 @@ class PlayerLayoutMixin:
             button.setToolTip(detail or label)
 
     def _preset_card_detail(self, preset_id: str) -> str:
-        keys = {
-            "low_latency": "preset_card_low_latency",
-            "offline_lite": "preset_card_offline_lite",
-            "balanced": "preset_card_balanced",
-            "quality": "preset_card_quality",
-        }
-        key = keys.get(preset_id, "preset_card_default")
-        return self._tr(key)
+        return self._tr(preset_card_detail_key(preset_id))
 
     def _media_start_panel(self) -> QFrame:
         panel = QFrame()
@@ -3154,12 +3134,7 @@ class PlayerLayoutMixin:
 
     def _workflow_runtime_status_text(self, workflow_key: str, preset_id: str) -> str:
         preset_label = self._preset_display_label(preset_id)
-        requirements = {
-            "video": "workflow_badge_video",
-            "url": "workflow_badge_url",
-            "document": "workflow_badge_document",
-            "meeting": "workflow_badge_meeting",
-        }.get(workflow_key, "workflow_badge_default")
+        requirements = workflow_badge_key(workflow_key)
         return self._tr(requirements).format(preset=preset_label)
 
     def _workflow_preset_tooltip(self, workflow_key: str, preset_id: str) -> str:

@@ -65,6 +65,14 @@ Current extracted owners:
   settings. `PlayerSettingsMixin` keeps thin compatibility wrappers while the
   controller preserves secrets for online providers that may be hidden by the
   current Lite/offline provider profile.
+- `ai_player.ui.media_start_panel` owns pure Media Start launcher decisions such
+  as automatic profile selection, workflow badge keys, preset-card detail keys,
+  and recent-source labels while `PlayerLayoutMixin` keeps widget construction
+  and signal wiring.
+- `ai_player.workers.dubbing_runtime` owns pure realtime dubbing decisions such
+  as live/async source classification, segment worker counts, source-audio cache
+  eligibility, and ready-ahead thresholds while `DubbingWorker` keeps Qt signals
+  and long-running worker orchestration.
 
 ## TTS Service Boundaries
 
