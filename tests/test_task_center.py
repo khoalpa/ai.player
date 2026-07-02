@@ -3,7 +3,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 
+from ai_player.services.adult_extractors import AdultHostSupport
 from ai_player.services.workflow_cache import clear_workflow_text_cache, get_text_result, put_text_result
 from ai_player.ui import task_center
 from ai_player.ui.background_task_controller import BackgroundTaskController
@@ -263,6 +266,32 @@ def test_task_center_dashboard_retry_action(qapp) -> None:
 
         assert calls == ["retry"]
         assert window.statusBar().currentMessage() == window._tr("task_center_retry_started")
+        window._settings_save_timer.stop()
+    finally:
+        window.close()
+
+
+def test_adult_host_open_button_uses_registry_open_url(qapp) -> None:
+    opened = []
+    window = PlayerWindow()
+    try:
+        window._open_adult_host_url = lambda url: opened.append(url)
+        button = window._adult_host_open_button(
+            AdultHostSupport(
+                site_key="buomtv",
+                domains=("buomtv.*", "*.buomtv.*"),
+                description="demo",
+                open_url="https://buomtv.net",
+                mode="generic",
+            )
+        )
+
+        assert button.isEnabled()
+        assert button.toolTip() == "https://buomtv.net"
+
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+
+        assert opened == ["https://buomtv.net"]
         window._settings_save_timer.stop()
     finally:
         window.close()

@@ -32,9 +32,10 @@ class _FakeDubbingWorker:
     stopped_count = 0
     deleted_count = 0
 
-    def __init__(self, video_path, _get_time_ms, _is_playing, config, parent=None) -> None:
+    def __init__(self, video_path, _get_time_ms, _is_playing, config, source_http_headers=None, parent=None) -> None:
         self.video_path = str(video_path)
         self.config = config
+        self.source_http_headers = source_http_headers or {}
         self.parent = parent
         self.status_changed = _Signal()
         self.segment_ready = _Signal()

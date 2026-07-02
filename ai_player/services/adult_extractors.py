@@ -3,10 +3,8 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 
 from ai_player.core.config import PROJECT_ROOT
-
 
 LOCAL_ADULT_EXTRACTOR_PLUGIN = PROJECT_ROOT / "plugins" / "ai-player-adult-extractors"
 REGISTRY_PATH = LOCAL_ADULT_EXTRACTOR_PLUGIN / "yt_dlp_plugins" / "extractor" / "adult_sites_registry.json"
@@ -38,7 +36,7 @@ def supported_adult_hosts() -> tuple[AdultHostSupport, ...]:
                 site_key=str(site_key),
                 domains=clean_domains,
                 description=_host_description(str(site_key), profile),
-                open_url=_primary_host_url(clean_domains),
+                open_url=_profile_open_url(profile, clean_domains),
                 mode=_support_mode(profile),
                 iframe_depth=profile.get("iframe_depth") if isinstance(profile.get("iframe_depth"), int) else None,
                 accept_language=str(profile.get("accept_language") or ""),
@@ -88,6 +86,13 @@ def _primary_host_url(domains: tuple[str, ...]) -> str:
         if clean and "*" not in clean:
             return f"https://{clean}"
     return ""
+
+
+def _profile_open_url(profile: dict[str, object], domains: tuple[str, ...]) -> str:
+    open_url = str(profile.get("open_url") or "").strip()
+    if open_url.startswith(("http://", "https://")):
+        return open_url
+    return _primary_host_url(domains)
 
 
 def _adult_site_registry() -> dict[str, dict[str, object]]:

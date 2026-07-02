@@ -51,6 +51,7 @@
   },
   "buomtv": {
     "domains": ["buomtv.*", "*.buomtv.*"],
+    "open_url": "https://buomtv.net",
     "iframe_depth": 1,
     "accept_language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
   },

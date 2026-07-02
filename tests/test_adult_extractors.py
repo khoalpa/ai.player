@@ -74,6 +74,7 @@ def test_supported_adult_hosts_service_lists_registry_modes() -> None:
     assert "JAV/Asia" in rows["jable"].description
     assert rows["jable"].iframe_depth == 2
     assert rows["jable"].open_url == "https://jable.tv"
+    assert rows["buomtv"].open_url == "https://buomtv.net"
     assert rows["vlxx"].open_url == ""
     assert summary["sites"] == len(rows)
     assert summary["hosts"] >= len(rows)
@@ -173,7 +174,9 @@ def test_generic_adult_ie_reads_common_html_and_json_media_urls(monkeypatch) -> 
         <html>
           <head><meta itemprop="contentUrl" content="/media/meta-demo.mp4"></head>
           <body>
-            <script type="application/json">{"streamUrl":"/media/json-demo.webm","sources":"/media/source-demo.mp4"}</script>
+            <script type="application/json">
+              {"streamUrl":"/media/json-demo.webm","sources":"/media/source-demo.mp4"}
+            </script>
             <script>jwplayer("demo").setup({sources: [{file: "/media/jwplayer-demo.mp4", label: "720p"}]});</script>
             <script>videojs("demo").src([{src: "/media/videojs-demo.mp4", type: "video/mp4"}]);</script>
             <script>quality_720p = "/media/quality-demo.mp4";</script>
