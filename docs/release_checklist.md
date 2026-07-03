@@ -30,6 +30,9 @@ Use this checklist before sharing a build.
 - For distributable artifacts, run release verification with the selected
   profile and signing requirement, for example
   `.\scripts\release_verify.ps1 -BuildProfiles Lite -RequireSignature`.
+- If WDAC/Application Control blocks the signed portable build, generate and
+  deploy the supplemental signer policy from an elevated PowerShell session:
+  `.\scripts\create_wdac_ai_player_policy.ps1 -Deploy -ExpectedSignerThumbprint "<thumbprint>"`.
 - Run `.\.venv\Scripts\python.exe .\scripts\compare_performance_presets.py --language vi`
   to review preset latency/quality tradeoffs before changing release defaults.
 - Run `.\.venv\Scripts\python.exe .\scripts\workflow_smoke_check.py --output data\tmp\workflow-smoke-current.json`
