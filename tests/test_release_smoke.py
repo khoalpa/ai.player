@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from ai_player.core.config import AppConfig
+from ai_player.services import document_reader as docs
 from ai_player.services.ffmpeg import probe_duration_seconds, run_ffmpeg
 from ai_player.workers import export_worker
 from scripts import workflow_smoke_check
@@ -140,6 +141,45 @@ def test_release_smoke_exports_staged_sample_media(monkeypatch, qapp, tmp_path) 
     assert len(words_payload["segments"]) >= int(asr_expectations["min_segment_count"])
     _assert_export_output_metrics(tmp_path / "audio" / "final_mix.wav", "audio")
     _assert_export_output_metrics(tmp_path / "dubbed_video.mp4", "video")
+
+
+def test_release_smoke_document_text_to_transcript_audio_export(monkeypatch, qapp, tmp_path) -> None:
+    sample_video = Path("samples/demo-video.mp4")
+    if not sample_video.exists():
+        pytest.skip("sample video is not available")
+
+    monkeypatch.setattr(docs, "CONFIG_DIR", tmp_path)
+    transcript = docs.create_text_document_transcript(
+        "AI Player document smoke. This creates a short transcript timeline.",
+        title="Document smoke",
+        seconds_per_segment=1,
+    )
+    output_path = tmp_path / "document-smoke.wav"
+    config = AppConfig(
+        audio_source="document_editor",
+        transcript_path=str(transcript.transcript_path),
+        translator_provider="none",
+        local_translation_offline=False,
+        tts_provider="vieneu",
+        vieneu_tts_offline=False,
+    )
+    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: _SilentTTSProvider())
+    monkeypatch.setattr(export_worker, "_export_worker_count", lambda: 1)
+    worker = export_worker.DubbingExportWorker(
+        str(sample_video),
+        str(output_path),
+        "audio",
+        config,
+        export_worker.ExportRange(0.0, 2.0),
+    )
+    failures: list[str] = []
+    worker.failed.connect(failures.append)
+
+    worker.run()
+
+    assert failures == []
+    assert transcript.segment_count >= 1
+    _assert_export_output_metrics(output_path, "audio")
 
 
 def _workflow_expectations() -> dict[str, dict[str, object]]:

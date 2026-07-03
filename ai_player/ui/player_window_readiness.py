@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import fields, replace
-from typing import Any
-
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
@@ -18,49 +15,25 @@ from PySide6.QtWidgets import (
 )
 
 from ai_player.core.config import MODEL_ROOT, AppConfig
-from ai_player.core.runtime_health import build_runtime_health, format_runtime_health
-from ai_player.ui.player_window_utils import PERFORMANCE_PRESETS
-
-READINESS_PROFILES = (
-    {
-        "key": "auto",
-        "preset": "balanced",
-        "title": "first_run_profile_auto",
-        "detail": "first_run_profile_auto_detail",
-    },
-    {
-        "key": "quick",
-        "preset": "low_latency",
-        "title": "first_run_profile_quick",
-        "detail": "first_run_profile_quick_detail",
-    },
-    {
-        "key": "offline",
-        "preset": "offline_lite",
-        "title": "first_run_profile_offline",
-        "detail": "first_run_profile_offline_detail",
-    },
-    {
-        "key": "quality",
-        "preset": "quality",
-        "title": "first_run_profile_quality",
-        "detail": "first_run_profile_quality_detail",
-    },
-    {
-        "key": "meeting_document",
-        "preset": "balanced",
-        "title": "first_run_profile_meeting_document",
-        "detail": "first_run_profile_meeting_document_detail",
-        "overrides": {"audio_source": "document_editor"},
-    },
-)
+from ai_player.ui.readiness_controller import READINESS_PROFILES, ReadinessController, ReadinessProfile
 
 
 class PlayerReadinessMixin:
+    @property
+    def _readiness_selected_profile(self) -> str:
+        controller = getattr(self, "_readiness_controller", None)
+        return controller.selected_profile_key if controller is not None else "auto"
+
+    @_readiness_selected_profile.setter
+    def _readiness_selected_profile(self, value: str) -> None:
+        controller = getattr(self, "_readiness_controller", None)
+        if controller is not None:
+            controller.select_profile(value)
+
     def _readiness_tab(self) -> QWidget:
         tab = QWidget()
         self._readiness_tab_widget = tab
-        self._readiness_selected_profile = "auto"
+        self._readiness_controller = ReadinessController(lambda: self._current_runtime_config(), self._config)
         self._readiness_profile_buttons: dict[str, QPushButton] = {}
 
         layout = QVBoxLayout(tab)
@@ -151,15 +124,15 @@ class PlayerReadinessMixin:
             button.setCursor(Qt.PointingHandCursor)
             button.setMinimumHeight(56)
             self._fit_readiness_button(button)
-            button.setProperty("readiness_profile", profile["key"])
-            button.setProperty("readiness_profile_title_key", str(profile["title"]))
-            button.setProperty("readiness_profile_detail_key", str(profile["detail"]))
-            button.setToolTip(self._readiness_button_tooltip(str(profile["title"]), str(profile["detail"])))
+            button.setProperty("readiness_profile", profile.key)
+            button.setProperty("readiness_profile_title_key", profile.title_key)
+            button.setProperty("readiness_profile_detail_key", profile.detail_key)
+            button.setToolTip(self._readiness_button_tooltip(profile.title_key, profile.detail_key))
             button.clicked.connect(
-                lambda _checked=False, profile_key=str(profile["key"]): self._readiness_select_profile(profile_key)
+                lambda _checked=False, profile_key=profile.key: self._readiness_select_profile(profile_key)
             )
             self._readiness_profile_group.addButton(button)
-            self._readiness_profile_buttons[str(profile["key"])] = button
+            self._readiness_profile_buttons[profile.key] = button
             profile_grid.addWidget(button, index // 2, index % 2)
         self._readiness_profile_buttons["auto"].setChecked(True)
         profile_panel.setVisible(False)
@@ -308,8 +281,8 @@ class PlayerReadinessMixin:
         self._refresh_readiness_status()
         return tab
 
-    def _readiness_profile_button_text(self, profile: dict[str, object]) -> str:
-        return self._tr(str(profile["title"]))
+    def _readiness_profile_button_text(self, profile: ReadinessProfile) -> str:
+        return self._tr(profile.title_key)
 
     def _readiness_button_tooltip(self, title_key: str, detail_key: str) -> str:
         return f"{self._tr(title_key)}\n{self._tr(detail_key)}"
@@ -334,8 +307,8 @@ class PlayerReadinessMixin:
         button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
 
     def _readiness_select_profile(self, profile_key: str) -> None:
-        self._readiness_selected_profile = profile_key
-        button = self._readiness_profile_buttons.get(profile_key)
+        profile = self._readiness_controller.select_profile(profile_key)
+        button = self._readiness_profile_buttons.get(profile.key)
         if button is not None:
             button.setChecked(True)
         self._refresh_readiness_status()
@@ -347,10 +320,10 @@ class PlayerReadinessMixin:
         if toggle is not None:
             toggle.setText(self._tr("first_run_profile_change"))
         for profile in READINESS_PROFILES:
-            button = self._readiness_profile_buttons.get(str(profile["key"]))
+            button = self._readiness_profile_buttons.get(profile.key)
             if button is not None:
                 button.setText(self._readiness_profile_button_text(profile))
-                button.setToolTip(self._readiness_button_tooltip(str(profile["title"]), str(profile["detail"])))
+                button.setToolTip(self._readiness_button_tooltip(profile.title_key, profile.detail_key))
         for button in getattr(self, "_readiness_workflow_buttons", {}).values():
             title_key = str(button.property("workflow_title_key") or "")
             detail_key = str(button.property("workflow_detail_key") or "")
@@ -361,19 +334,16 @@ class PlayerReadinessMixin:
     def _refresh_readiness_status(self) -> None:
         if not hasattr(self, "_readiness_status"):
             return
-        config = self._readiness_profile_config()
         try:
-            items = build_runtime_health(config)
-            status_text = format_runtime_health(items)
+            status = self._readiness_controller.status()
         except Exception as exc:
             self._readiness_status.setText(self._tr("runtime_health_failed").format(detail=exc))
             self._readiness_recommendation.setText(self._tr("first_run_recommend_runtime"))
             return
-        self._readiness_status.setText(status_text)
-        attention = [item for item in items if item.status == "ATTENTION"]
-        if attention:
+        self._readiness_status.setText(status.text)
+        if status.attention_count:
             self._readiness_recommendation.setText(
-                self._tr("first_run_recommend_missing").format(count=len(attention))
+                self._tr("first_run_recommend_missing").format(count=status.attention_count)
             )
         else:
             self._readiness_recommendation.setText(self._tr("first_run_recommend_ready"))
@@ -382,20 +352,20 @@ class PlayerReadinessMixin:
         self._readiness_preview_missing_button.setEnabled(bool(missing_keys))
         self._readiness_test_provider_button.setProperty(
             "provider_preview_kind",
-            self._readiness_provider_preview_kind(items),
+            status.provider_preview_kind,
         )
 
     def _apply_readiness_profile(self) -> None:
         profile = self._readiness_profile()
-        self._set_combo_data(self._performance_preset_combo, profile["preset"])
+        self._set_combo_data(self._performance_preset_combo, profile.preset)
         self._apply_selected_performance_preset()
-        for name, value in dict(profile.get("overrides") or {}).items():
+        for name, value in dict(profile.overrides or {}).items():
             if name == "audio_source":
                 self._set_combo_data(self._audio_source_combo, value)
         self._save_settings()
         self._refresh_readiness_status()
         self.statusBar().showMessage(
-            self._tr("first_run_applied").format(profile=self._tr(str(profile["title"])))
+            self._tr("first_run_applied").format(profile=self._tr(profile.title_key))
         )
 
     def _readiness_download_missing(self) -> None:
@@ -413,10 +383,9 @@ class PlayerReadinessMixin:
 
     def _readiness_test_provider(self) -> None:
         try:
-            items = build_runtime_health(self._readiness_profile_config())
+            kind = self._readiness_controller.status().provider_preview_kind
         except Exception:
-            items = ()
-        kind = self._readiness_provider_preview_kind(items)
+            kind = "tts"
         self._select_settings_tab_for_widget(self._models_tab_widget)
         self._start_provider_preview(kind)
 
@@ -437,44 +406,8 @@ class PlayerReadinessMixin:
                 self._settings_tabs.setCurrentIndex(index)
                 return
 
-    def _readiness_profile(self) -> dict[str, object]:
-        selected = str(getattr(self, "_readiness_selected_profile", "auto") or "auto")
-        return next((profile for profile in READINESS_PROFILES if profile["key"] == selected), READINESS_PROFILES[0])
+    def _readiness_profile(self) -> ReadinessProfile:
+        return self._readiness_controller.profile()
 
     def _readiness_profile_config(self) -> AppConfig:
-        try:
-            config = self._current_runtime_config()
-        except Exception:
-            config = self._config
-        profile = self._readiness_profile()
-        config = _config_with_preset(config, str(profile["preset"]))
-        overrides = dict(profile.get("overrides") or {})
-        return _replace_config_values(config, overrides)
-
-    @staticmethod
-    def _readiness_provider_preview_kind(items: tuple[object, ...]) -> str:
-        attention_names = [
-            str(getattr(item, "name", "") or "").lower()
-            for item in items
-            if getattr(item, "status", "") == "ATTENTION"
-        ]
-        for name, kind in (
-            ("asr", "asr"),
-            ("translation", "translation"),
-            ("tts", "tts"),
-            ("ocr", "ocr"),
-        ):
-            if name in attention_names:
-                return kind
-        return "tts"
-
-
-def _config_with_preset(config: AppConfig, preset_id: str) -> AppConfig:
-    preset = PERFORMANCE_PRESETS.get(preset_id) or {}
-    return _replace_config_values(config, preset)
-
-
-def _replace_config_values(config: AppConfig, values: dict[str, Any]) -> AppConfig:
-    field_names = {field.name for field in fields(AppConfig)}
-    updates = {name: value for name, value in values.items() if name in field_names and value is not None}
-    return replace(config, **updates) if updates else config
+        return self._readiness_controller.profile_config()

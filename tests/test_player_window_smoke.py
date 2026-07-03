@@ -2771,9 +2771,9 @@ def test_player_window_readiness_actions_are_direct(qapp, monkeypatch) -> None:
         assert opened_urls[0].isLocalFile()
 
         monkeypatch.setattr(
-            player_window_readiness,
-            "build_runtime_health",
-            lambda _config: (SimpleNamespace(name="Translation", status="ATTENTION"),),
+            window._readiness_controller,
+            "status",
+            lambda: SimpleNamespace(provider_preview_kind="translation"),
         )
         window._readiness_test_provider()
         assert started_previews == ["translation"]

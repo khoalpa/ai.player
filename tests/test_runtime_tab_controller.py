@@ -108,6 +108,7 @@ def test_runtime_tab_controller_refresh_updates_bound_labels(qapp, monkeypatch) 
             "health",
             "privacy",
             "tasks",
+            "doctor_profiles",
             "media",
             "gpu_runtime",
             "process_cpu",
@@ -133,6 +134,7 @@ def test_runtime_tab_controller_refresh_updates_bound_labels(qapp, monkeypatch) 
     monkeypatch.setattr(controller, "health_summary", lambda: "Health ready")
     monkeypatch.setattr(controller, "privacy_summary", lambda: "Privacy ready")
     monkeypatch.setattr(controller, "task_summary", lambda tasks=None: "Idle")
+    monkeypatch.setattr(controller, "doctor_profile_summary", lambda: "Profiles ready")
     monkeypatch.setattr(controller, "gpu_runtime_text", lambda: "Runtime GPU")
 
     controller.refresh()
@@ -145,6 +147,7 @@ def test_runtime_tab_controller_refresh_updates_bound_labels(qapp, monkeypatch) 
     assert labels["health"].text() == "Health ready"
     assert labels["privacy"].text() == "Privacy ready"
     assert labels["tasks"].text() == "Idle"
+    assert labels["doctor_profiles"].text() == "Profiles ready"
     assert labels["gpu_runtime"].text() == "Runtime GPU"
     assert labels["gpu"].text() == "GPU old"
     assert not button.isEnabled()

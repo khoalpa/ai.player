@@ -91,6 +91,7 @@ class RuntimeStatusState:
     media_path: str = ""
     media_info_path: str = ""
     media_info_text: str = ""
+    doctor_profile_text: str = ""
 
 
 @dataclass

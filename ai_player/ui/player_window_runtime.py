@@ -53,6 +53,7 @@ class PlayerRuntimeMixin:
             ("health", "runtime_health"),
             ("privacy", "runtime_privacy"),
             ("tasks", "runtime_tasks"),
+            ("doctor_profiles", "runtime_doctor_profiles"),
             ("media", "runtime_media"),
             ("gpu_runtime", "runtime_gpu_runtime"),
             ("process_cpu", "runtime_process_cpu"),

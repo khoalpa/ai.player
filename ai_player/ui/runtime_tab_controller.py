@@ -33,6 +33,7 @@ from ai_player.ui.player_window_utils import (
 from ai_player.ui.player_window_utils import (
     repair_mojibake as _repair_mojibake,
 )
+from ai_player.ui.runtime_doctor_onboarding import build_runtime_doctor_profile_summary
 from ai_player.ui.task_center import collect_background_tasks, format_background_tasks, stop_background_tasks
 
 
@@ -95,6 +96,9 @@ class RuntimeTabController:
         self._labels["privacy"].setText(self.privacy_summary())
         tasks = collect_background_tasks(self._owner)
         self._labels["tasks"].setText(self.task_summary(tasks))
+        if not self._state.doctor_profile_text or (runtime_tab_active and self._state.gpu_tick % 10 == 0):
+            self._state.doctor_profile_text = self.doctor_profile_summary()
+        self._labels["doctor_profiles"].setText(self._state.doctor_profile_text)
         if self._stop_tasks_button is not None:
             self._stop_tasks_button.setEnabled(bool(tasks))
         if runtime_tab_active or getattr(self._owner, "_settings_tabs", None) is None:
@@ -450,6 +454,12 @@ class RuntimeTabController:
             )
         except Exception as exc:
             return self._tr("runtime_tasks_failed").format(detail=_repair_mojibake(redact_secrets(exc)))
+
+    def doctor_profile_summary(self) -> str:
+        try:
+            return build_runtime_doctor_profile_summary()
+        except Exception as exc:
+            return self._tr("runtime_diagnostics_failed").format(detail=_repair_mojibake(redact_secrets(exc)))
 
     def stop_background_tasks(self) -> None:
         summary = stop_background_tasks(self._owner)

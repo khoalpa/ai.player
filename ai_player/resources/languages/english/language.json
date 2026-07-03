@@ -756,6 +756,7 @@
     "runtime_tasks_stop": "Stop background tasks",
     "runtime_tasks_stopped": "Stopped {count} background task(s).",
     "runtime_tasks_stop_partial": "Some background tasks did not stop yet: {failed}",
+    "runtime_doctor_profiles": "Runtime Doctor profiles",
     "runtime_media": "Current video",
     "runtime_gpu_runtime": "GPU runtime",
     "runtime_process_cpu": "App CPU",

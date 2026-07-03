@@ -70,6 +70,13 @@ Current extracted owners:
   as automatic profile selection, workflow badge keys, preset-card detail keys,
   and recent-source labels while `PlayerLayoutMixin` keeps widget construction
   and signal wiring.
+- `ai_player.ui.readiness_controller` owns pure first-run/readiness profile
+  selection, preset application, runtime-health summarization, and provider
+  preview routing while `PlayerReadinessMixin` keeps widget construction and
+  button wiring.
+- `ai_player.ui.runtime_doctor_onboarding` owns compact Runtime Doctor profile
+  summaries for Lite, Offline AI, and GPU readiness while
+  `RuntimeTabController` binds the result into the Runtime tab.
 - `ai_player.workers.dubbing_runtime` owns pure realtime dubbing decisions such
   as live/async source classification, segment worker counts, source-audio cache
   eligibility, and ready-ahead thresholds while `DubbingWorker` keeps Qt signals

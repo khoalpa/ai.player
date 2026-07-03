@@ -2913,16 +2913,16 @@ class PlayerLayoutMixin:
         self._media_start_profile_group.setExclusive(True)
         self._media_start_profile_buttons = {}
         for profile in READINESS_PROFILES:
-            profile_key = str(profile["key"])
-            button = QPushButton(self._tr(str(profile["title"])))
+            profile_key = profile.key
+            button = QPushButton(self._tr(profile.title_key))
             button.setObjectName("mediaStartProfileButton")
             button.setCheckable(True)
             button.setFixedHeight(self._COMMAND_BUTTON_HEIGHT)
             button.setFixedWidth(self._COMMAND_BUTTON_WIDTH)
             button.setCursor(Qt.PointingHandCursor)
             button.setProperty("launcher_profile", profile_key)
-            button.setProperty("launcher_profile_title_key", str(profile["title"]))
-            button.setProperty("launcher_profile_detail_key", str(profile["detail"]))
+            button.setProperty("launcher_profile_title_key", profile.title_key)
+            button.setProperty("launcher_profile_detail_key", profile.detail_key)
             button.clicked.connect(
                 lambda _checked=False, key=profile_key: self._apply_media_start_profile(key)
             )
