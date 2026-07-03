@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from ai_player.services import source_voice_filter as filter_service
+from ai_player.services.ffmpeg import ffmpeg_executable
 from ai_player.workers import player_window_workers
 from ai_player.workers.player_window_workers import (
     SourceAudioFilterWorker,
@@ -17,7 +18,7 @@ from ai_player.workers.player_window_workers import (
     _process_executable_name,
 )
 
-FFMPEG = shutil.which("ffmpeg")
+FFMPEG = ffmpeg_executable()
 requires_ffmpeg = pytest.mark.skipif(FFMPEG is None, reason="ffmpeg is not available")
 
 
@@ -384,9 +385,8 @@ def _to_pcm16(value: float) -> int:
 
 
 def _mux_wav_to_test_video(audio_path: Path, output_path: Path) -> None:
-    subprocess.run(
+    _run_ffmpeg_or_skip(
         [
-            FFMPEG or "ffmpeg",
             "-hide_banner",
             "-loglevel",
             "error",
@@ -411,15 +411,13 @@ def _mux_wav_to_test_video(audio_path: Path, output_path: Path) -> None:
             "192k",
             "-y",
             str(output_path),
-        ],
-        check=True,
+        ]
     )
 
 
 def _decode_video_audio(video_path: Path, output_path: Path) -> None:
-    subprocess.run(
+    _run_ffmpeg_or_skip(
         [
-            FFMPEG or "ffmpeg",
             "-hide_banner",
             "-loglevel",
             "error",
@@ -431,9 +429,20 @@ def _decode_video_audio(video_path: Path, output_path: Path) -> None:
             "44100",
             "-y",
             str(output_path),
-        ],
-        check=True,
+        ]
     )
+
+
+def _run_ffmpeg_or_skip(args: list[str]) -> None:
+    command = [FFMPEG or "ffmpeg", *args]
+    if shutil.which(command[0]) is None and not Path(command[0]).is_file():
+        pytest.skip(f"ffmpeg is not available: {command[0]}")
+    try:
+        subprocess.run(command, check=True)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 4551:
+            pytest.skip(f"Windows Application Control blocked ffmpeg: {command[0]}")
+        raise
 
 
 def _stereo_rms(path: Path, *, start_seconds: float, end_seconds: float) -> float:

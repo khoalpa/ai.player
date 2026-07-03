@@ -81,6 +81,8 @@ def test_audio_pcm_conversion_shape() -> None:
 def test_demucs_unavailable_path(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(demucs_separation.shutil, "which", lambda _name: None)
     monkeypatch.setattr(demucs_separation, "_demucs_python", lambda: "")
+    monkeypatch.setattr(demucs_separation, "_bundled_demucs_available", lambda: False)
+    monkeypatch.setattr(demucs_separation, "demucs_executable", lambda: "demucs")
 
     try:
         demucs_separation.separate_vocals(Path("input.wav"), tmp_path)

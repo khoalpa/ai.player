@@ -71,7 +71,7 @@ machine or run under enterprise code-integrity policy.
 
 - Local development smoke: unsigned builds are acceptable when they stay on the
   developer machine.
-- Private/team release: prefer `-RequireSignature`; record the certificate
+- Private/team release: require `-RequireSignature`; record the certificate
   thumbprint or PFX source in the smoke notes.
 - Public or enterprise release: require `-RequireSignature`, verify the portable
   executable signature, and do not publish if the signing step is skipped.

@@ -7,7 +7,9 @@ Use this checklist before sharing a build.
 - Pick the target profile from `docs\release_profiles.md` and use its install,
   smoke, model, and distribution expectations for this build.
 - Verify profiles in order: `Lite` first, then `OfflineCpu`, then `Gpu` only
-  when the previous profile passes and the release scope requires it.
+  when the previous profile passes and the release scope requires it. When
+  verifying multiple profiles in one command, pass all selected profiles to
+  `release_verify.ps1`; the script runs them in that order.
 - Confirm the working tree contains only intended changes with `git status --short --branch`.
 - Review untracked files with `git ls-files -o --exclude-standard` and either add them intentionally or move generated scratch files under ignored paths.
 - Run `.\scripts\check_release_worktree.ps1 -FailOnModified` before creating a
@@ -23,7 +25,8 @@ Use this checklist before sharing a build.
 - Run `.\.venv\Scripts\python.exe -m ruff check .`.
 - Run `.\.venv\Scripts\python.exe -m pytest`.
 - Run `.\scripts\release_verify.ps1` for the short release gate and generated
-  logs under `data\tmp\release-verify\`.
+  logs under `data\tmp\release-verify\`. Use `-RequireSignature` for any
+  artifact that will leave the development machine.
 - For distributable artifacts, run release verification with the selected
   profile and signing requirement, for example
   `.\scripts\release_verify.ps1 -BuildProfiles Lite -RequireSignature`.
@@ -95,7 +98,8 @@ Use this checklist before sharing a build.
 - Use `.\scripts\build_portable.ps1 -SkipReleaseWorktreeCheck` only for local
   development builds that will not be shared.
 - List available signing certificates with `.\scripts\build_portable.ps1 -ListCodeSigningCerts`.
-- On machines with enterprise code integrity enforcement, build with `.\scripts\build_portable.ps1 -RequireSignature`.
+- For private, public, enterprise, or any other off-machine distribution, build
+  with `.\scripts\build_portable.ps1 -RequireSignature`.
 - If multiple signing certificates are available, add `-CodeSigningCertThumbprint "<real-thumbprint>"`.
 - If the signing certificate is provided as a `.pfx` or `.p12` file, use `-CodeSigningPfxPath` and pass the password as a `SecureString`.
 - Launch the app from `dist\portable`.

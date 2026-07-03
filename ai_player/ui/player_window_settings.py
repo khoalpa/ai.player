@@ -41,6 +41,7 @@ from ai_player.services.tts import available_voices
 from ai_player.services.tts_base import available_tts_providers, is_online_tts_provider, normalize_tts_provider
 from ai_player.services.tts_vieneu import available_vieneu_models
 from ai_player.services.tts_voices import voice_gender
+from ai_player.ui.api_key_status_controller import ApiKeyStatusController
 from ai_player.ui.player_window_utils import (
     PERFORMANCE_PRESETS,
     UI_TEXT,
@@ -395,6 +396,13 @@ class PlayerSettingsMixin:
                 save_provider_api_secrets=save_provider_api_secrets,
             )
             self._provider_secrets = controller
+        return controller
+
+    def _api_key_status_controller(self) -> ApiKeyStatusController:
+        controller = getattr(self, "_api_key_statuses", None)
+        if controller is None:
+            controller = ApiKeyStatusController(self)
+            self._api_key_statuses = controller
         return controller
 
     def _provider_secret_cache(self, secret_name: str) -> dict[str, str]:
@@ -753,137 +761,10 @@ class PlayerSettingsMixin:
         self._sync_api_key_statuses()
 
     def _sync_api_key_statuses(self, *_args) -> None:
-        required_widgets = (
-            "_asr_api_key_status",
-            "_ocr_api_key_status",
-            "_translator_api_key_status",
-            "_transcript_cleanup_api_key_status",
-            "_tts_api_key_status",
-            "_tts_api_secret_status",
-            "_speaker_gender_api_key_status",
-        )
-        if not all(hasattr(self, widget_name) for widget_name in required_widgets):
-            return
-
-        self._set_api_key_status(
-            self._asr_api_key_status,
-            required=is_online_asr_provider(self._selected_asr_provider()),
-            has_value=bool(self._asr_api_key_edit.text().strip()),
-        )
-
-        ocr_provider = normalize_ocr_provider(self._selected_ocr_provider())
-        ocr_online = is_online_ocr_provider(ocr_provider)
-        ocr_has_key = bool(self._ocr_api_key_edit.text().strip())
-        self._set_api_key_status(
-            self._ocr_api_key_status,
-            required=ocr_online and (ocr_provider != "ocr_space" or ocr_has_key),
-            has_value=ocr_has_key,
-            demo=ocr_online and ocr_provider == "ocr_space" and not ocr_has_key,
-        )
-
-        self._set_api_key_status(
-            self._translator_api_key_status,
-            required=is_online_translation_provider(self._translator_combo.currentData()),
-            has_value=bool(self._translator_api_key_edit.text().strip()),
-        )
-
-        cleanup_provider = self._selected_transcript_cleanup_provider()
-        cleanup_enabled = self._selected_transcript_cleanup_mode() != "off"
-        cleanup_key_required = cleanup_enabled and cleanup_provider in self._PRIMARY_TRANSCRIPT_CLEANUP_KEY_PROVIDERS
-        self._set_api_key_status(
-            self._transcript_cleanup_api_key_status,
-            required=cleanup_key_required,
-            has_value=bool(self._transcript_cleanup_api_key_edit.text().strip()),
-        )
-
-        tts_provider = normalize_tts_provider(self._selected_tts_provider())
-        self._set_api_key_status(
-            self._tts_api_key_status,
-            required=is_online_tts_provider(tts_provider),
-            has_value=bool(self._tts_api_key_edit.text().strip()),
-        )
-        self._set_api_key_status(
-            self._tts_api_secret_status,
-            required=tts_provider == "amazon_polly",
-            has_value=bool(self._tts_api_secret_edit.text().strip()),
-            secret=True,
-        )
-
-        speaker_gender_required = (
-            self._auto_voice_gender_check.isChecked()
-            and self._selected_auto_voice_gender_mode() == "ai"
-            and is_online_speaker_gender_provider(self._selected_speaker_gender_provider())
-        )
-        self._set_api_key_status(
-            self._speaker_gender_api_key_status,
-            required=speaker_gender_required,
-            has_value=bool(self._speaker_gender_api_key_edit.text().strip()),
-        )
-        self._refresh_model_status_strip()
+        self._api_key_status_controller().sync()
 
     def _refresh_model_status_strip(self) -> None:
-        labels = getattr(self, "_model_status_labels", None)
-        if not labels:
-            return
-        asr_provider = self._selected_asr_provider()
-        self._set_model_status_pill(
-            "model_status_asr",
-            self._tr("model_status_asr"),
-            self._provider_status_text(
-                provider=asr_provider,
-                required=is_online_asr_provider(asr_provider),
-                has_value=bool(self._asr_api_key_edit.text().strip()),
-            ),
-        )
-        translator = self._translator_combo.currentData()
-        self._set_model_status_pill(
-            "model_status_translation",
-            self._tr("model_status_translation"),
-            self._provider_status_text(
-                provider=translator,
-                required=is_online_translation_provider(translator),
-                has_value=bool(self._translator_api_key_edit.text().strip()),
-            ),
-        )
-        tts_provider = normalize_tts_provider(self._selected_tts_provider())
-        self._set_model_status_pill(
-            "model_status_tts",
-            self._tr("model_status_tts"),
-            self._provider_status_text(
-                provider=tts_provider,
-                required=is_online_tts_provider(tts_provider),
-                has_value=bool(self._tts_api_key_edit.text().strip()),
-            ),
-        )
-        ocr_provider = normalize_ocr_provider(self._selected_ocr_provider())
-        ocr_required = is_online_ocr_provider(ocr_provider) and (
-            ocr_provider != "ocr_space" or bool(self._ocr_api_key_edit.text().strip())
-        )
-        self._set_model_status_pill(
-            "model_status_ocr",
-            self._tr("model_status_ocr"),
-            self._provider_status_text(
-                provider=ocr_provider,
-                required=ocr_required,
-                has_value=bool(self._ocr_api_key_edit.text().strip()),
-                demo=is_online_ocr_provider(ocr_provider) and ocr_provider == "ocr_space" and not ocr_required,
-            ),
-        )
-        cleanup_provider = self._selected_transcript_cleanup_provider()
-        cleanup_required = (
-            self._selected_transcript_cleanup_mode() != "off"
-            and cleanup_provider in self._PRIMARY_TRANSCRIPT_CLEANUP_KEY_PROVIDERS
-        )
-        self._set_model_status_pill(
-            "model_status_cleanup",
-            self._tr("model_status_cleanup"),
-            self._provider_status_text(
-                provider=cleanup_provider,
-                required=cleanup_required,
-                has_value=bool(self._transcript_cleanup_api_key_edit.text().strip()),
-                disabled=self._selected_transcript_cleanup_mode() == "off",
-            ),
-        )
+        self._api_key_status_controller().refresh_model_status_strip()
 
     def _provider_status_text(
         self,
@@ -894,26 +775,16 @@ class PlayerSettingsMixin:
         demo: bool = False,
         disabled: bool = False,
     ) -> tuple[str, str]:
-        provider_text = str(provider or self._tr("auto")).replace("_", " ")
-        if disabled:
-            return self._tr("model_status_disabled").format(provider=provider_text), "muted"
-        if demo:
-            return self._tr("model_status_demo").format(provider=provider_text), "warn"
-        if required and not has_value:
-            return self._tr("model_status_missing_key").format(provider=provider_text), "warn"
-        if required:
-            return self._tr("model_status_online_ready").format(provider=provider_text), "ok"
-        return self._tr("model_status_local_ready").format(provider=provider_text), "ok"
+        return self._api_key_status_controller().provider_status_text(
+            provider=provider,
+            required=required,
+            has_value=has_value,
+            demo=demo,
+            disabled=disabled,
+        )
 
     def _set_model_status_pill(self, key: str, title: str, status: tuple[str, str]) -> None:
-        label = getattr(self, "_model_status_labels", {}).get(key)
-        if label is None:
-            return
-        detail, status_kind = status
-        label.setText(f"{title}\n{detail}")
-        label.setProperty("status", status_kind)
-        label.style().unpolish(label)
-        label.style().polish(label)
+        self._api_key_status_controller().set_model_status_pill(key, title, status)
 
     def _set_api_key_status(
         self,
@@ -924,21 +795,13 @@ class PlayerSettingsMixin:
         demo: bool = False,
         secret: bool = False,
     ) -> None:
-        if demo:
-            key = "api_key_status_demo"
-            color = "#b45309"
-        elif not required:
-            key = "api_secret_status_not_needed" if secret else "api_key_status_not_needed"
-            color = "#667085"
-        elif has_value:
-            key = "api_secret_status_saved" if secret else "api_key_status_saved"
-            color = "#237a57"
-        else:
-            key = "api_secret_status_missing" if secret else "api_key_status_missing"
-            color = "#b42318"
-        label.setText(self._tr(key))
-        label.setProperty("api_status_key", key)
-        label.setStyleSheet(f"color: {color}; font-size: 8.5pt;")
+        self._api_key_status_controller().set_api_key_status(
+            label,
+            required=required,
+            has_value=has_value,
+            demo=demo,
+            secret=secret,
+        )
 
     def _vieneu_core_changed(self, *_args) -> None:
         self._refresh_vieneu_models()

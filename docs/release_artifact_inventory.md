@@ -6,12 +6,6 @@ when a tracked root-level artifact or bundled tool binary is not listed here.
 
 ## Tracked Artifacts
 
-- `App configuration.pdf`
-  - Scope: root-level reference document.
-  - Release decision: review before public release and move under `docs/` or
-    an ignored private path if it contains local configuration, credentials, or
-    machine-specific setup.
-
 - `tools/ffmpeg/bin/ffmpeg.exe`
   - Scope: bundled FFmpeg runtime tool for Windows portable builds.
   - Source/license: tracked with `tools/ffmpeg/LICENSE`.

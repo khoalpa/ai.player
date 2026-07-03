@@ -36,12 +36,14 @@ def test_release_worktree_gate_checks_untracked_source_and_plugins() -> None:
     checklist = (PROJECT_ROOT / "docs" / "release_checklist.md").read_text(encoding="utf-8")
     portable_build = (PROJECT_ROOT / "docs" / "portable_build.md").read_text(encoding="utf-8")
     artifact_inventory = (PROJECT_ROOT / "docs" / "release_artifact_inventory.md").read_text(encoding="utf-8")
+    gitignore = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8")
 
     assert "ls-files -o --exclude-standard" in script
     assert 'StartsWith("plugins/")' in script
     assert "release_artifact_inventory.md" in script
     assert "tracked root/tool binary artifacts" in script
-    assert "`App configuration.pdf`" in artifact_inventory
+    assert "/App configuration*.pdf" in gitignore
+    assert "`App configuration.pdf`" not in artifact_inventory
     assert "`tools/ffmpeg/bin/ffmpeg.exe`" in artifact_inventory
     assert "-AllowUntrackedPath" in script
     assert "[switch]$FailOnModified" in script
@@ -114,5 +116,6 @@ def test_release_signing_contract_is_documented_and_guarded() -> None:
     assert "Enterprise Application Control policies can block unsigned builds" in build_script
     assert '$BuildArgs += "-RequireSignature"' in verify_script
     assert "require_signature = [bool]$RequireSignature" in verify_script
+    assert "Private/team release: require `-RequireSignature`" in profiles
     assert "Public or enterprise release: require `-RequireSignature`" in profiles
     assert '"dist\\portable\\AI Player Lite\\AI Player\\AI Player.exe"' in checklist
