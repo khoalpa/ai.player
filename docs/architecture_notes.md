@@ -77,6 +77,9 @@ Current extracted owners:
 - `ai_player.ui.runtime_doctor_onboarding` owns compact Runtime Doctor profile
   summaries for Lite, Offline AI, and GPU readiness while
   `RuntimeTabController` binds the result into the Runtime tab.
+- `ai_player.ui.runtime_metrics` owns pure runtime CPU/memory sampling and
+  percentage calculations while `RuntimeTabController` keeps the Runtime tab
+  refresh orchestration and compatibility wrappers for existing callers.
 - `ai_player.workers.dubbing_runtime` owns pure realtime dubbing decisions such
   as live/async source classification, segment worker counts, source-audio cache
   eligibility, and ready-ahead thresholds while `DubbingWorker` keeps Qt signals

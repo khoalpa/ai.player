@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ctypes
 import json
 import os
 import platform
@@ -34,6 +33,13 @@ from ai_player.ui.player_window_utils import (
     repair_mojibake as _repair_mojibake,
 )
 from ai_player.ui.runtime_doctor_onboarding import build_runtime_doctor_profile_summary
+from ai_player.ui.runtime_metrics import (
+    process_cpu_percent,
+    process_memory_bytes,
+    read_system_cpu_times,
+    system_cpu_percent_from_times,
+    system_memory,
+)
 from ai_player.ui.task_center import collect_background_tasks, format_background_tasks, stop_background_tasks
 
 
@@ -62,9 +68,13 @@ class RuntimeTabController:
 
         now = time.perf_counter()
         process_now = time.process_time()
-        elapsed = max(0.001, now - self._state.last_wall)
-        cpu_count = max(1, os.cpu_count() or 1)
-        process_cpu = max(0.0, (process_now - self._state.last_process) / elapsed / cpu_count * 100.0)
+        process_cpu = process_cpu_percent(
+            previous_wall=self._state.last_wall,
+            previous_process=self._state.last_process,
+            current_wall=now,
+            current_process=process_now,
+            cpu_count=os.cpu_count(),
+        )
         self._state.last_wall = now
         self._state.last_process = process_now
 
@@ -259,98 +269,22 @@ class RuntimeTabController:
         return "\n".join(lines)
 
     def system_cpu_percent(self) -> float | None:
-        current = self.read_system_cpu_times()
+        current = read_system_cpu_times()
         previous = self._state.last_system_cpu
         self._state.last_system_cpu = current
-        if not current or not previous:
-            return None
-        idle_delta = current[0] - previous[0]
-        total_delta = current[1] - previous[1]
-        if total_delta <= 0:
-            return None
-        return max(0.0, min(100.0, (1.0 - idle_delta / total_delta) * 100.0))
+        return system_cpu_percent_from_times(previous, current)
 
     @staticmethod
     def read_system_cpu_times() -> tuple[int, int] | None:
-        if os.name != "nt":
-            return None
-
-        class FILETIME(ctypes.Structure):
-            _fields_ = [("dwLowDateTime", ctypes.c_ulong), ("dwHighDateTime", ctypes.c_ulong)]
-
-        idle = FILETIME()
-        kernel = FILETIME()
-        user = FILETIME()
-        if not ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
-            return None
-
-        def value(filetime: FILETIME) -> int:
-            return (filetime.dwHighDateTime << 32) + filetime.dwLowDateTime
-
-        idle_value = value(idle)
-        total_value = value(kernel) + value(user)
-        return idle_value, total_value
+        return read_system_cpu_times()
 
     @staticmethod
     def process_memory_bytes() -> int | None:
-        if os.name != "nt":
-            return None
-
-        class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
-            _fields_ = [
-                ("cb", ctypes.c_ulong),
-                ("PageFaultCount", ctypes.c_ulong),
-                ("PeakWorkingSetSize", ctypes.c_size_t),
-                ("WorkingSetSize", ctypes.c_size_t),
-                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                ("PagefileUsage", ctypes.c_size_t),
-                ("PeakPagefileUsage", ctypes.c_size_t),
-            ]
-
-        counters = PROCESS_MEMORY_COUNTERS()
-        counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
-        ctypes.windll.kernel32.GetCurrentProcess.restype = ctypes.c_void_p
-        handle = ctypes.windll.kernel32.GetCurrentProcess()
-        get_memory_info = ctypes.windll.psapi.GetProcessMemoryInfo
-        get_memory_info.argtypes = [
-            ctypes.c_void_p,
-            ctypes.POINTER(PROCESS_MEMORY_COUNTERS),
-            ctypes.c_ulong,
-        ]
-        get_memory_info.restype = ctypes.c_int
-        ok = get_memory_info(handle, ctypes.byref(counters), counters.cb)
-        return int(counters.WorkingSetSize) if ok else None
+        return process_memory_bytes()
 
     @staticmethod
     def system_memory() -> tuple[int, int, float] | None:
-        if os.name != "nt":
-            return None
-
-        class MEMORYSTATUSEX(ctypes.Structure):
-            _fields_ = [
-                ("dwLength", ctypes.c_ulong),
-                ("dwMemoryLoad", ctypes.c_ulong),
-                ("ullTotalPhys", ctypes.c_ulonglong),
-                ("ullAvailPhys", ctypes.c_ulonglong),
-                ("ullTotalPageFile", ctypes.c_ulonglong),
-                ("ullAvailPageFile", ctypes.c_ulonglong),
-                ("ullTotalVirtual", ctypes.c_ulonglong),
-                ("ullAvailVirtual", ctypes.c_ulonglong),
-                ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
-            ]
-
-        status = MEMORYSTATUSEX()
-        status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
-        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-            return None
-        total = int(status.ullTotalPhys)
-        available = int(status.ullAvailPhys)
-        used = max(0, total - available)
-        percent = (used / total * 100.0) if total else 0.0
-        return used, total, percent
+        return system_memory()
 
     def gpu_status_text(self) -> str:
         nvidia_smi = shutil.which("nvidia-smi")
