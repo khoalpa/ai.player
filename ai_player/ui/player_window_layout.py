@@ -768,8 +768,17 @@ class PlayerLayoutMixin:
         self._open_source_button.setProperty("i18n_tooltip_key", "open_source_tooltip")
         self._open_source_button.setMenu(self._source_menu)
 
+        self._start_dubbing_button = self._make_button(
+            "start_dubbing",
+            self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
+        )
+        self._start_dubbing_button.setObjectName("primaryButton")
+        self._start_dubbing_button.clicked.connect(
+            lambda _checked=False: self._start_workflow("dubbing", self._start_dubbing_from_header)
+        )
+        self._set_control_tooltip(self._start_dubbing_button, "start_dubbing_tooltip")
         self._meeting_button = self._make_button(
-            "start",
+            "meeting_start_label",
             self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
         )
         self._meeting_button.setObjectName("primaryButton")
@@ -981,6 +990,7 @@ class PlayerLayoutMixin:
         primary_actions_layout = QHBoxLayout(primary_actions)
         primary_actions_layout.setContentsMargins(0, 0, 0, 0)
         primary_actions_layout.setSpacing(6)
+        primary_actions_layout.addWidget(self._start_dubbing_button)
         primary_actions_layout.addWidget(self._meeting_button)
         primary_actions_layout.addWidget(self._export_button)
         source_layout.addWidget(primary_actions)
@@ -996,6 +1006,7 @@ class PlayerLayoutMixin:
         source_layout.addWidget(self._ui_language_combo)
         self._header_controls = (
             self._open_source_button,
+            self._start_dubbing_button,
             self._meeting_button,
             self._export_button,
             self._ui_language_combo,
@@ -2537,6 +2548,7 @@ class PlayerLayoutMixin:
             ("open_video", "open_video"),
             ("open_url", "open_url"),
             ("open_document", "open_document"),
+            ("start_dubbing", "dubbing"),
             ("meeting_start_label", "meeting"),
             ("export_workflow_title", "export"),
             ("task_center_tab", "tasks"),
@@ -2569,6 +2581,8 @@ class PlayerLayoutMixin:
             self._start_workflow("url", self._open_video_url)
         elif action_id == "open_document":
             self._start_workflow("document", self._open_document)
+        elif action_id == "dubbing":
+            self._start_workflow("dubbing", self._start_dubbing_from_header)
         elif action_id == "meeting":
             self._start_workflow("meeting", self._toggle_meeting)
         elif action_id == "export":
@@ -2675,6 +2689,7 @@ class PlayerLayoutMixin:
                 "video": ({2, 6, 3}, 2),
                 "url": ({2, 6, 3}, 2),
                 "document": ({2, 6, 3}, 2),
+                "dubbing": ({2, 6, 3}, 2),
                 "meeting": ({2, 6, 3}, 2),
                 "export": ({2, 6, 3}, 2),
             }
@@ -2683,6 +2698,7 @@ class PlayerLayoutMixin:
                 "video": ({2, 3, 5, 6, 1}, 2),
                 "url": ({2, 3, 5, 6, 1}, 2),
                 "document": ({2, 6, 3, 5, 1}, 2),
+                "dubbing": ({2, 3, 5, 6, 1}, 2),
                 "meeting": ({2, 1, 6, 7}, 2),
                 "export": ({2, 5, 6, 1}, 2),
             }
@@ -2697,6 +2713,7 @@ class PlayerLayoutMixin:
             "video": "first_run_workflow_video",
             "url": "first_run_workflow_url",
             "document": "first_run_workflow_document",
+            "dubbing": "start_dubbing",
             "meeting": "first_run_workflow_meeting",
             "export": "export_workflow_title",
         }.get(workflow_key, "settings_group_workflow")

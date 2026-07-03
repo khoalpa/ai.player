@@ -17,6 +17,8 @@
     "document_placeholder": "Nội dung tài liệu sẽ hiển thị ở đây.",
     "dub_audio": "Âm đích",
     "dub_button": "Lồng tiếng / Đọc tài liệu",
+    "start_dubbing": "Lồng/Dịch",
+    "start_dubbing_tooltip": "Bắt đầu tạo lời thoại, dịch và lồng tiếng hoặc đọc tài liệu cho nguồn hiện tại.",
     "display_options": "Hiển thị",
     "display_options_tooltip": "Mở tùy chọn khung hình, chất lượng phát và phụ đề",
     "exit_fullscreen": "Thoát",

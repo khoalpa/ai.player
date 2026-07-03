@@ -380,8 +380,7 @@ def build_settings_panel(owner: Any, tabs: QTabWidget) -> QFrame:
     layout = QVBoxLayout(panel)
     layout.setContentsMargins(12, 12, 12, 12)
     layout.setSpacing(10)
-    owner._next_action_panel = _next_action_panel(owner)
-    layout.addWidget(owner._next_action_panel)
+    owner._next_action_panel = None
     layout.addWidget(_settings_nav(owner, tabs))
     layout.addWidget(tabs, 1)
     return panel

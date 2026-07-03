@@ -154,6 +154,13 @@ def test_source_ui_clickthrough_smoke_video_transcript_document_preset_and_dubbi
         assert _FakeDubbingWorker.stopped_count == 1
         assert _FakeDubbingWorker.deleted_count == 1
 
+        QTest.mouseClick(window._start_dubbing_button, Qt.MouseButton.LeftButton)
+        qapp.processEvents()
+
+        assert _FakeDubbingWorker.started_paths == [str(sample_video), str(sample_video)]
+        assert window._dub_worker is not None
+        assert window._dub_button.isChecked()
+
         QTest.mouseClick(window._open_document_button, Qt.MouseButton.LeftButton)
         qapp.processEvents()
 

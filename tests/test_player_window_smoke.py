@@ -96,6 +96,10 @@ def test_player_window_constructs_offscreen(qapp) -> None:
         assert window._source_filter_worker_model == window._config.original_audio_voice_filter_model
         assert window._source_filter_cache == {}
         assert window._playback_compat_cache == {}
+        assert window._next_action_panel is None
+        assert window._start_dubbing_button.text() == window._tr("start_dubbing")
+        assert window._start_dubbing_button.toolTip() == window._tr("start_dubbing_tooltip")
+        assert window._meeting_button.text() == window._tr("meeting_start_label")
         assert window._runtime_gpu_text == window._tr("status_checking_gpu")
         assert window._runtime_media_info_text == window._tr("status_no_video")
         assert window._dub_worker is None
@@ -2883,11 +2887,11 @@ def test_next_action_start_dubbing_starts_on_first_click(qapp, monkeypatch) -> N
         starts: list[str] = []
         monkeypatch.setattr(window, "_start_dubbing", lambda: starts.append("start"))
 
-        window._next_action_panel._next_action_keys = ["start_dubbing"]
+        window._transcript_empty_panel._next_action_keys = ["start_dubbing"]
         window._dubbing_auto_enabled = False
         window._dub_button.setChecked(False)
 
-        window._run_next_action(0)
+        window._run_next_action(0, panel_name="transcriptEmptyPanel")
 
         assert window._dub_button.isChecked()
         assert window._dubbing_auto_enabled is True
@@ -3336,6 +3340,7 @@ def test_player_window_command_buttons_share_standard_metrics(qapp) -> None:
         command_buttons = (
             window._task_status_button,
             window._open_source_button,
+            window._start_dubbing_button,
             window._meeting_button,
             window._export_button,
             window._tools_menu_button,

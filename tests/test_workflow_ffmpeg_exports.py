@@ -1587,6 +1587,27 @@ def test_dubbing_worker_normalizes_asr_bytes_text_and_language(qapp, tmp_path) -
     assert ready_segments == [("hello world", "xin chao")]
 
 
+def test_dubbing_worker_collapses_repeated_translated_phrases(qapp, tmp_path) -> None:
+    config = AppConfig(tts_provider="none", transcript_cleanup_mode="off")
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker._temp_dir = tmp_path
+    worker._model = object()
+    ready_segments: list[tuple[str, str]] = []
+    worker.segment_ready.connect(lambda original, translated: ready_segments.append((original, translated)))
+    worker._extract_audio = lambda *_args, **_kwargs: None
+    worker._translator = SimpleNamespace(
+        translate=lambda _text, _language: "Tôi không biết, tôi không biết, tôi không biết, tôi không biết."
+    )
+    worker._transcribe_with_fallback = lambda _wav_path: (
+        [SimpleNamespace(text="I do not know.", start=0.0, end=1.0)],
+        SimpleNamespace(language="en"),
+    )
+
+    worker._process_segment(1.0)
+
+    assert ready_segments == [("I do not know.", "Tôi không biết.")]
+
+
 def test_document_review_export_cue_uses_initialized_tts_lock(tmp_path) -> None:
     config = AppConfig(tts_provider="vieneu")
     worker = export_worker.DocumentReviewExportWorker("document.srt", [], str(tmp_path / "out.mp4"), config)

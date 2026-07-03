@@ -533,6 +533,26 @@ def test_translate_export_items_emits_ready_segments() -> None:
     assert emitted == [("one", "mot"), ("two", "two"), ("three", "three")]
 
 
+def test_translate_export_items_collapses_repeated_phrases() -> None:
+    emitted: list[tuple[str, str]] = []
+    items = [SimpleNamespace(original="I do not know.")]
+    translator = SimpleNamespace(
+        translate_many=lambda _texts, _language: [
+            "Tôi không biết, tôi không biết, tôi không biết, tôi không biết."
+        ]
+    )
+
+    translated = source_export_voice.translate_export_items(
+        items=items,
+        translator=translator,
+        source_language="en",
+        emit_segment=lambda original, target: emitted.append((original, target)),
+    )
+
+    assert translated == ["Tôi không biết."]
+    assert emitted == [("I do not know.", "Tôi không biết.")]
+
+
 def test_build_prepared_source_export_cues_reports_progress_and_sorts(tmp_path) -> None:
     progress: list[tuple[int, int, int, int]] = []
     emitted: list[tuple[str, str]] = []

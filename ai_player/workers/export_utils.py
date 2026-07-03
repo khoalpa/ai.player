@@ -13,6 +13,7 @@ from ai_player.services.ffmpeg import make_silence as ffmpeg_make_silence
 from ai_player.services.ffmpeg import to_wav as ffmpeg_to_wav
 from ai_player.services.ffmpeg import trim_leading_silence as ffmpeg_trim_leading_silence
 from ai_player.services.whisper_runtime import effective_whisper_device
+from ai_player.workers.text_dedupe import collapse_repeated_phrases
 from ai_player.workers.worker_values import (
     align_text_results,
     clean_message,
@@ -346,10 +347,16 @@ def _translate_texts(translator, texts: list[str], source_language: str | None) 
     fallback_texts = [_json_text(text, default="") or "" for text in texts]
     translate_many = getattr(translator, "translate_many", None)
     if callable(translate_many):
-        return _align_text_results(fallback_texts, translate_many(fallback_texts, source_language))
+        return [collapse_repeated_phrases(text) for text in _align_text_results(
+            fallback_texts,
+            translate_many(fallback_texts, source_language),
+        )]
     translate_one = getattr(translator, "translate", None)
     if callable(translate_one):
-        return _align_text_results(fallback_texts, [translate_one(text, source_language) for text in fallback_texts])
+        return [collapse_repeated_phrases(text) for text in _align_text_results(
+            fallback_texts,
+            [translate_one(text, source_language) for text in fallback_texts],
+        )]
     return fallback_texts
 
 

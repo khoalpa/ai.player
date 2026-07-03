@@ -81,6 +81,7 @@ from ai_player.workers.dubbing_runtime import (
     source_audio_cache_input,
 )
 from ai_player.workers.dubbing_schedule import DubbingAudioSchedule, PendingAudio
+from ai_player.workers.text_dedupe import collapse_repeated_phrases
 from ai_player.workers.worker_values import clamped_int as _clamped_int
 from ai_player.workers.worker_values import clean_language as _clean_language
 from ai_player.workers.worker_values import clean_message as _clean_message
@@ -410,7 +411,7 @@ class DubbingWorker(QThread):
         tts_path = self._temp_dir / f"vi-transcript-{segment_ms}-{index}.{tts_suffix}"
 
         self._emit_status("worker_translating_transcript_at", time=_format_hhmmss(entry_start))
-        translated = self._translator.translate(original, self._selected_whisper_language())
+        translated = collapse_repeated_phrases(self._translator.translate(original, self._selected_whisper_language()))
         if _tts_disabled(self._config):
             self.segment_ready.emit(original, translated)
             self._emit_subtitle_ready(entry_start, entry_end - entry_start, original, translated)
@@ -688,7 +689,7 @@ class DubbingWorker(QThread):
 
             self._emit_status("worker_translating_sentence_at", time=_format_hhmmss(absolute_start))
             with measure_stage("dubbing", "translate", start=f"{absolute_start:.3f}"):
-                translated = self._translator.translate(original, source_language)
+                translated = collapse_repeated_phrases(self._translator.translate(original, source_language))
             self._emit_subtitle_ready(absolute_start, speech_duration, original, translated)
             if _tts_disabled(self._config):
                 self.segment_ready.emit(original, translated)
@@ -803,7 +804,9 @@ class DubbingWorker(QThread):
             tts_path = self._temp_dir / f"vi-subtitle-{segment_ms}-{index}.{tts_suffix}"
 
             self._emit_status("worker_translating_subtitle_at", time=_format_hhmmss(absolute_start))
-            translated = self._translator.translate(original, self._selected_whisper_language())
+            translated = collapse_repeated_phrases(
+                self._translator.translate(original, self._selected_whisper_language())
+            )
             self._emit_subtitle_ready(absolute_start, duration, original, translated)
             if _tts_disabled(self._config):
                 self.segment_ready.emit(original, translated)

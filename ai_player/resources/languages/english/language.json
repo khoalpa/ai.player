@@ -17,6 +17,8 @@
     "document_placeholder": "Document content will appear here.",
     "dub_audio": "Target audio",
     "dub_button": "Dub / Read aloud",
+    "start_dubbing": "Dub/Translate",
+    "start_dubbing_tooltip": "Start transcript, translation, and dubbing or document reading for the current source.",
     "display_options": "Display",
     "display_options_tooltip": "Show frame, playback quality, and subtitle display options",
     "exit_fullscreen": "Exit fullscreen",

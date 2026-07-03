@@ -102,6 +102,11 @@ class PlayerDubbingMixin:
         else:
             self._stop_dubbing()
 
+    def _start_dubbing_from_header(self) -> None:
+        self._dubbing_auto_enabled = True
+        self._dub_button.setChecked(True)
+        self._start_dubbing()
+
     def _start_dubbing(self) -> None:
         if self._selected_audio_source() == "document_editor":
             if not self._prepare_document_editor_source():
