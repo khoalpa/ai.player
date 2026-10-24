@@ -1,51 +1,39 @@
 # AI Player Adult Extractors
 
-Private yt-dlp plugin package for internal AI Player builds.
+Plugin `yt-dlp` riêng dành cho các bản dựng nội bộ của AI Player. Plugin mở rộng danh sách website được chấp nhận và cung cấp bộ phân tích dự phòng cho những nguồn chưa được `yt-dlp` hỗ trợ trực tiếp.
 
-Install locally:
+## Cài đặt cục bộ
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e D:\project\ai-player-adult-extractors
 ```
 
-Build AI Player internal:
+## Tạo bản dựng nội bộ
 
 ```powershell
 .\scripts\build_internal.ps1 `
   -PrivateYtdlpPluginPackage D:\project\ai-player-adult-extractors
 ```
 
-The build script reads `yt_dlp_plugins/extractor/adult_sites_registry.json` and fills
-`AI_PLAYER_EXTRA_YTDLP_HOSTS` automatically. Add new mirrors there first, then add or
-update the matching extractor tests.
+Script build đọc `yt_dlp_plugins/extractor/adult_sites_registry.json` và tự động điền `AI_PLAYER_EXTRA_YTDLP_HOSTS`. Khi bổ sung mirror, hãy cập nhật registry trước, sau đó thêm hoặc sửa test tương ứng cho extractor.
 
-Add a new site without code changes:
+## Thêm website mà không sửa mã
 
-1. Run a probe against a sample URL:
+1. Chạy probe với một URL mẫu:
 
    ```powershell
    .\.venv\Scripts\python.exe .\scripts\probe_adult_site.py "https://example.test/watch/demo" --site-key example
    ```
 
-2. Review the redacted HTML fixture and generated registry draft under
-   `data\tmp\adult-site-probe`.
-   When upstream `yt-dlp` already has a matching native extractor, the probe
-   marks the draft with `"delegate_to_ytdlp": true`; otherwise it creates a
-   generic extractor draft with `iframe_depth`, `media_patterns`, and
-   `iframe_patterns`.
-3. Copy the registry entry into either:
-   - `yt_dlp_plugins/extractor/adult_sites_registry.json` for committed/shared sites.
-   - `data/config/private/adult_sites.local.json` for private local-only sites.
-4. Add `media_patterns` or `iframe_patterns` when the generic parser does not find
-   media automatically.
+2. Kiểm tra HTML fixture đã được che dữ liệu nhạy cảm và bản nháp registry trong `data\tmp\adult-site-probe`. Nếu upstream `yt-dlp` đã có extractor phù hợp, probe sẽ đánh dấu bản nháp bằng `"delegate_to_ytdlp": true`. Nếu chưa, probe tạo cấu hình extractor tổng quát với `iframe_depth`, `media_patterns` và `iframe_patterns`.
+3. Chép entry vào một trong hai vị trí:
+   - `yt_dlp_plugins/extractor/adult_sites_registry.json`: website dùng chung và được commit.
+   - `data/config/private/adult_sites.local.json`: website riêng, chỉ dùng trên máy cục bộ.
+4. Bổ sung `media_patterns` hoặc `iframe_patterns` nếu parser tổng quát không tự tìm thấy media.
 
-The generic parser already checks common HTML5 and player patterns such as
-`contentUrl`, `streamUrl`, `hlsUrl`, `mp4Url`, `videoSrc`, media attributes, and
-`data-player-url` iframe embeds. It also handles common `jwplayer().setup(...)`
-and `videojs().src(...)` payloads, quality keys such as `quality_720p`, and
-iframe attributes like `data-iframe`, `data-embed-url`, and `data-player-src`.
+Parser tổng quát đã nhận diện các mẫu HTML5 và player phổ biến như `contentUrl`, `streamUrl`, `hlsUrl`, `mp4Url`, `videoSrc`, thuộc tính media và iframe nhúng bằng `data-player-url`. Nó cũng xử lý payload thông dụng của `jwplayer().setup(...)` và `videojs().src(...)`, khóa chất lượng như `quality_720p`, cùng các thuộc tính iframe `data-iframe`, `data-embed-url` và `data-player-src`.
 
-Example local registry:
+Ví dụ registry cục bộ:
 
 ```json
 {
@@ -59,22 +47,15 @@ Example local registry:
 }
 ```
 
-Use a site-specific extractor only when the generic extractor cannot handle a token
-API, multi-step player, login-only flow, or anti-bot behavior.
+Chỉ viết extractor riêng cho từng website khi extractor tổng quát không xử lý được API có token, player nhiều bước, luồng bắt buộc đăng nhập hoặc cơ chế chống bot.
 
-For hosts already supported by upstream `yt-dlp`, add the domains to the registry
-with `"delegate_to_ytdlp": true`. This lets AI Player accept the URL and pass it
-to the native `yt-dlp` extractor instead of the generic adult parser.
-Current delegated host groups include mainstream tube/creator sites such as
-Eporner, ManyVids, ThisVid, Tube8, YouJizz, PornTube, Nuvid, PornoXO,
-Rule34Video, FC2, AlphaPorno, HellPorno, LoveHomePorn, NubilesPorn, PeekVids,
-PlayVids, Pornbox, PornerBros, PornFlip, Pornotube, PornTop, Txxx-family hosts,
-XXXYMovies, ZenPorn, MyVidster, Murrtube, Toypics, and the previously added major
-tube/live hosts. JAV/Asia hosts without a native extractor should start as
-generic registry entries and graduate to a site-specific extractor only when
-probing shows token or multi-step player requirements.
+Với host đã được upstream `yt-dlp` hỗ trợ, hãy thêm domain vào registry cùng `"delegate_to_ytdlp": true`. AI Player khi đó chấp nhận URL và chuyển nó cho extractor gốc của `yt-dlp` thay vì parser tổng quát.
 
-Run the source/dev app with the private host list:
+Các nhóm host đang được ủy quyền gồm Eporner, ManyVids, ThisVid, Tube8, YouJizz, PornTube, Nuvid, PornoXO, Rule34Video, FC2, AlphaPorno, HellPorno, LoveHomePorn, NubilesPorn, PeekVids, PlayVids, Pornbox, PornerBros, PornFlip, Pornotube, PornTop, các host thuộc nhóm Txxx, XXXYMovies, ZenPorn, MyVidster, Murrtube, Toypics và những host tube/live lớn đã thêm trước đó. Với host JAV/Asia chưa có extractor gốc, trước tiên hãy tạo entry registry tổng quát; chỉ chuyển sang extractor riêng nếu kết quả probe cho thấy cần token hoặc player nhiều bước.
+
+## Chạy bản phát triển
+
+Khởi động ứng dụng từ mã nguồn với danh sách host riêng:
 
 ```bat
 D:\project\ai-player-adult-extractors\run_ai_player_internal.bat

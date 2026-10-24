@@ -1,7 +1,8 @@
-﻿Sample files for smoke testing AI Player.
+Tệp mẫu dùng để smoke test AI Player
+=====================================
 
-- demo-video.mp4: generated 4-second test video with tone audio.
-- demo-transcript.srt: short transcript for transcript-source checks.
+- demo-video.mp4: video thử nghiệm dài 4 giây, có âm thanh dạng tone.
+- demo-transcript.srt: transcript ngắn để kiểm tra nguồn Transcript.
 
-Keep committed media fixtures short and lightweight. Larger manual smoke inputs
-belong under data/tmp or another ignored local folder.
+Chỉ lưu trong Git các media fixture ngắn và nhẹ. Dữ liệu kiểm thử thủ công có
+dung lượng lớn phải đặt trong data/tmp hoặc một thư mục cục bộ đã được Git bỏ qua.

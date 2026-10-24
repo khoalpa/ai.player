@@ -1,14 +1,18 @@
 # AI Player Telegram Client
 
-Private Telethon-backed Telegram user-client integration for internal AI Player builds.
+Plugin nội bộ này bổ sung khả năng đăng nhập và tải nội dung Telegram bằng tài khoản người dùng thông qua Telethon. Plugin chỉ dành cho các bản dựng nội bộ của AI Player.
 
-Install into the AI Player virtual environment:
+## Cài đặt
+
+Cài plugin vào môi trường ảo của AI Player:
 
 ```powershell
 D:\project\ai.player\.venv\Scripts\python.exe -m pip install D:\project\ai-player-telegram-client
 ```
 
-Build AI Player internal with Telegram support:
+## Tạo bản dựng nội bộ
+
+Chạy lệnh sau tại thư mục dự án AI Player:
 
 ```powershell
 cd D:\project\ai.player
@@ -17,8 +21,12 @@ cd D:\project\ai.player
   -PrivateYtdlpPluginPackage D:\project\ai-player-adult-extractors
 ```
 
-The plugin stores protected login metadata and the Telethon session under AI Player's private config area:
+## Dữ liệu đăng nhập
+
+Plugin lưu metadata đăng nhập đã được bảo vệ và phiên Telethon trong vùng cấu hình riêng của AI Player:
 
 ```text
 data/config/private/telegram
 ```
+
+Không commit nội dung thư mục này hoặc chia sẻ tệp phiên Telethon.

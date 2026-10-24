@@ -1,15 +1,19 @@
-# AI Themes 1.0.0
+# AI Themes
 
-Bộ giao diện dùng chung cho các dự án trong `D:/project`. Nguồn chuẩn là
-`ai.atelier/themes`; thư mục `themes` ở dự án khác là bản sao ghim phiên bản.
-Ứng dụng chạy bằng tài nguyên cục bộ, không cần đọc thư mục của dự án bên cạnh.
+Phiên bản: `1.0.0`
 
-## Cấu hình
+AI Themes là bộ giao diện dùng chung cho các dự án trong `D:/project`. Nguồn chuẩn nằm tại `ai.atelier/themes`; thư mục `themes` trong mỗi dự án khác là một bản sao đã ghim phiên bản. Mỗi ứng dụng sử dụng tài nguyên cục bộ nên không phụ thuộc vào thư mục của dự án bên cạnh khi chạy.
 
-`project.json` chọn `theme` (neutral, atelier, paper), `mode` (system, light,
-dark), `style` (minimal, soft, editorial), `density` (comfortable, compact).
-Token màu nguồn nằm trong `tokens.json`; component chỉ dùng biến `--ui-*`.
-Giữ màu nội dung ảnh, video, phụ đề và màu nhận diện nghiệp vụ ngoài theme.
+## Mô hình cấu hình
+
+`project.json` điều khiển bốn thuộc tính:
+
+- `theme`: `neutral`, `player` hoặc `paper`.
+- `mode`: `system`, `light` hoặc `dark`.
+- `style`: `minimal`, `soft` hoặc `editorial`.
+- `density`: `comfortable` hoặc `compact`.
+
+Token màu nguồn nằm trong `tokens.json`; component chỉ sử dụng biến `--ui-*`. Màu của ảnh, video, phụ đề và màu nhận diện nghiệp vụ không thuộc phạm vi của theme.
 
 Web có nút tròn “Giao diện” ở góc phải dưới. Lựa chọn được lưu riêng cho từng
 ứng dụng trong trình duyệt. Chế độ hệ thống tự cập nhật khi hệ điều hành đổi.
@@ -18,11 +22,9 @@ Windows/Gradio nhận cấu hình mặc định hoặc các biến `AI_THEME`, `
 `AI_THEME_STYLE`, `AI_THEME_DENSITY` khi khởi động. Android dùng bảng màu Neutral
 sáng/tối theo hệ thống; Telegram giữ bộ chọn chế độ đã có.
 
-## Tích hợp web mới
+## Tích hợp vào ứng dụng web
 
-Sao chép `dist/theme.css` và `dist/theme.js` vào thư mục tài nguyên được máy chủ
-phục vụ. Nạp JS trong head trước nội dung để phục hồi lựa chọn trước khi vẽ;
-nạp CSS sau CSS của ứng dụng.
+Sao chép `dist/theme.css` và `dist/theme.js` vào thư mục tài nguyên tĩnh của máy chủ. Nạp JavaScript trong `head` trước nội dung để khôi phục lựa chọn giao diện trước lần vẽ đầu tiên; nạp stylesheet của theme sau CSS của ứng dụng.
 
 ```html
 <html data-theme="neutral" data-mode="system" data-style="minimal"
@@ -43,7 +45,7 @@ thái ARIA của ứng dụng. Nút đổi giao diện sử dụng dialog gốc 
 Font mặc định là font hệ thống hỗ trợ tiếng Việt. Editorial dùng serif cho
 tiêu đề; khoảng cách và bo góc đổi độc lập với màu.
 
-## Phát triển và cập nhật
+## Build, kiểm tra và triển khai
 
 Chạy tại dự án AI Atelier:
 
@@ -76,7 +78,7 @@ Kết quả kiểm tra và giới hạn xác minh ghi tại `verification/result
 ## Bộ chuyển đổi nền tảng
 
 | Dự án | Điểm tích hợp |
-|---|---|
+| --- | --- |
 | ai.atelier | Web, ánh xạ token và palette cũ |
 | ai.studio | Web, ánh xạ biến và danh sách tài nguyên máy chủ |
 | watermarks-remover | Web, ánh xạ biến và tuyến tài nguyên |

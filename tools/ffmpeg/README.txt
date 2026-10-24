@@ -1,4 +1,12 @@
-FFmpeg 64-bit static Windows build from www.gyan.dev
+FFmpeg dành cho AI Player
+=========================
+
+Thư mục này chứa bản FFmpeg Windows 64-bit dạng static do www.gyan.dev phát
+hành. AI Player sử dụng các chương trình ffmpeg, ffplay và ffprobe đi kèm để
+đọc, phát, chuyển đổi và kiểm tra media.
+
+Thông tin phiên bản, giấy phép, mã nguồn và manifest tính năng của đúng bản
+build được giữ nguyên bên dưới để thuận tiện cho việc kiểm tra và phân phối.
 
 Version: 8.1.1-essentials_build-www.gyan.dev
 

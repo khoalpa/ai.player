@@ -84,7 +84,7 @@ def render_streamlit() -> None:
 
     settings = config()
     labels = {
-        "theme": {"neutral": "Trung tính", "atelier": "Atelier", "paper": "Giấy"},
+        "theme": {"neutral": "Trung tính", "player": "Player", "paper": "Giấy"},
         "mode": {"system": "Theo hệ thống", "light": "Sáng", "dark": "Tối"},
         "style": {"minimal": "Tối giản", "soft": "Mềm mại", "editorial": "Biên tập"},
         "density": {"comfortable": "Thoải mái", "compact": "Gọn"},

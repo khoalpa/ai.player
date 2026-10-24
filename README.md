@@ -1,24 +1,26 @@
 # AI Player
 
-AI Player là ứng dụng Windows dùng PySide6 để xem video, đọc tài liệu và tạo bản lồng tiếng gần thời gian thực bằng ASR, dịch máy, OCR và TTS. Mặc định dự án ưu tiên workflow offline: Faster Whisper cho nhận dạng giọng nói, NLLB cho dịch, VieNeu-TTS cho giọng đọc tiếng Việt và Tesseract cho OCR phụ đề cứng.
+AI Player là ứng dụng Windows viết bằng PySide6, kết hợp phát video, đọc tài liệu và lồng tiếng gần thời gian thực trong một quy trình duy nhất. Ứng dụng dùng ASR để nhận dạng lời thoại, dịch máy để chuyển ngôn ngữ, OCR để đọc phụ đề cứng và TTS để tạo giọng nói.
 
-## Tính Năng Chính
+Thiết lập mặc định ưu tiên xử lý offline: Faster Whisper đảm nhiệm nhận dạng giọng nói, NLLB xử lý bản dịch, VieNeu-TTS tạo giọng đọc tiếng Việt và Tesseract nhận dạng phụ đề cứng.
+
+## Tính năng nổi bật
 
 - Mở video cục bộ, URL media trực tiếp hoặc trang video được `yt-dlp` hỗ trợ.
-- Cache video URL theo chất lượng phát (`360p`, `480p`, `720p`, `1080p`, `best`) để xem và xử lý ổn định hơn.
+- Lưu đệm video từ URL theo chất lượng phát (`360p`, `480p`, `720p`, `1080p`, `best`) để xem và xử lý ổn định hơn.
 - Nhận dạng lời thoại bằng `faster-whisper`, có VAD, chọn thiết bị `cpu`/`cuda`/`auto` và compute type.
 - Dịch bằng NLLB 1.3B local hoặc bỏ qua dịch khi chỉ cần đọc lại transcript gốc.
 - Tạo giọng đọc bằng VieNeu-TTS v3 Turbo 48 kHz (tiến trình riêng) hoặc Edge TTS.
 - Chọn nguồn đầu vào: âm gốc, âm hệ thống, micro, hệ thống + micro, transcript, editor tài liệu hoặc OCR phụ đề cứng.
 - Mở `.pptx`, `.docx`, `.pdf`, `.txt`, `.md`, `.rtf`, `.csv`, `.json`, trích nội dung thành transcript và phát như một timeline.
-- Export audio `.wav`, video `.mp4` đã lồng tiếng, transcript và video review chất lượng cao cho tài liệu.
-- Có Runtime Doctor trong CLI/UI để kiểm tra Python package, FFmpeg, Tesseract, GPU runtime, model/cache và thiết bị capture.
+- Xuất audio `.wav`, video `.mp4` đã lồng tiếng, transcript và video review chất lượng cao cho tài liệu.
+- Dùng Runtime Doctor trong CLI hoặc UI để kiểm tra gói Python, FFmpeg, Tesseract, runtime GPU, model, cache và thiết bị thu âm.
 - Runtime hiển thị số lần thiếu bộ đệm/fallback và độ trễ P95 của pipeline trong phiên; số liệu chỉ nằm trong bộ nhớ và không chứa nội dung media.
 - Có tab `Tác vụ` để theo dõi tải model, warmup, cache URL, export, provider preview và các lỗi gần đây ở một nơi.
-- Có cache workflow cho ASR, text/translation cleanup và TTS để chạy lại cùng nội dung nhanh hơn; có thể xem/xóa cache từ UI.
+- Có bộ nhớ đệm cho ASR, làm sạch văn bản/bản dịch và TTS, giúp xử lý lại cùng nội dung nhanh hơn; có thể xem hoặc xóa từng loại cache trong UI.
 - Giao diện có gói ngôn ngữ `vi`/`en`, preset hiệu năng và tab quản lý model offline.
 
-## Yêu Cầu
+## Yêu cầu hệ thống
 
 1. Windows 10/11.
 2. Python 3.10+.
@@ -27,11 +29,9 @@ AI Player là ứng dụng Windows dùng PySide6 để xem video, đọc tài li
 5. LibreOffice nếu muốn render đúng ảnh gốc của `.pptx`/`.docx` trong khung tài liệu.
 6. Internet cho lần đầu tải model hoặc khi dùng Edge TTS. Sau khi tải đủ model, các workflow offline có thể chạy không cần mạng.
 
-## Cài Đặt
+## Cài đặt
 
-Các lệnh dưới đây cố ý dùng `.\.venv\Scripts\python.exe` thay vì `python`.
-Trên một số máy Windows, `python` không có trong `PATH` hoặc trỏ tới Microsoft
-Store alias; dùng interpreter trong `.venv` giúp chạy đúng môi trường của dự án.
+Các lệnh bên dưới gọi trực tiếp `.\.venv\Scripts\python.exe` thay vì `python`. Cách này bảo đảm dự án chạy đúng môi trường ảo ngay cả khi `python` chưa có trong `PATH` hoặc đang trỏ tới alias của Microsoft Store.
 
 ```powershell
 py -m venv .venv
@@ -39,26 +39,26 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev,offline-ai]"
 ```
 
-Nếu chỉ chạy app nhẹ, không cài model AI offline/GPU:
+Để dùng bản nhẹ, không cài model AI offline hoặc thành phần GPU:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e .
 .\.venv\Scripts\python.exe .\scripts\runtime_doctor.py --profile lite
 ```
 
-Nếu muốn runtime đầy đủ để build portable, GPU và tách giọng bằng Demucs:
+Để cài runtime đầy đủ cho build portable, GPU và tách giọng bằng Demucs:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e ".[dev,packaging,offline-ai,gpu,audio-separation]"
 ```
 
-Nếu chỉ muốn cài bằng requirements cho runtime AI CPU/offline cơ bản, có thể dùng:
+Để cài runtime AI CPU/offline cơ bản bằng tệp requirements:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-## Chuẩn Bị Runtime
+## Chuẩn bị runtime
 
 Tải bộ model offline mặc định:
 
@@ -106,7 +106,7 @@ Trong CI hoặc môi trường không cần liệt kê thiết bị audio:
 .\.venv\Scripts\python.exe .\scripts\runtime_doctor.py --ci
 ```
 
-## Dependency Audit
+## Kiểm tra dependency
 
 Trước khi chia sẻ build, chạy audit dependency theo `docs/dependency_audit.md`:
 
@@ -114,31 +114,27 @@ Trước khi chia sẻ build, chạy audit dependency theo `docs/dependency_audi
 .\scripts\audit_dependencies.ps1
 ```
 
-## License
-
-AI Player được phân phối theo giấy phép MIT. Xem `LICENSE`.
-
-## Chạy App
+## Chạy ứng dụng
 
 ```powershell
 .\.venv\Scripts\python.exe main.py
 ```
 
-Hoặc double-click:
+Hoặc nhấp đúp vào:
 
 ```bat
 open_app.bat
 ```
 
-## Build Portable
+## Tạo bản portable
 
 ```powershell
 .\scripts\build_portable.ps1
 ```
 
-Output được ghi vào `dist\portable\AI Player Lite`. Gói Lite không bundle thư mục `models\`, vì vậy cần tải hoặc copy model offline riêng nếu muốn chạy không cần mạng.
+Kết quả được ghi vào `dist\portable\AI Player Lite`. Gói Lite không chứa thư mục `models\`; muốn chạy hoàn toàn offline, bạn cần tải hoặc sao chép model vào máy đích.
 
-## Luồng Sử Dụng
+## Quy trình sử dụng
 
 1. Bấm `Mở file`, `Mở URL`, `Mở tài liệu` hoặc dùng tab editor/tác vụ meeting.
 2. Chọn preset trong tab `Cơ bản`: `Quick preview`, `Offline lite`, `Balanced` hoặc `Quality / Export`.
@@ -162,7 +158,7 @@ OpenAI
 
 Dòng chỉ có một cụm sẽ giữ nguyên cụm đó. Dòng `nguồn = đích` hoặc `nguồn => đích` buộc mọi luồng dịch dùng cách dịch đã duyệt; cụm dài được ưu tiên trước cụm ngắn. Khi nguồn là tiếng Trung và đích là tiếng Việt, pipeline cũng bảo toàn số, ngày, tỷ lệ phần trăm và chuẩn hóa dấu câu trước khi tạo phụ đề hoặc giọng đọc. Sau khi sửa file thuật ngữ, hãy xóa cache Translation trong tab `Tác vụ` nếu video đã được xử lý trước đó.
 
-## Theo Dõi Tác Vụ Và Cache
+## Theo dõi tác vụ và cache
 
 Tab `Tác vụ` gom các việc nền để dễ biết app đang bận ở đâu:
 
@@ -180,7 +176,7 @@ $env:AI_PLAYER_WORKFLOW_TEXT_CACHE="0"
 $env:AI_PLAYER_TTS_CACHE="0"
 ```
 
-## Chọn Nhanh Theo Mục Tiêu
+## Chọn nhanh theo mục tiêu
 
 | Mục tiêu | Thiết lập nên bắt đầu | Ghi chú |
 | --- | --- | --- |
@@ -189,7 +185,7 @@ $env:AI_PLAYER_TTS_CACHE="0"
 | Đọc tài liệu | Nguồn `Editor`/tài liệu, giọng rõ, tắt dịch nếu chỉ cần đọc nguyên văn | Với file dài, chia nhỏ nội dung hoặc giảm max ký tự TTS nếu tạo giọng chậm. |
 | Xuất bản | `Quality / Export`, tăng buffer/lookahead, kiểm tra transcript trước khi xuất | Chậm hơn nhưng giảm lỗi nhịp, lỗi dịch và lỗi âm thanh ở video cuối. |
 
-## Sự Cố Thường Gặp
+## Xử lý sự cố thường gặp
 
 | Dấu hiệu | Cách thử trước |
 | --- | --- |
@@ -201,7 +197,7 @@ $env:AI_PLAYER_TTS_CACHE="0"
 | Kết quả lặp lại không đổi sau khi chỉnh model/provider | Xóa cache workflow liên quan trong tab `Tác vụ`, rồi chạy lại. |
 | Không rõ app đang làm gì | Mở tab `Tác vụ`; nếu một tác vụ nền bị kẹt lâu, dùng `Dừng tất cả` rồi thử lại với preset nhẹ hơn. |
 
-## Nguồn Và Định Dạng Hỗ Trợ
+## Nguồn và định dạng được hỗ trợ
 
 Video cục bộ:
 
@@ -215,16 +211,10 @@ URL media trực tiếp:
 Trang video qua `yt-dlp`:
 
 - YouTube, TikTok, Facebook, Instagram, Threads, X/Twitter, Vimeo, Dailymotion, public Telegram previews.
-- Internal builds can install private `yt-dlp` plugin packages and declare their
-  extra hosts with `AI_PLAYER_EXTRA_YTDLP_HOSTS`.
-- Adult extractor hosts can also be extended with
-  `data/config/private/adult_sites.local.json` or by probing a URL with
-  `scripts/probe_adult_site.py`.
-- Internal builds can also install a private Telegram client package for
-  Telethon-backed login and authenticated Telegram downloads.
-- YouTube channel and playlist URLs can be browsed in-app; internal builds can
-  install `ai-player-youtube-client` for a dedicated YouTube adapter, otherwise
-  AI Player uses the public YouTube page metadata fallback.
+- Bản dựng nội bộ có thể cài plugin `yt-dlp` riêng và khai báo host bổ sung bằng `AI_PLAYER_EXTRA_YTDLP_HOSTS`.
+- Có thể mở rộng danh sách host dành cho adult extractor qua `data/config/private/adult_sites.local.json` hoặc bằng cách probe URL với `scripts/probe_adult_site.py`.
+- Bản dựng nội bộ có thể cài gói Telegram client riêng để đăng nhập bằng Telethon và tải nội dung Telegram cần xác thực.
+- Có thể duyệt URL kênh và playlist YouTube ngay trong ứng dụng. Bản dựng nội bộ dùng `ai-player-youtube-client` để có adapter YouTube chuyên biệt; nếu không cài gói này, AI Player đọc metadata từ trang YouTube công khai.
 
 Tài liệu:
 
@@ -236,7 +226,7 @@ Tài liệu:
 
 Định dạng Office cũ `.doc` và `.ppt` chưa được hỗ trợ trực tiếp; hãy lưu lại thành `.docx` hoặc `.pptx`.
 
-## Nguồn Đầu Vào
+## Nguồn đầu vào
 
 Dropdown `Nguồn` hỗ trợ:
 
@@ -261,7 +251,7 @@ Liệt kê thiết bị DirectShow:
 ffmpeg -hide_banner -f dshow -list_devices true -i dummy
 ```
 
-## Model Mặc Định
+## Model mặc định
 
 Các đường dẫn model mặc định nằm trong `models\`:
 
@@ -275,7 +265,7 @@ models/speaker_gender/common-voice-gender-detection
 
 Preset `Balanced` mặc định dùng Whisper large-v3, NLLB 1.3B, VieNeu-TTS v3 Turbo và target language `vi`.
 
-## Cấu Hình Hữu Ích
+## Biến môi trường hữu ích
 
 ```powershell
 $env:AI_PLAYER_GUI_LANGUAGE="vi"                 # vi, en
@@ -333,7 +323,7 @@ $env:AI_PLAYER_TTS_PROVIDER="edge"
 $env:AI_PLAYER_TTS_VOICE="vi-VN-HoaiMyNeural"
 ```
 
-## Kiểm Tra Và Phát Triển
+## Kiểm tra và phát triển
 
 ```powershell
 .\.venv\Scripts\python.exe -m ruff check .
@@ -355,7 +345,7 @@ Benchmark/tiện ích:
 
 Trong UI, mục `Sức khỏe workflow` ở tab `Tác vụ` đọc baseline trong `docs\workflow_benchmark_baselines.json` và kết quả benchmark local gần nhất để báo workflow nào đang chậm hơn ngưỡng.
 
-## Cấu Trúc Dự Án
+## Cấu trúc dự án
 
 ```text
 ai_player/
@@ -380,8 +370,12 @@ models/                  # model offline tải về, không commit
 data/                    # settings, cache và transcript tạm do app tạo
 ```
 
-## Ghi Chú Hiện Tại
+## Lưu ý hiện tại
 
 - Offline model folders cần tải lại sau khi clone.
 - NLLB, Whisper lớn và VieNeu model đầy đủ nên được kiểm tra thủ công trên máy Windows/GPU trước khi phát hành build cho người dùng cuối.
 - Khi export từ nguồn live (`system`, `microphone`, `system_microphone`, `subtitle`), app có thể yêu cầu chuyển sang nguồn file/transcript ổn định hơn.
+
+## Giấy phép
+
+AI Player được phân phối theo giấy phép MIT. Xem `LICENSE` để biết đầy đủ điều khoản.
