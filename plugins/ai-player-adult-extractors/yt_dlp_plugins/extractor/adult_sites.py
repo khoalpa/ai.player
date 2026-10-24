@@ -602,7 +602,9 @@ class R18IE(_AdultSiteBaseIE):
 class JAVLibraryIE(_AdultSiteBaseIE):
     IE_NAME = "javlibrary"
     _SITE_KEY = "javlibrary"
-    _VALID_URL = r"https?://(?:[^/]+\.)?javlibrary\.com/(?:[a-z]{2}/)?(?:\?(?:[^#]*&)?v=(?P<id>[^&#]+)|(?P<slug>[^?#]+))"
+    _VALID_URL = (
+        r"https?://(?:[^/]+\.)?javlibrary\.com/(?:[a-z]{2}/)?(?:\?(?:[^#]*&)?v=(?P<id>[^&#]+)|(?P<slug>[^?#]+))"
+    )
 
     def _real_extract(self, url: str) -> dict:
         return self._extract_adult_site(url, self._match_id(url) or self._generic_id(url))

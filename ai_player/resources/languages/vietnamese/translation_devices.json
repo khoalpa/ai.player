@@ -2,15 +2,15 @@
   "options": [
     {
       "value": "auto",
-      "label": "Tự động"
-    },
-    {
-      "value": "cpu",
-      "label": "CPU"
+      "label": "Tự động — ưu tiên GPU, dự phòng CPU"
     },
     {
       "value": "cuda",
       "label": "CUDA"
+    },
+    {
+      "value": "cpu",
+      "label": "CPU"
     }
   ]
 }

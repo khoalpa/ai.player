@@ -9,7 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from ai_player.core.cli_encoding import prefer_utf8_stdio
-from ai_player.core.runtime_diagnostics import collect_runtime_diagnostics, format_runtime_diagnostics
+from ai_player.runtime.runtime_diagnostics import collect_runtime_diagnostics, format_runtime_diagnostics
 
 
 def main() -> int:

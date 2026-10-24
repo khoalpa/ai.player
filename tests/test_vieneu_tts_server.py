@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ai_player.services import vieneu_tts_server
+from ai_player.adapters.tts import vieneu_tts_server
 
 
 def test_vieneu_tts_server_float_value_rejects_non_finite_values() -> None:

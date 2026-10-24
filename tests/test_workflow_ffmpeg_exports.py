@@ -7,7 +7,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_player.core.config import AppConfig
+from ai_player.adapters import workflow_bindings
+from ai_player.application.formats import export_plan, transcript_source
+from ai_player.application.workflows import export as export_worker
+from ai_player.application.workflows import realtime as dubbing_worker
+from ai_player.application.workflows.realtime import DubbingWorker, _segment_start_key
+from ai_player.configuration import AppConfig
 from ai_player.core.runtime_errors import (
     ASR_RUNTIME_FAILED,
     EXPORT_OUTPUT_MISSING,
@@ -16,13 +21,7 @@ from ai_player.core.runtime_errors import (
     TTS_PROVIDER_FAILED,
     CodedRuntimeError,
 )
-from ai_player.pipeline import export_plan, transcript_source
-from ai_player.ui import player_window_export
-from ai_player.workers import (
-    dubbing_worker,
-    export_worker,
-)
-from ai_player.workers.dubbing_worker import DubbingWorker, _segment_start_key
+from ai_player.ui.features import export as player_window_export
 
 
 @pytest.mark.parametrize(
@@ -60,8 +59,11 @@ def test_scale_filters_tolerate_invalid_dimensions() -> None:
 
 def test_export_worker_missing_offline_whisper_uses_model_error_code(tmp_path) -> None:
     config = AppConfig(whisper_offline=True, whisper_model=str(tmp_path / "missing-model"))
-    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    worker = export_worker.DubbingExportWorker(
+        "video.mp4", str(tmp_path / "out.wav"), "audio", config, dependencies=workflow_bindings.export()
+    )
 
+    worker.dependencies = workflow_bindings.export()
     with pytest.raises(CodedRuntimeError) as exc_info:
         worker._validate_whisper_model()
 
@@ -70,13 +72,16 @@ def test_export_worker_missing_offline_whisper_uses_model_error_code(tmp_path) -
 
 def test_export_worker_wraps_ffmpeg_failure_with_error_code(monkeypatch, tmp_path) -> None:
     config = AppConfig()
-    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    worker = export_worker.DubbingExportWorker(
+        "video.mp4", str(tmp_path / "out.wav"), "audio", config, dependencies=workflow_bindings.export()
+    )
 
     def fail_run_ffmpeg(*_args, **_kwargs):
         raise subprocess.CalledProcessError(2, ["ffmpeg"], stderr=b"bad input")
 
-    monkeypatch.setattr(export_worker, "run_ffmpeg_cancelable", fail_run_ffmpeg)
+    monkeypatch.setattr("ai_player.adapters.media.ffmpeg.run_ffmpeg_cancelable", fail_run_ffmpeg)
 
+    worker.dependencies = workflow_bindings.export()
     with pytest.raises(CodedRuntimeError) as exc_info:
         worker._run_ffmpeg(["-i", "missing.mp4", tmp_path / "out.wav"])
 
@@ -86,13 +91,15 @@ def test_export_worker_wraps_ffmpeg_failure_with_error_code(monkeypatch, tmp_pat
 
 def test_export_worker_wraps_asr_runtime_failure(monkeypatch, tmp_path) -> None:
     config = AppConfig(whisper_device="cpu", whisper_compute_type="int8")
-    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    worker = export_worker.DubbingExportWorker(
+        "video.mp4", str(tmp_path / "out.wav"), "audio", config, dependencies=workflow_bindings.export()
+    )
     monkeypatch.setattr(
-        export_worker,
-        "get_shared_whisper_model",
+        "ai_player.runtime.whisper_runtime.get_shared_whisper_model",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
 
+    worker.dependencies = workflow_bindings.export()
     with pytest.raises(CodedRuntimeError) as exc_info:
         worker._load_whisper_model()
 
@@ -101,8 +108,11 @@ def test_export_worker_wraps_asr_runtime_failure(monkeypatch, tmp_path) -> None:
 
 def test_export_worker_missing_output_uses_export_error_code(tmp_path) -> None:
     config = AppConfig()
-    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    worker = export_worker.DubbingExportWorker(
+        "video.mp4", str(tmp_path / "out.wav"), "audio", config, dependencies=workflow_bindings.export()
+    )
 
+    worker.dependencies = workflow_bindings.export()
     with pytest.raises(CodedRuntimeError) as exc_info:
         worker._require_export_output(tmp_path / "missing.wav")
 
@@ -111,9 +121,12 @@ def test_export_worker_missing_output_uses_export_error_code(tmp_path) -> None:
 
 def test_export_worker_tts_failure_ui_message_is_short(tmp_path) -> None:
     config = AppConfig()
-    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    worker = export_worker.DubbingExportWorker(
+        "video.mp4", str(tmp_path / "out.wav"), "audio", config, dependencies=workflow_bindings.export()
+    )
 
-    message = worker._ui_failure_message(export_worker.TTSError("secret technical provider trace"))
+    worker.dependencies = workflow_bindings.export()
+    message = worker._ui_failure_message(workflow_bindings.export().TTSError("secret technical provider trace"))
 
     assert message == f"TTS provider failed. Check provider/model settings. [{TTS_PROVIDER_FAILED}]"
     assert "technical provider trace" not in message
@@ -174,8 +187,7 @@ def test_transcript_source_time_helpers_tolerate_invalid_values() -> None:
 
 def test_timed_transcript_sanitizes_missing_or_reversed_end() -> None:
     entries = transcript_source.parse_timed_transcript(
-        "1\n00:00:02,000 --> 00:00:01,000\nHello\n\n"
-        "2\n00:00:04,000 --> not-a-time\nWorld\n\n"
+        "1\n00:00:02,000 --> 00:00:01,000\nHello\n\n2\n00:00:04,000 --> not-a-time\nWorld\n\n"
     )
 
     assert entries == [
@@ -277,6 +289,7 @@ def test_staged_background_voice_mix_ducks_background(tmp_path) -> None:
     assert "[ducked][voice_mix]amix=inputs=2:duration=first" in filter_complex
     assert args[-1] == tmp_path / "final.wav"
 
+
 def test_mix_args_tolerate_invalid_numeric_options(tmp_path) -> None:
     timeline_args = export_plan.timeline_mix_args(
         [(tmp_path / "cue.wav", 0.0)],
@@ -314,7 +327,9 @@ def test_mix_args_keep_channel_layout_and_output_channels_consistent(tmp_path) -
 
 def test_staged_export_worker_writes_artifact_manifest(monkeypatch, tmp_path) -> None:
     config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     segment = SimpleNamespace(
         text=" hello ",
         start=0.0,
@@ -323,10 +338,11 @@ def test_staged_export_worker_writes_artifact_manifest(monkeypatch, tmp_path) ->
     )
     tts_path = tmp_path / "tts" / "0001-aligned.wav"
 
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
-        export_worker,
-        "get_shared_vietnamese_translator",
+        "ai_player.adapters.tts.tts.create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(
+        "ai_player.runtime.translation_runtime.get_shared_vietnamese_translator",
         lambda _config: SimpleNamespace(translate_many=lambda texts, _language: [f"{text}-vi" for text in texts]),
     )
     worker._validate_whisper_model = lambda: None
@@ -357,6 +373,7 @@ def test_staged_export_worker_writes_artifact_manifest(monkeypatch, tmp_path) ->
     worker._run_ffmpeg = lambda args, **_kwargs: Path(args[-1]).write_bytes(b"mix")
     worker._mux_video = lambda _audio, output_path=None, **_kwargs: Path(output_path).write_bytes(b"mp4")
 
+    worker.dependencies = workflow_bindings.export()
     worker.run()
 
     manifest = tmp_path / "manifest.json"
@@ -381,9 +398,11 @@ def test_staged_manifest_writes_strict_json_for_nonfinite_range(tmp_path) -> Non
         str(tmp_path),
         config,
         export_worker.ExportRange(0.0, float("inf")),
+        dependencies=workflow_bindings.export(),
     )
     manifest_path = tmp_path / "manifest.json"
 
+    worker.dependencies = workflow_bindings.export()
     worker._write_staged_manifest(
         manifest_path,
         {},
@@ -416,6 +435,7 @@ def test_staged_worker_applies_artifact_overrides_to_paths_and_manifest(tmp_path
             "final_video": str(final_video),
             "target_srt": str(target_srt),
         },
+        dependencies=workflow_bindings.export(),
     )
 
     assert worker._video_path == str(source_video)
@@ -423,6 +443,7 @@ def test_staged_worker_applies_artifact_overrides_to_paths_and_manifest(tmp_path
     assert worker._paths.target_srt == target_srt
 
     manifest_path = tmp_path / "manifest.json"
+    worker.dependencies = workflow_bindings.export()
     worker._write_staged_manifest(manifest_path, worker._paths.artifacts(), status="running", stage="initialized")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
@@ -435,19 +456,17 @@ def test_staged_worker_applies_artifact_overrides_to_paths_and_manifest(tmp_path
 def test_staged_export_can_stop_after_target_subtitles(monkeypatch, tmp_path) -> None:
     config = AppConfig(audio_source="original", tts_provider="none", original_audio_voice_filter=False)
     worker = export_worker.StagedDubbingExportWorker(
-        "video.mp4",
-        str(tmp_path),
-        config,
-        end_stage="target_subtitles_ready",
+        "video.mp4", str(tmp_path), config, end_stage="target_subtitles_ready", dependencies=workflow_bindings.export()
     )
     finished_paths: list[str] = []
     worker.export_finished.connect(finished_paths.append)
     segment = SimpleNamespace(text=" hello ", start=0.0, end=1.0, words=[])
 
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
-        export_worker,
-        "get_shared_vietnamese_translator",
+        "ai_player.adapters.tts.tts.create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(
+        "ai_player.runtime.translation_runtime.get_shared_vietnamese_translator",
         lambda _config: SimpleNamespace(translate_many=lambda texts, _language: [f"{text}-vi" for text in texts]),
     )
     worker._validate_whisper_model = lambda: None
@@ -455,6 +474,7 @@ def test_staged_export_can_stop_after_target_subtitles(monkeypatch, tmp_path) ->
     worker._transcribe_staged = lambda _source_audio: ([segment], SimpleNamespace(language="en"))
     worker._create_source_audio_stems = lambda *_args: pytest.fail("should stop before source filtering")
 
+    worker.dependencies = workflow_bindings.export()
     worker.run()
 
     assert finished_paths == [str(tmp_path)]
@@ -478,6 +498,7 @@ def test_staged_export_can_run_final_mix_only(monkeypatch, tmp_path) -> None:
         config,
         start_stage="final_mix_ready",
         end_stage="final_mix_ready",
+        dependencies=workflow_bindings.export(),
     )
     paths = worker._paths
     paths.background.parent.mkdir(parents=True, exist_ok=True)
@@ -486,10 +507,11 @@ def test_staged_export_can_run_final_mix_only(monkeypatch, tmp_path) -> None:
     finished_paths: list[str] = []
     worker.export_finished.connect(finished_paths.append)
 
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
-        export_worker,
-        "get_shared_vietnamese_translator",
+        "ai_player.adapters.tts.tts.create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(
+        "ai_player.runtime.translation_runtime.get_shared_vietnamese_translator",
         lambda _config: SimpleNamespace(translate_many=lambda _texts, _language: []),
     )
     worker._validate_whisper_model = lambda: pytest.fail("final mix should not need ASR")
@@ -497,6 +519,7 @@ def test_staged_export_can_run_final_mix_only(monkeypatch, tmp_path) -> None:
     worker._transcribe_staged = lambda _path: pytest.fail("final mix should not transcribe")
     worker._run_ffmpeg = lambda args, **_kwargs: Path(args[-1]).write_bytes(b"mix")
 
+    worker.dependencies = workflow_bindings.export()
     worker.run()
 
     assert finished_paths == [str(tmp_path)]
@@ -515,6 +538,7 @@ def test_staged_export_rebuilds_final_mix_before_muxing_mp4(monkeypatch, tmp_pat
         config,
         start_stage="dubbed_video_ready",
         end_stage="dubbed_video_ready",
+        dependencies=workflow_bindings.export(),
     )
     paths = worker._paths
     paths.background.parent.mkdir(parents=True, exist_ok=True)
@@ -524,10 +548,11 @@ def test_staged_export_rebuilds_final_mix_before_muxing_mp4(monkeypatch, tmp_pat
     finished_paths: list[str] = []
     worker.export_finished.connect(finished_paths.append)
 
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
-        export_worker,
-        "get_shared_vietnamese_translator",
+        "ai_player.adapters.tts.tts.create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(
+        "ai_player.runtime.translation_runtime.get_shared_vietnamese_translator",
         lambda _config: SimpleNamespace(translate_many=lambda _texts, _language: []),
     )
     worker._run_ffmpeg = lambda args, **_kwargs: Path(args[-1]).write_bytes(b"rebuilt mix with target")
@@ -539,6 +564,7 @@ def test_staged_export_rebuilds_final_mix_before_muxing_mp4(monkeypatch, tmp_pat
 
     worker._mux_video = fake_mux
 
+    worker.dependencies = workflow_bindings.export()
     worker.run()
 
     assert finished_paths == [str(tmp_path)]
@@ -551,18 +577,22 @@ def test_staged_export_rebuilds_final_mix_before_muxing_mp4(monkeypatch, tmp_pat
 
 def test_staged_export_fails_when_target_voice_generation_has_tts_disabled(monkeypatch, tmp_path) -> None:
     config = AppConfig(audio_source="original", tts_provider="none", original_audio_voice_filter=False)
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     failures: list[str] = []
     worker.failed.connect(failures.append)
 
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
-        export_worker,
-        "get_shared_vietnamese_translator",
+        "ai_player.adapters.tts.tts.create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(
+        "ai_player.runtime.translation_runtime.get_shared_vietnamese_translator",
         lambda _config: SimpleNamespace(translate_many=lambda _texts, _language: []),
     )
     worker._extract_full_quality_audio = lambda _path: pytest.fail("TTS guard should run before export work")
 
+    worker.dependencies = workflow_bindings.export()
     worker.run()
 
     assert failures
@@ -577,18 +607,22 @@ def test_staged_export_fails_when_final_mix_voice_volume_is_muted(monkeypatch, t
         original_audio_voice_filter=False,
         dubbing_voice_volume=0,
     )
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     failures: list[str] = []
     worker.failed.connect(failures.append)
 
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
-        export_worker,
-        "get_shared_vietnamese_translator",
+        "ai_player.adapters.tts.tts.create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(
+        "ai_player.runtime.translation_runtime.get_shared_vietnamese_translator",
         lambda _config: SimpleNamespace(translate_many=lambda _texts, _language: []),
     )
     worker._extract_full_quality_audio = lambda _path: pytest.fail("volume guard should run before export work")
 
+    worker.dependencies = workflow_bindings.export()
     worker.run()
 
     assert failures
@@ -604,7 +638,7 @@ def test_staged_words_payload_serializes_backend_scalar_values() -> None:
         def __float__(self) -> float:
             return self.value
 
-    payload = export_worker._segments_words_payload(
+    payload = workflow_bindings.export()._segments_words_payload(
         [
             SimpleNamespace(
                 text=" hello ",
@@ -634,8 +668,11 @@ def test_staged_words_payload_serializes_backend_scalar_values() -> None:
 
 def test_staged_source_cues_tolerate_invalid_segment_timing(tmp_path) -> None:
     config = AppConfig(audio_source="original", transcript_cleanup_mode="off")
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
 
+    worker.dependencies = workflow_bindings.export()
     cues = worker._source_cues_from_segments(
         [SimpleNamespace(text=" hello ", start="not-a-time", end=float("inf"))],
         "en",
@@ -646,8 +683,11 @@ def test_staged_source_cues_tolerate_invalid_segment_timing(tmp_path) -> None:
 
 def test_staged_source_cues_normalize_bytes_text(tmp_path) -> None:
     config = AppConfig(audio_source="original", transcript_cleanup_mode="off")
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
 
+    worker.dependencies = workflow_bindings.export()
     cues = worker._source_cues_from_segments(
         [SimpleNamespace(text=b" hello   world ", start=0.0, end=1.0)],
         b"EN",
@@ -659,7 +699,7 @@ def test_staged_source_cues_normalize_bytes_text(tmp_path) -> None:
 def test_clean_transcript_many_keeps_items_when_batch_result_is_short_or_blank() -> None:
     cleaner = SimpleNamespace(clean_many=lambda _texts, _language: [" cleaned one ", ""])
 
-    cleaned = export_worker._clean_transcript_many(cleaner, ["one", "two", "three"], "en")
+    cleaned = workflow_bindings.export()._clean_transcript_many(cleaner, ["one", "two", "three"], "en")
 
     assert cleaned == ["cleaned one", "two", "three"]
 
@@ -667,7 +707,7 @@ def test_clean_transcript_many_keeps_items_when_batch_result_is_short_or_blank()
 def test_translate_texts_keeps_items_when_batch_result_is_short_or_blank() -> None:
     translator = SimpleNamespace(translate_many=lambda _texts, _language: [" mot ", ""])
 
-    translated = export_worker._translate_texts(translator, ["one", "two", "three"], "en")
+    translated = workflow_bindings.export()._translate_texts(translator, ["one", "two", "three"], "en")
 
     assert translated == ["mot", "two", "three"]
 
@@ -675,32 +715,37 @@ def test_translate_texts_keeps_items_when_batch_result_is_short_or_blank() -> No
 def test_translate_texts_uses_single_item_translator_when_batch_is_missing() -> None:
     translator = SimpleNamespace(translate=lambda text, language: f"{language}:{text}")
 
-    translated = export_worker._translate_texts(translator, ["one", "two"], "en")
+    translated = workflow_bindings.export()._translate_texts(translator, ["one", "two"], "en")
 
     assert translated == ["en:one", "en:two"]
 
 
 def test_text_batch_alignment_treats_string_result_as_invalid() -> None:
-    assert export_worker._align_text_results(["one", "two"], "not a list") == ["one", "two"]
+    assert workflow_bindings.export()._align_text_results(["one", "two"], "not a list") == ["one", "two"]
 
 
 def test_text_batch_alignment_falls_back_for_non_text_items() -> None:
-    assert export_worker._align_text_results(["one", "two"], [{"text": "mot"}, b"hai"]) == ["one", "hai"]
+    assert workflow_bindings.export()._align_text_results(["one", "two"], [{"text": "mot"}, b"hai"]) == ["one", "hai"]
 
 
 def test_staged_export_keep_partial_stops_at_checkpoint(monkeypatch, tmp_path) -> None:
     config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     partial_paths: list[str] = []
     worker.partial_finished.connect(partial_paths.append)
 
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
-        export_worker,
-        "get_shared_vietnamese_translator",
+        "ai_player.adapters.tts.tts.create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(
+        "ai_player.runtime.translation_runtime.get_shared_vietnamese_translator",
         lambda _config: SimpleNamespace(translate_many=lambda texts, _language: texts),
     )
     worker._validate_whisper_model = lambda: None
+
+    worker.dependencies = workflow_bindings.export()
 
     def fake_extract(output_path: Path) -> None:
         Path(output_path).write_bytes(b"source")
@@ -709,6 +754,7 @@ def test_staged_export_keep_partial_stops_at_checkpoint(monkeypatch, tmp_path) -
     worker._extract_full_quality_audio = fake_extract
     worker._transcribe_staged = lambda _source_audio: pytest.fail("keep partial should stop after the checkpoint")
 
+    worker.dependencies = workflow_bindings.export()
     worker.run()
 
     assert partial_paths == [str(tmp_path)]
@@ -721,24 +767,30 @@ def test_staged_export_keep_partial_stops_at_checkpoint(monkeypatch, tmp_path) -
 
 def test_staged_export_cancel_during_process_marks_manifest_partial(monkeypatch, tmp_path) -> None:
     config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     partial_paths: list[str] = []
     worker.partial_finished.connect(partial_paths.append)
 
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
-        export_worker,
-        "get_shared_vietnamese_translator",
+        "ai_player.adapters.tts.tts.create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(
+        "ai_player.runtime.translation_runtime.get_shared_vietnamese_translator",
         lambda _config: SimpleNamespace(translate_many=lambda texts, _language: texts),
     )
     worker._validate_whisper_model = lambda: None
 
+    worker.dependencies = workflow_bindings.export()
+
     def fake_extract(_output_path: Path) -> None:
         worker.stop(keep_partial=True)
-        raise export_worker.ProcessCancelled("cancelled")
+        raise workflow_bindings.export().ProcessCancelled("cancelled")
 
     worker._extract_full_quality_audio = fake_extract
 
+    worker.dependencies = workflow_bindings.export()
     worker.run()
 
     assert partial_paths == [str(tmp_path)]
@@ -749,17 +801,22 @@ def test_staged_export_cancel_during_process_marks_manifest_partial(monkeypatch,
 
 def test_staged_export_cancel_marks_manifest_cancelled(monkeypatch, tmp_path) -> None:
     config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     partial_paths: list[str] = []
     worker.partial_finished.connect(partial_paths.append)
 
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
-        export_worker,
-        "get_shared_vietnamese_translator",
+        "ai_player.adapters.tts.tts.create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(
+        "ai_player.runtime.translation_runtime.get_shared_vietnamese_translator",
         lambda _config: SimpleNamespace(translate_many=lambda texts, _language: texts),
     )
     worker._validate_whisper_model = lambda: None
+
+    worker.dependencies = workflow_bindings.export()
 
     def fake_extract(output_path: Path) -> None:
         Path(output_path).write_bytes(b"source")
@@ -768,6 +825,7 @@ def test_staged_export_cancel_marks_manifest_cancelled(monkeypatch, tmp_path) ->
     worker._extract_full_quality_audio = fake_extract
     worker._transcribe_staged = lambda _source_audio: pytest.fail("cancel should stop after the checkpoint")
 
+    worker.dependencies = workflow_bindings.export()
     worker.run()
 
     assert partial_paths == []
@@ -778,24 +836,30 @@ def test_staged_export_cancel_marks_manifest_cancelled(monkeypatch, tmp_path) ->
 
 def test_staged_export_cancel_during_process_marks_manifest_cancelled(monkeypatch, tmp_path) -> None:
     config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     partial_paths: list[str] = []
     worker.partial_finished.connect(partial_paths.append)
 
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
-        export_worker,
-        "get_shared_vietnamese_translator",
+        "ai_player.adapters.tts.tts.create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(
+        "ai_player.runtime.translation_runtime.get_shared_vietnamese_translator",
         lambda _config: SimpleNamespace(translate_many=lambda texts, _language: texts),
     )
     worker._validate_whisper_model = lambda: None
 
+    worker.dependencies = workflow_bindings.export()
+
     def fake_extract(_output_path: Path) -> None:
         worker.stop()
-        raise export_worker.ProcessCancelled("cancelled")
+        raise workflow_bindings.export().ProcessCancelled("cancelled")
 
     worker._extract_full_quality_audio = fake_extract
 
+    worker.dependencies = workflow_bindings.export()
     worker.run()
 
     assert partial_paths == []
@@ -806,17 +870,22 @@ def test_staged_export_cancel_during_process_marks_manifest_cancelled(monkeypatc
 
 def test_staged_export_cancel_runtime_error_marks_manifest_cancelled(monkeypatch, tmp_path) -> None:
     config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     failures: list[str] = []
     worker.failed.connect(failures.append)
 
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
-        export_worker,
-        "get_shared_vietnamese_translator",
+        "ai_player.adapters.tts.tts.create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(
+        "ai_player.runtime.translation_runtime.get_shared_vietnamese_translator",
         lambda _config: SimpleNamespace(translate_many=lambda texts, _language: texts),
     )
     worker._validate_whisper_model = lambda: None
+
+    worker.dependencies = workflow_bindings.export()
 
     def fake_extract(_output_path: Path) -> None:
         worker.stop()
@@ -824,6 +893,7 @@ def test_staged_export_cancel_runtime_error_marks_manifest_cancelled(monkeypatch
 
     worker._extract_full_quality_audio = fake_extract
 
+    worker.dependencies = workflow_bindings.export()
     worker.run()
 
     assert failures == []
@@ -834,17 +904,22 @@ def test_staged_export_cancel_runtime_error_marks_manifest_cancelled(monkeypatch
 
 def test_staged_export_keep_partial_runtime_error_marks_manifest_partial(monkeypatch, tmp_path) -> None:
     config = AppConfig(audio_source="original", tts_provider="edge", original_audio_voice_filter=False)
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     partial_paths: list[str] = []
     worker.partial_finished.connect(partial_paths.append)
 
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
-        export_worker,
-        "get_shared_vietnamese_translator",
+        "ai_player.adapters.tts.tts.create_tts_provider", lambda _config: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(
+        "ai_player.runtime.translation_runtime.get_shared_vietnamese_translator",
         lambda _config: SimpleNamespace(translate_many=lambda texts, _language: texts),
     )
     worker._validate_whisper_model = lambda: None
+
+    worker.dependencies = workflow_bindings.export()
 
     def fake_extract(_output_path: Path) -> None:
         worker.stop(keep_partial=True)
@@ -852,6 +927,7 @@ def test_staged_export_keep_partial_runtime_error_marks_manifest_partial(monkeyp
 
     worker._extract_full_quality_audio = fake_extract
 
+    worker.dependencies = workflow_bindings.export()
     worker.run()
 
     assert partial_paths == [str(tmp_path)]
@@ -862,11 +938,14 @@ def test_staged_export_keep_partial_runtime_error_marks_manifest_partial(monkeyp
 
 def test_staged_translate_keeps_all_cues_when_batch_result_is_short(tmp_path) -> None:
     config = AppConfig(audio_source="original")
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     worker._translator = SimpleNamespace(translate_many=lambda _texts, _language: ["Mot", ""])
     segment_pairs: list[tuple[str, str]] = []
     worker.segment_ready.connect(lambda original, translated: segment_pairs.append((original, translated)))
 
+    worker.dependencies = workflow_bindings.export()
     target_cues = worker._translate_source_cues(
         [
             export_worker.TranscriptCue(0.0, 1.0, "one"),
@@ -882,7 +961,9 @@ def test_staged_translate_keeps_all_cues_when_batch_result_is_short(tmp_path) ->
 
 def test_staged_export_clears_previous_managed_artifacts(tmp_path) -> None:
     config = AppConfig(audio_source="original")
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     paths = worker._paths
     for directory in ("audio", "subtitles", "tts", ".work"):
         managed = tmp_path / directory
@@ -895,6 +976,7 @@ def test_staged_export_clears_previous_managed_artifacts(tmp_path) -> None:
     unrelated.write_text("keep me", encoding="utf-8")
 
     worker._temp_dir = tmp_path / ".work"
+    worker.dependencies = workflow_bindings.export()
     worker._prepare_staged_output_dir(tmp_path / "dubbed_video.mp4", tmp_path / "manifest.json")
 
     assert unrelated.read_text(encoding="utf-8") == "keep me"
@@ -913,15 +995,17 @@ def test_staged_source_filter_normalizes_mode_and_model(monkeypatch, tmp_path) -
         original_audio_voice_filter_mode="demucs",
         original_audio_voice_filter_model="mdx",
     )
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     worker._temp_dir = tmp_path / ".work"
     worker._temp_dir.mkdir()
     source_audio = tmp_path / "source.wav"
     source_audio.write_bytes(b"source")
     commands: list[list[object]] = []
 
-    monkeypatch.setattr(export_worker, "demucs_available", lambda: True)
-    monkeypatch.setattr(export_worker, "demucs_command", lambda: ["demucs"])
+    monkeypatch.setattr("ai_player.adapters.media.demucs_separation.demucs_available", lambda: True)
+    monkeypatch.setattr("ai_player.adapters.media.demucs_separation.demucs_command", lambda: ["demucs"])
 
     def fake_process(command, **_kwargs):
         commands.append(list(command))
@@ -931,11 +1015,13 @@ def test_staged_source_filter_normalizes_mode_and_model(monkeypatch, tmp_path) -
         (stem_root / "vocals.wav").write_bytes(b"voice")
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(export_worker, "run_cancelable_process", fake_process)
+    monkeypatch.setattr("ai_player.adapters.media.ffmpeg.run_cancelable_process", fake_process)
     worker._to_wav = lambda input_path, output_path: Path(output_path).write_bytes(Path(input_path).read_bytes())
 
+    worker.dependencies = workflow_bindings.export()
     assert worker._create_source_audio_stems(source_audio, tmp_path / "background.wav", tmp_path / "voice.wav") == "ai"
     assert commands[0][commands[0].index("-n") + 1] == "mdx_extra"
+
 
 def test_staged_demucs_source_filter_rejects_empty_no_vocals(monkeypatch, tmp_path) -> None:
     config = AppConfig(
@@ -943,14 +1029,16 @@ def test_staged_demucs_source_filter_rejects_empty_no_vocals(monkeypatch, tmp_pa
         original_audio_voice_filter=True,
         original_audio_voice_filter_mode="ai",
     )
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     worker._temp_dir = tmp_path / ".work"
     worker._temp_dir.mkdir()
     source_audio = tmp_path / "source.wav"
     source_audio.write_bytes(b"source")
 
-    monkeypatch.setattr(export_worker, "demucs_available", lambda: True)
-    monkeypatch.setattr(export_worker, "demucs_command", lambda: ["demucs"])
+    monkeypatch.setattr("ai_player.adapters.media.demucs_separation.demucs_available", lambda: True)
+    monkeypatch.setattr("ai_player.adapters.media.demucs_separation.demucs_command", lambda: ["demucs"])
 
     def fake_process(command, **_kwargs):
         stem_root = worker._temp_dir / "demucs" / "htdemucs" / source_audio.stem
@@ -958,8 +1046,9 @@ def test_staged_demucs_source_filter_rejects_empty_no_vocals(monkeypatch, tmp_pa
         (stem_root / "no_vocals.wav").write_bytes(b"")
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(export_worker, "run_cancelable_process", fake_process)
+    monkeypatch.setattr("ai_player.adapters.media.ffmpeg.run_cancelable_process", fake_process)
 
+    worker.dependencies = workflow_bindings.export()
     with pytest.raises(RuntimeError, match="Demucs did not create expected file"):
         worker._create_source_audio_stems(source_audio, tmp_path / "background.wav", tmp_path / "voice.wav")
 
@@ -968,11 +1057,11 @@ def test_export_clean_message_includes_process_stderr_tail() -> None:
     progress = "0%| progress noise " * 80
     error = subprocess.CalledProcessError(
         1,
-        ["python", "-m", "ai_player.services.demucs_runner"],
+        ["python", "-m", "ai_player.adapters.media.demucs_runner"],
         stderr=f"{progress}\nRuntimeError: real failure",
     )
 
-    message = export_worker._clean_message(error)
+    message = workflow_bindings.export()._clean_message(error)
 
     assert message.startswith("demucs failed with exit code 1")
     assert "RuntimeError: real failure" in message
@@ -984,14 +1073,17 @@ def test_staged_ai_source_filter_does_not_fall_back_to_fast(monkeypatch, tmp_pat
         original_audio_voice_filter=True,
         original_audio_voice_filter_mode="ai",
     )
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     source_audio = tmp_path / "source.wav"
     source_audio.write_bytes(b"source")
 
-    monkeypatch.setattr(export_worker, "demucs_available", lambda: False)
+    monkeypatch.setattr("ai_player.adapters.media.demucs_separation.demucs_available", lambda: False)
     worker._create_fast_stems = lambda *_args: pytest.fail("AI mode should not silently fall back to fast filtering")
 
-    with pytest.raises(export_worker.DemucsSeparationError):
+    worker.dependencies = workflow_bindings.export()
+    with pytest.raises(workflow_bindings.export().DemucsSeparationError):
         worker._create_source_audio_stems(source_audio, tmp_path / "background.wav", tmp_path / "voice.wav")
 
 
@@ -1002,7 +1094,9 @@ def test_staged_target_voice_cue_always_writes_wav_artifact(monkeypatch, tmp_pat
         dubbing_auto_match_audio=False,
         dubbing_speed_percent=0,
     )
-    worker = export_worker.StagedDubbingExportWorker("video.mp4", str(tmp_path), config)
+    worker = export_worker.StagedDubbingExportWorker(
+        "video.mp4", str(tmp_path), config, dependencies=workflow_bindings.export()
+    )
     worker._tts_dir.mkdir(parents=True)
     worker._tts_provider = SimpleNamespace(
         synthesize=lambda _text, output_path, **_kwargs: Path(output_path).write_bytes(b"raw mp3")
@@ -1014,8 +1108,9 @@ def test_staged_target_voice_cue_always_writes_wav_artifact(monkeypatch, tmp_pat
         assert not Path(output_path).exists()
         return tts_path
 
-    monkeypatch.setattr(export_worker, "match_tts_to_reference", fake_match_tts_to_reference)
+    monkeypatch.setattr("ai_player.adapters.media.audio_matcher.match_tts_to_reference", fake_match_tts_to_reference)
 
+    worker.dependencies = workflow_bindings.export()
     audio_path = worker._build_target_voice_cue(
         0,
         export_worker.TranscriptCue(0.0, 1.0, "Xin chao"),
@@ -1027,11 +1122,11 @@ def test_staged_target_voice_cue_always_writes_wav_artifact(monkeypatch, tmp_pat
     assert audio_path == tmp_path / "tts" / "0001-aligned.wav"
     assert audio_path.read_bytes() == b"raw mp3"
 
+
 def test_export_range_filters_and_shifts_transcript_cues(monkeypatch, tmp_path) -> None:
     transcript = tmp_path / "demo.srt"
     transcript.write_text(
-        "1\n00:00:00,000 --> 00:00:02,000\nskip\n\n"
-        "2\n00:00:05,000 --> 00:00:07,000\nkeep\n\n",
+        "1\n00:00:00,000 --> 00:00:02,000\nskip\n\n2\n00:00:05,000 --> 00:00:07,000\nkeep\n\n",
         encoding="utf-8",
     )
     config = AppConfig(audio_source="transcript", transcript_path=str(transcript), tts_provider="none")
@@ -1041,11 +1136,13 @@ def test_export_range_filters_and_shifts_transcript_cues(monkeypatch, tmp_path) 
         "video",
         config,
         export_worker.ExportRange(4.0, 8.0),
+        dependencies=workflow_bindings.export(),
     )
     worker._temp_dir = tmp_path
     worker._translator = SimpleNamespace(translate_many=lambda texts, _language: [f"{text}-vi" for text in texts])
-    monkeypatch.setattr(export_worker, "_export_worker_count", lambda: 1)
+    monkeypatch.setattr("ai_player.adapters.pipeline.export_utils._export_worker_count", lambda: 1)
 
+    worker.dependencies = workflow_bindings.export()
     cues = worker._build_transcript_cues()
 
     assert [cue.original for cue in cues] == ["keep"]
@@ -1060,10 +1157,12 @@ def test_video_mux_applies_export_range(tmp_path) -> None:
         "video",
         config,
         export_worker.ExportRange(10.0, 15.5),
+        dependencies=workflow_bindings.export(),
     )
     captured: dict[str, list[object]] = {}
     worker._run_ffmpeg = lambda args, **_kwargs: captured.setdefault("args", args)
 
+    worker.dependencies = workflow_bindings.export()
     worker._mux_video(tmp_path / "dubbed.wav")
 
     args = captured["args"]
@@ -1073,7 +1172,9 @@ def test_video_mux_applies_export_range(tmp_path) -> None:
 
 def test_source_export_voice_selector_runs_before_parallel_cue_build(monkeypatch, tmp_path) -> None:
     config = AppConfig(dubbing_auto_voice_gender=True, dubbing_auto_voice_gender_mode="stable")
-    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    worker = export_worker.DubbingExportWorker(
+        "video.mp4", str(tmp_path / "out.wav"), "audio", config, dependencies=workflow_bindings.export()
+    )
     worker._temp_dir = tmp_path
     worker._translator = SimpleNamespace(translate_many=lambda texts, _language: [f"{text}-vi" for text in texts])
     worker._transcript_cleaner = SimpleNamespace(clean=lambda text, _language: text)
@@ -1103,11 +1204,12 @@ def test_source_export_voice_selector_runs_before_parallel_cue_build(monkeypatch
             duration_seconds=duration_seconds,
         )
 
-    monkeypatch.setattr(export_worker, "extract_audio_range", fake_extract)
-    monkeypatch.setattr(export_worker, "_export_worker_count", lambda: 2)
+    monkeypatch.setattr("ai_player.adapters.media.audio_matcher.extract_audio_range", fake_extract)
+    monkeypatch.setattr("ai_player.adapters.pipeline.export_utils._export_worker_count", lambda: 2)
     worker._voice_selector = FakeSelector()
     worker._build_source_export_cue = fake_build
 
+    worker.dependencies = workflow_bindings.export()
     cues = worker._build_cues(tmp_path / "source.wav")
 
     assert calls == ["cue-00000-ref", "cue-00001-ref"]
@@ -1116,7 +1218,9 @@ def test_source_export_voice_selector_runs_before_parallel_cue_build(monkeypatch
 
 def test_source_export_tolerates_invalid_segment_timing(monkeypatch, tmp_path) -> None:
     config = AppConfig(tts_provider="none")
-    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    worker = export_worker.DubbingExportWorker(
+        "video.mp4", str(tmp_path / "out.wav"), "audio", config, dependencies=workflow_bindings.export()
+    )
     worker._temp_dir = tmp_path
     worker._translator = SimpleNamespace(translate_many=lambda texts, _language: texts)
     worker._transcript_cleaner = SimpleNamespace(clean_many=lambda texts, _language: texts)
@@ -1125,9 +1229,10 @@ def test_source_export_tolerates_invalid_segment_timing(monkeypatch, tmp_path) -
         SimpleNamespace(language="en"),
     )
     worker._make_silence = lambda _duration, output_path: Path(output_path).write_bytes(b"silence")
-    monkeypatch.setattr(export_worker, "extract_audio_range", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(export_worker, "_export_worker_count", lambda: 1)
+    monkeypatch.setattr("ai_player.adapters.media.audio_matcher.extract_audio_range", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("ai_player.adapters.pipeline.export_utils._export_worker_count", lambda: 1)
 
+    worker.dependencies = workflow_bindings.export()
     cues = worker._build_cues(tmp_path / "source.wav")
 
     assert len(cues) == 1
@@ -1137,7 +1242,9 @@ def test_source_export_tolerates_invalid_segment_timing(monkeypatch, tmp_path) -
 
 def test_source_export_normalizes_bytes_text_and_missing_language(monkeypatch, tmp_path) -> None:
     config = AppConfig(tts_provider="none", transcript_cleanup_mode="off")
-    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    worker = export_worker.DubbingExportWorker(
+        "video.mp4", str(tmp_path / "out.wav"), "audio", config, dependencies=workflow_bindings.export()
+    )
     worker._temp_dir = tmp_path
     translated_calls: list[tuple[list[str], str | None]] = []
     worker._translator = SimpleNamespace(
@@ -1148,9 +1255,10 @@ def test_source_export_normalizes_bytes_text_and_missing_language(monkeypatch, t
         [SimpleNamespace(text=b" hello   world ", start=0.5, end=1.0)],
         SimpleNamespace(),
     )
-    monkeypatch.setattr(export_worker, "extract_audio_range", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(export_worker, "_export_worker_count", lambda: 1)
+    monkeypatch.setattr("ai_player.adapters.media.audio_matcher.extract_audio_range", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("ai_player.adapters.pipeline.export_utils._export_worker_count", lambda: 1)
 
+    worker.dependencies = workflow_bindings.export()
     cues = worker._build_cues(tmp_path / "source.wav")
 
     assert translated_calls == [(["hello world"], None)]
@@ -1159,13 +1267,16 @@ def test_source_export_normalizes_bytes_text_and_missing_language(monkeypatch, t
 
 def test_source_export_replaces_non_speech_target_with_silence(tmp_path) -> None:
     config = AppConfig(tts_provider="vieneu")
-    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    worker = export_worker.DubbingExportWorker(
+        "video.mp4", str(tmp_path / "out.wav"), "audio", config, dependencies=workflow_bindings.export()
+    )
     worker._temp_dir = tmp_path
     worker._tts_provider = SimpleNamespace(
         synthesize=lambda *_args, **_kwargs: pytest.fail("filler sounds should not be sent to TTS")
     )
     worker._make_silence = lambda _duration, output_path: Path(output_path).write_bytes(b"silence")
 
+    worker.dependencies = workflow_bindings.export()
     cue = worker._build_source_export_cue(
         0,
         "uh",
@@ -1180,45 +1291,50 @@ def test_source_export_replaces_non_speech_target_with_silence(tmp_path) -> None
     assert cue.audio_path.read_bytes() == b"silence"
     assert cue.duration_seconds == 0.5
 
+
 def test_export_duration_helpers_reject_non_finite_probe(monkeypatch, tmp_path) -> None:
     captured: list[float] = []
     audio_path = tmp_path / "target.wav"
     audio_path.write_bytes(b"wav")
-    monkeypatch.setattr(export_worker, "probe_duration_seconds", lambda _path: float("inf"))
-    monkeypatch.setattr(export_worker, "ffmpeg_make_silence", lambda duration, _path: captured.append(duration))
+    monkeypatch.setattr("ai_player.adapters.media.ffmpeg.probe_duration_seconds", lambda _path: float("inf"))
+    monkeypatch.setattr(
+        "ai_player.adapters.media.ffmpeg.make_silence", lambda duration, _path: captured.append(duration)
+    )
 
-    assert export_worker._probe_duration_seconds(audio_path) == 0.0
+    assert workflow_bindings.export()._probe_duration_seconds(audio_path) == 0.0
 
-    export_worker._make_silence(float("nan"), audio_path)
+    workflow_bindings.export()._make_silence(float("nan"), audio_path)
 
     assert captured == [0.0]
 
 
 def test_export_progress_percent_rejects_non_finite_values() -> None:
-    assert export_worker._percent_value(float("nan")) == 0
-    assert export_worker._percent_value(float("inf")) == 0
-    assert export_worker._percent_value(120.2) == 100
+    assert workflow_bindings.export()._percent_value(float("nan")) == 0
+    assert workflow_bindings.export()._percent_value(float("inf")) == 0
+    assert workflow_bindings.export()._percent_value(120.2) == 100
 
 
 def test_export_json_number_rejects_overflow_values() -> None:
-    assert export_worker._json_number("1e9999", default=None) is None
+    assert workflow_bindings.export()._json_number("1e9999", default=None) is None
 
 
 def test_export_worker_count_ignores_overflow_env(monkeypatch) -> None:
     monkeypatch.setenv("AI_PLAYER_EXPORT_WORKERS", "1e9999")
 
-    assert export_worker._export_worker_count() >= 1
+    assert workflow_bindings.export()._export_worker_count() >= 1
 
 
 def test_transcript_export_sanitizes_entry_timing_and_text(monkeypatch, tmp_path) -> None:
     config = AppConfig(tts_provider="none", segment_seconds=float("nan"), transcript_cleanup_mode="off")
-    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    worker = export_worker.DubbingExportWorker(
+        "video.mp4", str(tmp_path / "out.wav"), "audio", config, dependencies=workflow_bindings.export()
+    )
     worker._temp_dir = tmp_path
     worker._translator = SimpleNamespace(translate_many=lambda texts, _language: texts)
     worker._transcript_cleaner = SimpleNamespace(clean_many=lambda texts, _language: texts)
     silences: list[float] = []
-    worker._make_silence = lambda duration, output_path: silences.append(duration) or Path(output_path).write_bytes(
-        b"silence"
+    worker._make_silence = lambda duration, output_path: (
+        silences.append(duration) or Path(output_path).write_bytes(b"silence")
     )
     monkeypatch.setattr(
         export_worker,
@@ -1227,8 +1343,9 @@ def test_transcript_export_sanitizes_entry_timing_and_text(monkeypatch, tmp_path
             SimpleNamespace(start=float("inf"), end=float("nan"), text=b" hello   world ")
         ],
     )
-    monkeypatch.setattr(export_worker, "_export_worker_count", lambda: 1)
+    monkeypatch.setattr("ai_player.adapters.pipeline.export_utils._export_worker_count", lambda: 1)
 
+    worker.dependencies = workflow_bindings.export()
     cues = worker._build_transcript_cues()
 
     assert silences == [5.0]
@@ -1242,13 +1359,16 @@ def test_transcript_export_sanitizes_entry_timing_and_text(monkeypatch, tmp_path
         )
     ]
 
+
 def test_source_export_skips_reference_extract_when_unused(monkeypatch, tmp_path) -> None:
     config = AppConfig(
         dubbing_auto_match_audio=False,
         dubbing_auto_voice_gender=False,
         tts_provider="vieneu",
     )
-    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    worker = export_worker.DubbingExportWorker(
+        "video.mp4", str(tmp_path / "out.wav"), "audio", config, dependencies=workflow_bindings.export()
+    )
     worker._temp_dir = tmp_path
     worker._translator = SimpleNamespace(translate_many=lambda texts, _language: [f"{text}-vi" for text in texts])
     worker._transcript_cleaner = SimpleNamespace(clean=lambda text, _language: text)
@@ -1272,10 +1392,11 @@ def test_source_export_skips_reference_extract_when_unused(monkeypatch, tmp_path
             duration_seconds=duration_seconds,
         )
 
-    monkeypatch.setattr(export_worker, "extract_audio_range", fail_extract)
-    monkeypatch.setattr(export_worker, "_export_worker_count", lambda: 1)
+    monkeypatch.setattr("ai_player.adapters.media.audio_matcher.extract_audio_range", fail_extract)
+    monkeypatch.setattr("ai_player.adapters.pipeline.export_utils._export_worker_count", lambda: 1)
     worker._build_source_export_cue = fake_build
 
+    worker.dependencies = workflow_bindings.export()
     cues = worker._build_cues(source_audio)
 
     assert seen_references == [source_audio]
@@ -1284,7 +1405,9 @@ def test_source_export_skips_reference_extract_when_unused(monkeypatch, tmp_path
 
 def test_export_aligned_audio_mixes_cues_at_source_starts(tmp_path) -> None:
     config = AppConfig(dubbing_overlap_policy="strict_start")
-    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    worker = export_worker.DubbingExportWorker(
+        "video.mp4", str(tmp_path / "out.wav"), "audio", config, dependencies=workflow_bindings.export()
+    )
     worker._temp_dir = tmp_path
     captured: dict[str, list[object]] = {}
     source_a = tmp_path / "a.wav"
@@ -1298,6 +1421,7 @@ def test_export_aligned_audio_mixes_cues_at_source_starts(tmp_path) -> None:
     worker._to_wav = fake_to_wav
     worker._run_ffmpeg = lambda args, **_kwargs: captured.setdefault("args", args)
 
+    worker.dependencies = workflow_bindings.export()
     worker._build_aligned_audio(
         [
             export_worker.ExportCue(0.0, "first", "mot", source_a, duration_seconds=3.0),
@@ -1316,7 +1440,9 @@ def test_export_aligned_audio_mixes_cues_at_source_starts(tmp_path) -> None:
 
 def test_export_aligned_audio_uses_smart_overlap_policy(tmp_path) -> None:
     config = AppConfig(dubbing_overlap_policy="smart")
-    worker = export_worker.DubbingExportWorker("video.mp4", str(tmp_path / "out.wav"), "audio", config)
+    worker = export_worker.DubbingExportWorker(
+        "video.mp4", str(tmp_path / "out.wav"), "audio", config, dependencies=workflow_bindings.export()
+    )
     worker._temp_dir = tmp_path
     captured: dict[str, list[object]] = {}
     source_a = tmp_path / "a.wav"
@@ -1327,6 +1453,7 @@ def test_export_aligned_audio_uses_smart_overlap_policy(tmp_path) -> None:
     worker._to_wav = lambda _input_path, output_path: Path(output_path).write_bytes(b"wav")
     worker._run_ffmpeg = lambda args, **_kwargs: captured.setdefault("args", args)
 
+    worker.dependencies = workflow_bindings.export()
     worker._build_aligned_audio(
         [
             export_worker.ExportCue(0.0, "first", "mot", source_a, duration_seconds=3.0),
@@ -1340,12 +1467,14 @@ def test_export_aligned_audio_uses_smart_overlap_policy(tmp_path) -> None:
     assert "adelay=0:all=1" in filter_complex
     assert "adelay=1750:all=1" in filter_complex
 
+
 def test_dubbing_worker_queues_audio_at_source_start_even_when_previous_audio_extends(qapp, tmp_path) -> None:
     config = AppConfig(audio_source="original", dubbing_overlap_policy="strict_start")
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
     worker._scheduled_audio_until = 10.0
     audio_path = tmp_path / "target.wav"
 
+    worker.dependencies = workflow_bindings.realtime()
     worker._queue_pending_audio(2.0, 1.0, audio_path, "hello", "xin chao")
 
     assert worker._pending_audio == [(2.0, 2.0, audio_path, "hello", "xin chao")]
@@ -1354,10 +1483,11 @@ def test_dubbing_worker_queues_audio_at_source_start_even_when_previous_audio_ex
 
 def test_dubbing_worker_smart_policy_pushes_large_overlap_only_briefly(qapp, tmp_path) -> None:
     config = AppConfig(audio_source="original", dubbing_overlap_policy="smart")
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
     worker._scheduled_audio_until = 10.0
     audio_path = tmp_path / "target.wav"
 
+    worker.dependencies = workflow_bindings.realtime()
     worker._queue_pending_audio(2.0, 1.0, audio_path, "hello", "xin chao")
 
     assert worker._pending_audio == [(2.75, 2.0, audio_path, "hello", "xin chao")]
@@ -1366,10 +1496,11 @@ def test_dubbing_worker_smart_policy_pushes_large_overlap_only_briefly(qapp, tmp
 
 def test_dubbing_worker_avoid_overlap_policy_queues_after_previous_audio(qapp, tmp_path) -> None:
     config = AppConfig(audio_source="original", dubbing_overlap_policy="avoid_overlap")
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
     worker._scheduled_audio_until = 10.0
     audio_path = tmp_path / "target.wav"
 
+    worker.dependencies = workflow_bindings.realtime()
     worker._queue_pending_audio(2.0, 1.0, audio_path, "hello", "xin chao")
 
     assert worker._pending_audio == [(10.0, 2.0, audio_path, "hello", "xin chao")]
@@ -1378,10 +1509,11 @@ def test_dubbing_worker_avoid_overlap_policy_queues_after_previous_audio(qapp, t
 
 def test_dubbing_worker_keeps_document_audio_sequential(qapp, tmp_path) -> None:
     config = AppConfig(audio_source="document_editor", dubbing_overlap_policy="strict_start")
-    worker = DubbingWorker("document.txt", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("document.txt", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
     worker._scheduled_audio_until = 10.0
     audio_path = tmp_path / "target.wav"
 
+    worker.dependencies = workflow_bindings.realtime()
     worker._queue_pending_audio(2.0, 1.0, audio_path, "hello", "xin chao")
 
     assert worker._pending_audio == [(10.0, 2.0, audio_path, "hello", "xin chao")]
@@ -1390,9 +1522,10 @@ def test_dubbing_worker_keeps_document_audio_sequential(qapp, tmp_path) -> None:
 
 def test_dubbing_worker_sanitizes_non_finite_pending_audio_times(qapp, tmp_path) -> None:
     config = AppConfig(audio_source="original", dubbing_overlap_policy="strict_start")
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
     audio_path = tmp_path / "target.wav"
 
+    worker.dependencies = workflow_bindings.realtime()
     worker._queue_pending_audio(float("inf"), float("nan"), audio_path, "hello", "xin chao")
 
     assert worker._pending_audio == [(0.0, 0.0, audio_path, "hello", "xin chao")]
@@ -1409,7 +1542,7 @@ def test_dubbing_worker_sanitizes_invalid_speed_and_volume(monkeypatch, qapp, tm
         dubbing_speed_percent=float("nan"),
         dubbing_voice_volume=float("inf"),
     )
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
     audio_path = tmp_path / "target.wav"
     audio_path.write_bytes(b"wav")
     commands: list[list[str]] = []
@@ -1418,14 +1551,17 @@ def test_dubbing_worker_sanitizes_invalid_speed_and_volume(monkeypatch, qapp, tm
         def poll(self):
             return 0
 
-    monkeypatch.setattr("ai_player.workers.dubbing_worker.ffplay_executable", lambda: "ffplay")
+    monkeypatch.setattr("ai_player.adapters.media.ffmpeg.ffplay_executable", lambda: "ffplay")
     monkeypatch.setattr(
-        "ai_player.workers.dubbing_worker.subprocess.Popen",
+        "ai_player.application.workflows.realtime.subprocess.Popen",
         lambda command, **_kwargs: commands.append(command) or FakeProcess(),
     )
 
+    worker.dependencies = workflow_bindings.realtime()
     assert worker._skip_tts_postprocess()
+    worker.dependencies = workflow_bindings.realtime()
     worker._queue_pending_audio(0.0, 1.0, audio_path, "hello", "xin chao")
+    worker.dependencies = workflow_bindings.realtime()
     assert worker._launch_due_audio(0.0)
 
     assert commands[0][commands[0].index("-volume") + 1] == "100"
@@ -1438,8 +1574,9 @@ def test_dubbing_worker_skips_tts_postprocess_when_matching_is_disabled(qapp) ->
         dubbing_auto_match_audio=False,
         dubbing_speed_percent=0,
     )
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
 
+    worker.dependencies = workflow_bindings.realtime()
     assert worker._skip_tts_postprocess()
 
 
@@ -1450,39 +1587,50 @@ def test_dubbing_worker_keeps_tts_postprocess_for_speed_adjustment(qapp) -> None
         dubbing_auto_match_audio=False,
         dubbing_speed_percent=8,
     )
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
 
+    worker.dependencies = workflow_bindings.realtime()
     assert not worker._skip_tts_postprocess()
 
 
 def test_dubbing_worker_caps_original_segment_workers_by_default(monkeypatch, qapp) -> None:
     monkeypatch.delenv("AI_PLAYER_DUBBING_SEGMENT_WORKERS", raising=False)
     config = AppConfig(audio_source="original", dubbing_lookahead_segments=4)
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
 
+    worker.dependencies = workflow_bindings.realtime()
     assert worker._segment_worker_count() == 1
 
 
 def test_dubbing_worker_segment_worker_env_override(monkeypatch, qapp) -> None:
     monkeypatch.setenv("AI_PLAYER_DUBBING_SEGMENT_WORKERS", "3")
     config = AppConfig(audio_source="original", dubbing_lookahead_segments=4)
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
 
+    worker.dependencies = workflow_bindings.realtime()
     assert worker._segment_worker_count() == 3
 
 
 def test_dubbing_worker_source_cache_accepts_direct_https_media(qapp) -> None:
     source = "https://cdn.example.test/video.mp4?token=abc"
     config = AppConfig(audio_source="original")
-    worker = DubbingWorker(source, lambda: 0, lambda: False, config)
+    worker = DubbingWorker(source, lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
 
+    worker.dependencies = workflow_bindings.realtime()
     assert worker._source_audio_cache_input() == source
 
 
 def test_dubbing_worker_source_cache_rejects_stream_manifest(qapp) -> None:
     config = AppConfig(audio_source="original")
-    worker = DubbingWorker("https://cdn.example.test/live.m3u8", lambda: 0, lambda: False, config)
+    worker = DubbingWorker(
+        "https://cdn.example.test/live.m3u8",
+        lambda: 0,
+        lambda: False,
+        config,
+        dependencies=workflow_bindings.realtime(),
+    )
 
+    worker.dependencies = workflow_bindings.realtime()
     assert worker._source_audio_cache_input() is None
 
 
@@ -1498,6 +1646,7 @@ def test_dubbing_worker_http_extract_retries_with_output_seek(monkeypatch, qapp,
             "Referer": "https://www.njav.com/vi/xvideos/demo",
             "User-Agent": "DemoAgent/1.0",
         },
+        dependencies=workflow_bindings.realtime(),
     )
     calls: list[tuple[list[object], dict[str, object]]] = []
 
@@ -1507,8 +1656,9 @@ def test_dubbing_worker_http_extract_retries_with_output_seek(monkeypatch, qapp,
             raise subprocess.CalledProcessError(3199971767, ["ffmpeg", *args], stderr="HTTP 403 forbidden")
         Path(args[-1]).write_bytes(b"audio")
 
-    monkeypatch.setattr(dubbing_worker, "run_ffmpeg_cancelable", fake_run)
+    monkeypatch.setattr("ai_player.adapters.media.ffmpeg.run_ffmpeg_cancelable", fake_run)
 
+    worker.dependencies = workflow_bindings.realtime()
     worker._extract_audio(68.0, tmp_path / "source-68.wav")
 
     assert len(calls) == 2
@@ -1530,13 +1680,20 @@ def test_dubbing_worker_http_extract_retries_with_output_seek(monkeypatch, qapp,
 
 def test_dubbing_worker_rejects_telegram_web_progressive_before_ffmpeg(monkeypatch, qapp, tmp_path) -> None:
     config = AppConfig(audio_source="original", gui_language="en")
-    worker = DubbingWorker("https://web.telegram.org/a/progressive/document-demo", lambda: 0, lambda: False, config)
+    worker = DubbingWorker(
+        "https://web.telegram.org/a/progressive/document-demo",
+        lambda: 0,
+        lambda: False,
+        config,
+        dependencies=workflow_bindings.realtime(),
+    )
 
     def fail_run(*_args, **_kwargs):
         raise AssertionError("ffmpeg should not run for Telegram Web progressive URLs")
 
-    monkeypatch.setattr(dubbing_worker, "run_ffmpeg_cancelable", fail_run)
+    monkeypatch.setattr("ai_player.adapters.media.ffmpeg.run_ffmpeg_cancelable", fail_run)
 
+    worker.dependencies = workflow_bindings.realtime()
     with pytest.raises(RuntimeError, match="Telegram Web progressive"):
         worker._extract_audio(0.0, tmp_path / "source.wav")
 
@@ -1552,10 +1709,11 @@ def test_dubbing_worker_process_error_includes_stderr() -> None:
 
 def test_dubbing_worker_sanitizes_transcript_entry_timing(qapp, tmp_path) -> None:
     config = AppConfig(audio_source="transcript", tts_provider="none", segment_seconds=float("nan"))
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
     worker._temp_dir = tmp_path
     worker._translator = SimpleNamespace(translate=lambda text, _language: f"vi {text}")
 
+    worker.dependencies = workflow_bindings.realtime()
     worker._prepare_transcript_entry(
         transcript_source.TranscriptEntry(float("inf"), float("nan"), "hello"),
         0,
@@ -1566,7 +1724,7 @@ def test_dubbing_worker_sanitizes_transcript_entry_timing(qapp, tmp_path) -> Non
 
 def test_dubbing_worker_normalizes_asr_bytes_text_and_language(qapp, tmp_path) -> None:
     config = AppConfig(tts_provider="none", transcript_cleanup_mode="off")
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
     worker._temp_dir = tmp_path
     worker._model = object()
     translated_calls: list[tuple[str, str | None]] = []
@@ -1581,6 +1739,7 @@ def test_dubbing_worker_normalizes_asr_bytes_text_and_language(qapp, tmp_path) -
         SimpleNamespace(language=b"EN"),
     )
 
+    worker.dependencies = workflow_bindings.realtime()
     worker._process_segment(1.0)
 
     assert translated_calls == [("hello world", "en")]
@@ -1589,7 +1748,7 @@ def test_dubbing_worker_normalizes_asr_bytes_text_and_language(qapp, tmp_path) -
 
 def test_dubbing_worker_collapses_repeated_translated_phrases(qapp, tmp_path) -> None:
     config = AppConfig(tts_provider="none", transcript_cleanup_mode="off")
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
     worker._temp_dir = tmp_path
     worker._model = object()
     ready_segments: list[tuple[str, str]] = []
@@ -1603,6 +1762,7 @@ def test_dubbing_worker_collapses_repeated_translated_phrases(qapp, tmp_path) ->
         SimpleNamespace(language="en"),
     )
 
+    worker.dependencies = workflow_bindings.realtime()
     worker._process_segment(1.0)
 
     assert ready_segments == [("I do not know.", "Tôi không biết.")]
@@ -1610,12 +1770,15 @@ def test_dubbing_worker_collapses_repeated_translated_phrases(qapp, tmp_path) ->
 
 def test_document_review_export_cue_uses_initialized_tts_lock(tmp_path) -> None:
     config = AppConfig(tts_provider="vieneu")
-    worker = export_worker.DocumentReviewExportWorker("document.srt", [], str(tmp_path / "out.mp4"), config)
+    worker = export_worker.DocumentReviewExportWorker(
+        "document.srt", [], str(tmp_path / "out.mp4"), config, dependencies=workflow_bindings.document()
+    )
     worker._temp_dir = tmp_path
     worker._tts_provider = SimpleNamespace(synthesize=lambda _text, path, voice=None: Path(path).write_bytes(b"tts"))
     worker._to_wav = lambda _input_path, output_path: Path(output_path).write_bytes(b"wav")
     worker._trim_leading_silence = lambda audio_path: audio_path
 
+    worker.dependencies = workflow_bindings.document()
     cue = worker._build_document_export_cue(
         0,
         export_worker.TranscriptCue(0.0, 1.0, "hello"),
@@ -1629,13 +1792,16 @@ def test_document_review_export_cue_uses_initialized_tts_lock(tmp_path) -> None:
 
 def test_document_export_sanitizes_invalid_cue_timing(tmp_path) -> None:
     config = AppConfig(tts_provider="none")
-    worker = export_worker.DocumentReviewExportWorker("document.srt", [], str(tmp_path / "out.mp4"), config)
+    worker = export_worker.DocumentReviewExportWorker(
+        "document.srt", [], str(tmp_path / "out.mp4"), config, dependencies=workflow_bindings.document()
+    )
     worker._temp_dir = tmp_path
     silences: list[float] = []
-    worker._make_silence = lambda duration, output_path: silences.append(duration) or Path(output_path).write_bytes(
-        b"silence"
+    worker._make_silence = lambda duration, output_path: (
+        silences.append(duration) or Path(output_path).write_bytes(b"silence")
     )
 
+    worker.dependencies = workflow_bindings.document()
     cue = worker._build_document_export_cue(
         0,
         export_worker.TranscriptCue(float("inf"), float("nan"), "hello"),
@@ -1648,16 +1814,19 @@ def test_document_export_sanitizes_invalid_cue_timing(tmp_path) -> None:
     assert cue.start_seconds == 0.0
     assert cue.duration_seconds == 0.25
 
+
 def test_dubbing_worker_advances_async_segments_in_timeline_order(qapp) -> None:
     config = AppConfig(segment_seconds=4, dubbing_lookahead_segments=2)
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
     worker._covered_until = 0.0
 
     worker._completed_segment_starts.add(_segment_start_key(4.0))
+    worker.dependencies = workflow_bindings.realtime()
     worker._advance_covered_until()
     assert worker._covered_until == 0.0
 
     worker._completed_segment_starts.add(_segment_start_key(0.0))
+    worker.dependencies = workflow_bindings.realtime()
     worker._advance_covered_until()
     assert worker._covered_until == 8.0
 
@@ -1668,7 +1837,7 @@ def test_dubbing_worker_prebuffer_does_not_wait_for_full_target_ready_ahead(qapp
         dubbing_prebuffer_segments=2,
         dubbing_min_ready_ahead_seconds=40,
     )
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
     resumed: list[str] = []
     worker._launch_due_audio = lambda _current: False
     worker._request_resume = resumed.append
@@ -1676,6 +1845,7 @@ def test_dubbing_worker_prebuffer_does_not_wait_for_full_target_ready_ahead(qapp
     worker._prepared_segments = 2
     worker._buffering = True
 
+    worker.dependencies = workflow_bindings.realtime()
     worker._resume_if_buffer_ready(0.0)
 
     assert not worker._buffering
@@ -1688,32 +1858,17 @@ def test_dubbing_worker_prebuffer_still_requires_prebuffer_ready_ahead(qapp) -> 
         dubbing_prebuffer_segments=2,
         dubbing_min_ready_ahead_seconds=40,
     )
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
     worker._launch_due_audio = lambda _current: False
     worker._request_resume = lambda _message: None
     worker._covered_until = 12.0
     worker._prepared_segments = 2
     worker._buffering = True
 
+    worker.dependencies = workflow_bindings.realtime()
     worker._resume_if_buffer_ready(0.0)
 
     assert worker._buffering
-
-
-def test_dubbing_worker_skips_local_cleanup_for_realtime_sources(qapp, tmp_path) -> None:
-    config = AppConfig(
-        audio_source="original",
-        transcript_cleanup_mode="light",
-        transcript_cleanup_provider="local",
-        transcript_cleanup_model=str(tmp_path),
-    )
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
-    statuses: list[str] = []
-    worker.status_changed.connect(statuses.append)
-    worker._transcript_cleaner.clean = lambda *_args, **_kwargs: pytest.fail("local cleanup should be skipped")
-
-    assert worker._clean_transcript_text("  hello   world  ", "en") == "hello world"
-    assert statuses
 
 
 def test_dubbing_worker_skips_online_cleanup_for_realtime_sources(qapp) -> None:
@@ -1722,22 +1877,11 @@ def test_dubbing_worker_skips_online_cleanup_for_realtime_sources(qapp) -> None:
         transcript_cleanup_mode="light",
         transcript_cleanup_provider="groq",
     )
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
+    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config, dependencies=workflow_bindings.realtime())
     statuses: list[str] = []
     worker.status_changed.connect(statuses.append)
     worker._transcript_cleaner.clean = lambda *_args, **_kwargs: pytest.fail("online cleanup should be skipped")
 
+    worker.dependencies = workflow_bindings.realtime()
     assert worker._clean_transcript_text("  hello   world  ", "en") == "hello world"
     assert statuses
-
-
-def test_dubbing_worker_keeps_nonlocal_cleanup_for_realtime_sources(qapp) -> None:
-    config = AppConfig(
-        audio_source="original",
-        transcript_cleanup_mode="light",
-        transcript_cleanup_provider="ollama",
-    )
-    worker = DubbingWorker("video.mp4", lambda: 0, lambda: False, config)
-    worker._transcript_cleaner.clean = lambda text, _language=None: f"cleaned {text.strip()}"
-
-    assert worker._clean_transcript_text(" hello ", "en") == "cleaned hello"

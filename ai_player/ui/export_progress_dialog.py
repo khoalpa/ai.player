@@ -5,7 +5,7 @@ import time
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QProgressBar, QTextEdit, QVBoxLayout
 
-from ai_player.core.config import AppConfig
+from ai_player.configuration import AppConfig
 from ai_player.ui.player_window_utils import UI_TEXT
 from ai_player.ui.player_window_utils import repair_mojibake as _repair_mojibake
 

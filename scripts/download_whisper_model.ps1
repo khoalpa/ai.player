@@ -1,6 +1,6 @@
 param(
     [string]$Python = "",
-    [string]$RepoId = "Systran/faster-whisper-base",
+    [string]$RepoId = "Systran/faster-whisper-large-v3",
     [string]$Target = ""
 )
 

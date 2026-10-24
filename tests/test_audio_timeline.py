@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ai_player.services.audio_timeline import schedule_timeline_start
+from ai_player.domain.audio_timeline import schedule_timeline_start
 
 
 def test_schedule_timeline_start_sanitizes_non_finite_values() -> None:
@@ -13,4 +13,3 @@ def test_schedule_timeline_start_sanitizes_non_finite_values() -> None:
 
     assert scheduled_start == 0.0
     assert scheduled_until == 0.05
-

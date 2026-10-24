@@ -7,15 +7,15 @@ import tempfile
 from dataclasses import replace
 from pathlib import Path
 
-from ai_player.core.config import AppConfig
-from ai_player.core.gpu import ctranslate2_cuda_available, onnx_cuda_available, torch_cuda_available
-from ai_player.core.runtime_catalog import (
+from ai_player.configuration import AppConfig
+from ai_player.core.value_utils import optional_float
+from ai_player.runtime.gpu import ctranslate2_cuda_available, torch_cuda_available
+from ai_player.runtime.runtime_catalog import (
     available_dropdown_options,
     load_gui_text_aliases,
     load_gui_translations,
     load_performance_presets,
 )
-from ai_player.core.value_utils import optional_float
 
 UI_TEXT = load_gui_translations()
 UI_TEXT_ALIASES = load_gui_text_aliases()
@@ -96,32 +96,40 @@ def is_ytdlp_source_cache(path: Path) -> bool:
 
 
 def safe_native_dubbing_config(config: AppConfig) -> AppConfig:
-    if os.getenv("AI_PLAYER_DISABLE_CUDA", "").strip().lower() in {"1", "true", "yes", "on"}:
-        return _cpu_dubbing_config(config)
-    if _cuda_runtime_ready():
-        return config
-    if not any(
-        str(value or "").strip().lower() == "cuda"
-        for value in (
-            config.local_translation_device,
-            config.whisper_device,
-            config.vieneu_tts_device,
-        )
-    ):
-        return config
-    return _cpu_dubbing_config(config)
+    cuda_disabled = os.getenv("AI_PLAYER_DISABLE_CUDA", "").strip().lower() in {"1", "true", "yes", "on"}
+    changes: dict[str, object] = {}
+
+    whisper_device = _device_value(config.whisper_device)
+    if whisper_device != "cpu" and (cuda_disabled or not ctranslate2_cuda_available()):
+        changes.update(whisper_device="cpu", whisper_compute_type="int8")
+
+    translation_device = _device_value(config.local_translation_device)
+    if translation_device != "cpu" and (cuda_disabled or not _translation_cuda_ready(config)):
+        changes["local_translation_device"] = "cpu"
+
+    vieneu_device = _device_value(config.vieneu_tts_device)
+    if vieneu_device != "cpu" and (cuda_disabled or not _vieneu_cuda_ready()):
+        changes.update(vieneu_tts_device="cpu", vieneu_tts_backend="native")
+
+    return replace(config, **changes) if changes else config
 
 
-def _cpu_dubbing_config(config: AppConfig) -> AppConfig:
-    return replace(
-        config,
-        local_translation_device="cpu",
-        whisper_device="cpu",
-        whisper_compute_type="int8",
-        vieneu_tts_device="cpu",
-        vieneu_tts_backend="native",
-    )
+def _device_value(value: object) -> str:
+    device = str(value or "auto").strip().lower()
+    return device if device in {"auto", "cpu", "cuda"} else "auto"
 
 
-def _cuda_runtime_ready() -> bool:
-    return torch_cuda_available() or ctranslate2_cuda_available() or onnx_cuda_available()
+def _translation_cuda_ready(config: AppConfig) -> bool:
+    provider = str(config.translator_provider or "nllb").strip().lower().replace("-", "_")
+    model = str(config.local_translation_model or "").strip().lower()
+    if provider in {"none", "off", "passthrough"}:
+        return True
+    if provider in {"nllb_ct2", "ctranslate2", "ct2", "nllb_ctranslate2"} or "ct2" in model:
+        return ctranslate2_cuda_available()
+    return torch_cuda_available()
+
+
+def _vieneu_cuda_ready() -> bool:
+    # VieNeu currently resolves its runtime device through PyTorch. ONNX CUDA
+    # remains useful for its decoder, but is not sufficient to run the model.
+    return torch_cuda_available()

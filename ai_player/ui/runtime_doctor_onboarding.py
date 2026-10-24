@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import shutil
 
-from ai_player.core.runtime_diagnostics import RuntimeDiagnostics, collect_runtime_diagnostics
+from ai_player.runtime.runtime_diagnostics import RuntimeDiagnostics, collect_runtime_diagnostics
 
 
 def build_runtime_doctor_profile_summary() -> str:
@@ -20,10 +20,7 @@ def build_runtime_doctor_profile_summary() -> str:
 
 def _diagnostic_profile_line(name: str, report: RuntimeDiagnostics, *, include_warnings: bool = False) -> str:
     required_missing = sum(
-        1
-        for section in report.sections
-        for item in section.items
-        if item.required and item.status == "MISS"
+        1 for section in report.sections for item in section.items if item.required and item.status == "MISS"
     )
     warnings = sum(1 for section in report.sections for item in section.items if item.status == "WARN")
     if required_missing:

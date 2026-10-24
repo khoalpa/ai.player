@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ai_player.workers.dubbing_schedule import DubbingAudioSchedule
+from ai_player.domain.dubbing_schedule import DubbingAudioSchedule
 
 
 def test_dubbing_audio_schedule_queues_sorted_audio(tmp_path) -> None:

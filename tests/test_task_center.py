@@ -6,17 +6,20 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
-from ai_player.services.adult_extractors import AdultHostSupport
-from ai_player.services.workflow_cache import clear_workflow_text_cache, get_text_result, put_text_result
+from ai_player.adapters.sources.adult_extractors import AdultHostSupport
+from ai_player.adapters.storage.workflow_cache import clear_workflow_text_cache, get_text_result, put_text_result
 from ai_player.ui import task_center
 from ai_player.ui.background_task_controller import BackgroundTaskController
+from ai_player.ui.features.channel_flow import PlayerChannelFlowFeature
+from ai_player.ui.features.runtime import PlayerRuntimeFeature
 from ai_player.ui.player_window import PlayerWindow
+from tests.ui_context_helpers import context_for
 
 
 @pytest.fixture(autouse=True)
 def disable_task_center_background_startups(monkeypatch) -> None:
-    monkeypatch.setattr(PlayerWindow, "_start_runtime_warmup", lambda self: None)
-    monkeypatch.setattr(PlayerWindow, "_start_telegram_worker", lambda self, *args, **kwargs: None)
+    monkeypatch.setattr(PlayerRuntimeFeature, "_start_runtime_warmup", lambda self: None)
+    monkeypatch.setattr(PlayerChannelFlowFeature, "_start_telegram_worker", lambda self, *args, **kwargs: None)
 
 
 class _RunningWorker:
@@ -62,7 +65,7 @@ def _task(tasks, name: str):
 def test_task_center_formats_idle_state() -> None:
     owner = SimpleNamespace()
 
-    tasks = task_center.collect_background_tasks(owner)
+    tasks = task_center.collect_background_tasks(context_for(owner))
 
     assert tasks == ()
     assert task_center.format_background_tasks(tasks, idle_text="Idle") == "Idle"
@@ -79,7 +82,10 @@ def test_background_task_controller_records_and_clears_details() -> None:
         def _refresh_task_center(self) -> None:
             refreshes.append("refresh")
 
-    controller = BackgroundTaskController(Owner())
+    owner = Owner()
+    controller = BackgroundTaskController(
+        record_event=owner._record_task_center_event, refresh=owner._refresh_task_center
+    )
 
     controller.set_detail("Export", "  Rendering   audio  ", log_detail="Started export")
     controller.clear_detail("Export")
@@ -99,7 +105,7 @@ def test_task_center_collects_active_controllers_and_workers() -> None:
         _background_task_details={"URL/cache loading": "Downloading youtube 720p"},
     )
 
-    tasks = task_center.collect_background_tasks(owner)
+    tasks = task_center.collect_background_tasks(context_for(owner))
 
     assert _task(tasks, "Provider preview").detail == "Testing tts provider/model."
     assert _task(tasks, "URL/cache loading").detail == "Downloading youtube 720p"
@@ -123,7 +129,7 @@ def test_task_center_reports_meeting_source_filter_and_offline_model_details() -
         },
     )
 
-    tasks = task_center.collect_background_tasks(owner)
+    tasks = task_center.collect_background_tasks(context_for(owner))
 
     assert _task(tasks, "Meeting recorder").detail == "Elapsed 00:01:23"
     assert _task(tasks, "Source voice filter").detail == "Preparing filtered audio"
@@ -165,7 +171,7 @@ def test_task_center_stops_active_tasks() -> None:
             calls.append((attr_name, wait_ms))
             return attr_name != "_export_worker"
 
-    summary = task_center.stop_background_tasks(Owner(), wait_ms=25)
+    summary = task_center.stop_background_tasks(context_for(Owner()), wait_ms=25)
 
     assert summary.stopped == 3
     assert summary.failed == ("Export",)
@@ -178,41 +184,45 @@ def test_task_center_stops_active_tasks() -> None:
 def test_task_center_dashboard_logs_and_lists_active_tasks(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._dub_worker = _RunningWorker(True)
-        window._set_background_task_detail("Realtime dubbing", "Mock segment 1")
-        window._refresh_task_center()
+        window.features.lifecycle.workers.dubbing_worker = _RunningWorker(True)
+        window.features.runtime._set_background_task_detail("Realtime dubbing", "Mock segment 1")
+        window.features.task_center._refresh_task_center()
 
-        assert window._task_center_table.item(0, 0).text() == window._tr("task_center_group_running")
-        assert window._task_center_table.item(1, 0).text() == "Realtime dubbing"
-        assert window._task_center_table.item(2, 1).text() == window._tr("task_center_timeline_process")
-        assert window._task_center_table.item(2, 2).text() == "Mock segment 1"
-        assert "Realtime dubbing: Mock segment 1" in window._task_center_log_view.toPlainText()
-        assert window._task_center_stop_button.isEnabled()
-        window._dub_worker = None
-        window._settings_save_timer.stop()
+        assert window.features.task_center._task_center_table.item(0, 0).text() == window.features.settings._tr(
+            "task_center_group_running"
+        )
+        assert window.features.task_center._task_center_table.item(1, 0).text() == "Realtime dubbing"
+        assert window.features.task_center._task_center_table.item(2, 1).text() == window.features.settings._tr(
+            "task_center_timeline_process"
+        )
+        assert window.features.task_center._task_center_table.item(2, 2).text() == "Mock segment 1"
+        assert "Realtime dubbing: Mock segment 1" in window.features.task_center._task_center_log_view.toPlainText()
+        assert window.features.task_center._task_center_stop_button.isEnabled()
+        window.features.lifecycle.workers.dubbing_worker = None
+        window.features.layout._settings_save_timer.stop()
     finally:
-        window._dub_worker = None
+        window.features.lifecycle.workers.dubbing_worker = None
         window.close()
 
 
 def test_task_drawer_hides_active_tasks_while_video_is_playing(qapp) -> None:
     window = PlayerWindow()
-    original_player = window._player
+    original_player = window.features.layout._player
     try:
-        window._dub_worker = _RunningWorker(True)
-        window._player = _PlayingPlayer(True)
-        window._refresh_task_center()
+        window.features.lifecycle.workers.dubbing_worker = _RunningWorker(True)
+        window.features.layout._player = _PlayingPlayer(True)
+        window.features.task_center._refresh_task_center()
 
-        assert window._task_drawer.isHidden()
+        assert window.features.layout._task_drawer.isHidden()
 
-        window._player = _PlayingPlayer(False)
-        window._refresh_task_center()
+        window.features.layout._player = _PlayingPlayer(False)
+        window.features.task_center._refresh_task_center()
 
-        assert not window._task_drawer.isHidden()
-        window._settings_save_timer.stop()
+        assert not window.features.layout._task_drawer.isHidden()
+        window.features.layout._settings_save_timer.stop()
     finally:
-        window._dub_worker = None
-        window._player = original_player
+        window.features.lifecycle.workers.dubbing_worker = None
+        window.features.layout._player = original_player
         window.close()
 
 
@@ -222,14 +232,17 @@ def test_task_center_shows_cache_activity_without_enabling_stop_all(qapp) -> Non
     assert get_text_result("translation", {"model": "demo"}, "hello", source_language="en") == "xin chao"
     window = PlayerWindow()
     try:
-        window._refresh_task_center()
+        window.features.task_center._refresh_task_center()
 
-        names = [window._task_center_table.item(row, 0).text() for row in range(window._task_center_table.rowCount())]
-        assert window._tr("task_center_cache_name") in names
-        assert not window._task_center_stop_button.isEnabled()
-        row = names.index(window._tr("task_center_cache_name"))
-        assert "text" in window._task_center_table.item(row, 2).text()
-        window._settings_save_timer.stop()
+        names = [
+            window.features.task_center._task_center_table.item(row, 0).text()
+            for row in range(window.features.task_center._task_center_table.rowCount())
+        ]
+        assert window.features.settings._tr("task_center_cache_name") in names
+        assert not window.features.task_center._task_center_stop_button.isEnabled()
+        row = names.index(window.features.settings._tr("task_center_cache_name"))
+        assert "text" in window.features.task_center._task_center_table.item(row, 2).text()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
         clear_workflow_text_cache()
@@ -237,23 +250,26 @@ def test_task_center_shows_cache_activity_without_enabling_stop_all(qapp) -> Non
 
 def test_task_center_dashboard_can_log_historical_detail_separately(qapp) -> None:
     window = PlayerWindow()
-    original_runtime_warmup = window._runtime_warmup
+    original_runtime_warmup = window.features.runtime.warmup_controller
     try:
-        window._runtime_warmup = _RunningController(True, "Preloading Whisper...")
-        window._set_background_task_detail(
+        window.features.runtime.warmup_controller = _RunningController(True, "Preloading Whisper...")
+        window.features.runtime._set_background_task_detail(
             "Runtime preloading",
             "Preloading Whisper...",
             log_detail="Started preloading Whisper...",
         )
-        window._refresh_task_center()
+        window.features.task_center._refresh_task_center()
 
-        assert window._background_task_details["Runtime preloading"] == "Preloading Whisper..."
-        assert window._task_center_table.item(2, 2).text() == "Preloading Whisper..."
-        assert "Runtime preloading: Started preloading Whisper..." in window._task_center_log_view.toPlainText()
-        window._runtime_warmup = original_runtime_warmup
-        window._settings_save_timer.stop()
+        assert window.features.task_center.details_controller.details["Runtime preloading"] == "Preloading Whisper..."
+        assert window.features.task_center._task_center_table.item(2, 2).text() == "Preloading Whisper..."
+        assert (
+            "Runtime preloading: Started preloading Whisper..."
+            in window.features.task_center._task_center_log_view.toPlainText()
+        )
+        window.features.runtime.warmup_controller = original_runtime_warmup
+        window.features.layout._settings_save_timer.stop()
     finally:
-        window._runtime_warmup = original_runtime_warmup
+        window.features.runtime.warmup_controller = original_runtime_warmup
         window.close()
 
 
@@ -261,12 +277,12 @@ def test_task_center_dashboard_retry_action(qapp) -> None:
     calls = []
     window = PlayerWindow()
     try:
-        window._set_task_center_retry("Retry demo", lambda: calls.append("retry"))
-        window._retry_task_center_action()
+        window.features.task_center._set_task_center_retry("Retry demo", lambda: calls.append("retry"))
+        window.features.task_center._retry_task_center_action()
 
         assert calls == ["retry"]
-        assert window.statusBar().currentMessage() == window._tr("task_center_retry_started")
-        window._settings_save_timer.stop()
+        assert window.statusBar().currentMessage() == window.features.settings._tr("task_center_retry_started")
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -275,8 +291,8 @@ def test_adult_host_open_button_uses_registry_open_url(qapp) -> None:
     opened = []
     window = PlayerWindow()
     try:
-        window._open_adult_host_url = lambda url: opened.append(url)
-        button = window._adult_host_open_button(
+        window.features.task_center._open_adult_host_url = lambda url: opened.append(url)
+        button = window.features.task_center._adult_host_open_button(
             AdultHostSupport(
                 site_key="buomtv",
                 domains=("buomtv.*", "*.buomtv.*"),
@@ -292,6 +308,6 @@ def test_adult_host_open_button_uses_registry_open_url(qapp) -> None:
         QTest.mouseClick(button, Qt.MouseButton.LeftButton)
 
         assert opened == ["https://buomtv.net"]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()

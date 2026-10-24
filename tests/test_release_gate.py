@@ -78,7 +78,7 @@ def test_release_verify_runs_required_short_gate_and_ordered_builds() -> None:
     script = (PROJECT_ROOT / "scripts" / "release_verify.ps1").read_text(encoding="utf-8")
     checklist = (PROJECT_ROOT / "docs" / "release_checklist.md").read_text(encoding="utf-8")
 
-    assert "[ValidateSet(\"Lite\", \"OfflineCpu\", \"Gpu\")]" in script
+    assert '[ValidateSet("Lite", "OfflineCpu", "Gpu")]' in script
     assert "data\\tmp\\release-verify" in script
     assert "profile-$StepPrefix-summary.json" in script
     assert "profile_summaries" in script

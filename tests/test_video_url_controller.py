@@ -10,6 +10,7 @@ from ai_player.ui.video_url_controller import (
     video_url_request_should_fallback_to_browser,
     video_url_retry_payload,
 )
+from tests.ui_context_helpers import context_for
 
 
 class _FakeSignal:
@@ -99,7 +100,7 @@ def test_video_url_controller_starts_and_finishes_worker(monkeypatch) -> None:
     _FakeWorker.instances = []
     monkeypatch.setattr(video_url_controller, "VideoSourceWorker", _FakeWorker)
     owner = _FakeOwner()
-    controller = VideoUrlController(owner)
+    controller = VideoUrlController(context_for(owner))
 
     assert controller.start(
         "https://example.test/video.mp4",
@@ -131,7 +132,7 @@ def test_video_url_controller_blocks_double_start_and_stops(monkeypatch) -> None
     _FakeWorker.instances = []
     monkeypatch.setattr(video_url_controller, "VideoSourceWorker", _FakeWorker)
     owner = _FakeOwner()
-    controller = VideoUrlController(owner)
+    controller = VideoUrlController(context_for(owner))
 
     assert controller.start("https://example.test/one.mp4", "best", full_cache=True)
     assert not controller.start("https://example.test/two.mp4", "best", full_cache=True)

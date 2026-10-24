@@ -4,8 +4,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, fields, replace
 from typing import Any
 
-from ai_player.core.config import AppConfig
-from ai_player.core.runtime_health import RuntimeHealthItem, build_runtime_health, format_runtime_health
+from ai_player.configuration import AppConfig
+from ai_player.runtime.runtime_health import RuntimeHealthItem, build_runtime_health, format_runtime_health
 from ai_player.ui.player_window_utils import PERFORMANCE_PRESETS
 
 
@@ -116,9 +116,7 @@ class ReadinessController:
 
 def provider_preview_kind(items: tuple[object, ...]) -> str:
     attention_names = [
-        str(getattr(item, "name", "") or "").lower()
-        for item in items
-        if getattr(item, "status", "") == "ATTENTION"
+        str(getattr(item, "name", "") or "").lower() for item in items if getattr(item, "status", "") == "ATTENTION"
     ]
     for name, kind in (
         ("asr", "asr"),

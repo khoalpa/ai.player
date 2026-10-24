@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 
-from ai_player.services import capture_sources
+from ai_player.adapters.media import capture_sources
 
 
 def test_capture_duration_sanitizes_invalid_values() -> None:
@@ -31,4 +31,3 @@ def test_capture_dshow_audio_sanitizes_duration(monkeypatch, tmp_path) -> None:
     )
 
     assert commands[0][commands[0].index("-t") + 1] == "1"
-

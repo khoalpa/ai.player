@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QLabel, QPushButton
 
 from ai_player.ui.player_window_state import RuntimeStatusState
 from ai_player.ui.runtime_tab_controller import RuntimeTabController
+from tests.ui_context_helpers import context_for
 
 
 class _FakeOwner:
@@ -80,7 +81,7 @@ class _FakeOwner:
 
 def test_runtime_tab_controller_caches_empty_media_text() -> None:
     state = RuntimeStatusState(media_info_text="old")
-    controller = RuntimeTabController(_FakeOwner(), state)
+    controller = RuntimeTabController(context_for(_FakeOwner()), state)
 
     assert controller.media_info_text_current() == "No video"
     assert state.media_info_path == ""
@@ -89,7 +90,7 @@ def test_runtime_tab_controller_caches_empty_media_text() -> None:
 
 def test_runtime_tab_controller_formats_stream_media_without_probe() -> None:
     state = RuntimeStatusState()
-    controller = RuntimeTabController(_FakeOwner(), state)
+    controller = RuntimeTabController(context_for(_FakeOwner()), state)
 
     assert controller.media_info_text_current(force=True) == "No video"
     state.media_path = "https://example.test/video.mp4"
@@ -101,7 +102,7 @@ def test_runtime_tab_controller_formats_stream_media_without_probe() -> None:
 def test_runtime_tab_controller_refresh_updates_bound_labels(qapp, monkeypatch) -> None:
     owner = _FakeOwner()
     state = RuntimeStatusState(last_wall=1.0, last_process=1.0, gpu_text="GPU old")
-    controller = RuntimeTabController(owner, state)
+    controller = RuntimeTabController(context_for(owner), state)
     labels = {
         key: QLabel("")
         for key in (

@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from ai_player.core.config import AppConfig
-from ai_player.services import audio_matcher
-from ai_player.services.audio_matcher import match_tts_to_reference
+from ai_player.adapters.media import audio_matcher
+from ai_player.adapters.media.audio_matcher import match_tts_to_reference
+from ai_player.configuration import AppConfig
 
 
 def test_audio_match_plan_clamps_auto_tempo_to_natural_range_and_gain(monkeypatch, tmp_path) -> None:
@@ -46,6 +46,7 @@ def test_audio_match_plan_clamps_auto_tempo_to_natural_range_and_gain(monkeypatc
         "atempo=1.1200",
         "aformat=sample_rates=44100:channel_layouts=stereo",
         "volume=8.00dB",
+        "alimiter=limit=0.95",
     )
 
 
@@ -132,7 +133,9 @@ def test_match_tts_to_reference_formats_audio_before_volume(monkeypatch, tmp_pat
 
     assert result == output_path
     filters = captured["args"][captured["args"].index("-af") + 1]
-    assert filters == "atempo=1.1200,aformat=sample_rates=44100:channel_layouts=stereo,volume=8.00dB"
+    assert filters == (
+        "atempo=1.1200,aformat=sample_rates=44100:channel_layouts=stereo,volume=8.00dB,alimiter=limit=0.95"
+    )
     assert captured["args"][captured["args"].index("-ar") + 1] == "44100"
     assert captured["args"][captured["args"].index("-ac") + 1] == "2"
 
@@ -181,6 +184,7 @@ def test_audio_match_plan_sanitizes_invalid_speed_and_gain(monkeypatch, tmp_path
     assert plan.filters == (
         "aformat=sample_rates=44100:channel_layouts=stereo",
         "volume=12.00dB",
+        "alimiter=limit=0.95",
     )
 
 

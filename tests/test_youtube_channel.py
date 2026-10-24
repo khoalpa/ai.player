@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from types import SimpleNamespace
 
-from ai_player.services import youtube_channel
+from ai_player.adapters.sources import youtube_channel
 
 SAMPLE_INITIAL_DATA = {
     "contents": {
@@ -79,9 +79,7 @@ SAMPLE_INITIAL_DATA = {
                                     },
                                     {
                                         "continuationItemRenderer": {
-                                            "continuationEndpoint": {
-                                                "continuationCommand": {"token": "next-token"}
-                                            }
+                                            "continuationEndpoint": {"continuationCommand": {"token": "next-token"}}
                                         }
                                     },
                                 ]
@@ -142,9 +140,7 @@ def test_parse_youtube_initial_items_extracts_playlist_renderer() -> None:
 
     page = youtube_channel.parse_youtube_initial_items(data)
 
-    assert [(item.post_id, item.title, item.duration) for item in page.items] == [
-        ("xyz", "Playlist video", "3:45")
-    ]
+    assert [(item.post_id, item.title, item.duration) for item in page.items] == [("xyz", "Playlist video", "3:45")]
 
 
 def test_list_youtube_channel_items_loads_public_page(monkeypatch) -> None:

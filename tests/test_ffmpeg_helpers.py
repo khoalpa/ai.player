@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_player.services import ffmpeg as ffmpeg_service
-from ai_player.services.ffmpeg import concat_escape, concat_file_line, safe_float
+from ai_player.adapters.media import ffmpeg as ffmpeg_service
+from ai_player.adapters.media.ffmpeg import concat_escape, concat_file_line, safe_float
 
 
 def test_concat_escape_uses_forward_slashes_and_quotes() -> None:

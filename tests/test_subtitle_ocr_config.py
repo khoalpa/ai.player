@@ -5,8 +5,8 @@ import subprocess
 from dataclasses import replace
 from pathlib import Path
 
-from ai_player.core.config import AppConfig
-from ai_player.services import subtitle_ocr
+from ai_player.adapters.ai import subtitle_ocr
+from ai_player.configuration import AppConfig
 
 
 class _FakeResponse:
@@ -26,7 +26,7 @@ def test_normalize_ocr_provider_accepts_aliases() -> None:
     assert subtitle_ocr.normalize_ocr_provider("ocrspace") == "ocr_space"
     assert subtitle_ocr.normalize_ocr_provider("azure-read") == "azure_vision"
     assert subtitle_ocr.normalize_ocr_provider("google") == "google_vision"
-    assert subtitle_ocr.normalize_ocr_provider("trocr") == "huggingface_trocr"
+    assert subtitle_ocr.normalize_ocr_provider("trocr") == "tesseract"
 
 
 def test_tessdata_dir_prefers_configured_model(tmp_path) -> None:
@@ -130,9 +130,7 @@ def test_azure_vision_online_frame_parses_read_result(monkeypatch, tmp_path) -> 
         return _FakeResponse(
             payload={
                 "readResult": {
-                    "blocks": [
-                        {"lines": [{"text": "Hello", "words": [{"confidence": 0.9}]}, {"text": "world"}]}
-                    ]
+                    "blocks": [{"lines": [{"text": "Hello", "words": [{"confidence": 0.9}]}, {"text": "world"}]}]
                 }
             }
         )
@@ -175,34 +173,6 @@ def test_google_vision_online_frame_posts_base64(monkeypatch, tmp_path) -> None:
     assert result.text == "Google OCR"
     assert "key=gkey" in calls[0][0]
     assert calls[0][1]["json"]["requests"][0]["image"]["content"] == base64.b64encode(b"png").decode("ascii")
-
-
-def test_huggingface_trocr_online_frame_parses_generated_text(monkeypatch, tmp_path) -> None:
-    calls = []
-    frame = tmp_path / "frame.png"
-    frame.write_bytes(b"png")
-
-    def fake_post(url, **kwargs):
-        calls.append((url, kwargs))
-        return _FakeResponse(payload=[{"generated_text": "handwritten line"}])
-
-    monkeypatch.setattr(subtitle_ocr.requests, "post", fake_post)
-    monkeypatch.setattr(subtitle_ocr, "_preprocess_frame", lambda path, **_kwargs: path)
-
-    result = subtitle_ocr._ocr_frame(
-        frame,
-        "eng",
-        None,
-        config=AppConfig(
-            ocr_provider="huggingface_trocr",
-            ocr_api_key="hfkey",
-            ocr_model="microsoft/trocr-base-handwritten",
-        ),
-    )
-
-    assert result.text == "handwritten line"
-    assert calls[0][0].endswith("/microsoft%2Ftrocr-base-handwritten")
-    assert calls[0][1]["headers"]["Authorization"] == "Bearer hfkey"
 
 
 def test_recognize_hard_subtitles_merges_similar_frames(monkeypatch, tmp_path) -> None:

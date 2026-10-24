@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ai_player.ui.features.context import WindowContext
+
 from collections.abc import Callable
-from typing import Any
 
 ProviderSecretLoader = Callable[[], dict[str, str]]
 NamedProviderSecretLoader = Callable[[str], dict[str, str]]
@@ -33,14 +37,14 @@ class ProviderSecretController:
 
     def __init__(
         self,
-        owner: Any,
+        owner: WindowContext,
         *,
         load_asr_provider_api_keys: ProviderSecretLoader,
         load_provider_api_secrets: NamedProviderSecretLoader,
         save_asr_provider_api_keys: ProviderSecretSaver,
         save_provider_api_secrets: NamedProviderSecretSaver,
     ) -> None:
-        self._owner = owner
+        self.context = owner
         self._load_asr_provider_api_keys = load_asr_provider_api_keys
         self._load_provider_api_secrets = load_provider_api_secrets
         self._save_asr_provider_api_keys = save_asr_provider_api_keys
@@ -58,8 +62,8 @@ class ProviderSecretController:
             else:
                 keys = self._load_provider_api_secrets(secret_name)
             keys = dict(keys)
-            provider = self._owner._config_secret_provider(secret_name)
-            value = str(getattr(self._owner._config, secret_name, "") or "")
+            provider = self.context.settings._config_secret_provider(secret_name)
+            value = str(getattr(self.context.config, secret_name, "") or "")
             if value and provider:
                 keys[provider] = value
             self._cache[secret_name] = keys
@@ -69,11 +73,11 @@ class ProviderSecretController:
         return self.SECRET_CONTROLS.get(kind, ())
 
     def remember_kind(self, kind: str, provider: object | None = None) -> None:
-        provider_key = self._owner._secret_provider_for_kind(kind, provider)
+        provider_key = self.context.settings._secret_provider_for_kind(kind, provider)
         if not provider_key:
             return
         for widget_name, secret_name in self.controls_for_kind(kind):
-            widget = getattr(self._owner, widget_name, None)
+            widget = self.context.get(widget_name, None)
             if widget is None:
                 continue
             key = widget.text().strip()
@@ -84,9 +88,9 @@ class ProviderSecretController:
                 cache.pop(provider_key, None)
 
     def restore_kind(self, kind: str, provider: object | None = None) -> None:
-        provider_key = self._owner._secret_provider_for_kind(kind, provider)
+        provider_key = self.context.settings._secret_provider_for_kind(kind, provider)
         for widget_name, secret_name in self.controls_for_kind(kind):
-            widget = getattr(self._owner, widget_name, None)
+            widget = self.context.get(widget_name, None)
             if widget is None:
                 continue
             key = self.cache(secret_name).get(provider_key, "")
@@ -95,7 +99,7 @@ class ProviderSecretController:
                 widget.setText(key)
             finally:
                 widget.blockSignals(was_blocked)
-        self._owner._sync_api_key_statuses()
+        self.context.settings._sync_api_key_statuses()
 
     def save_all(self, kinds: tuple[str, ...]) -> None:
         for kind in kinds:

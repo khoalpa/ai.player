@@ -6,9 +6,9 @@ import queue
 
 import pytest
 
-from ai_player.core.config import AppConfig
-from ai_player.services import tts_base, tts_edge, tts_online, tts_vieneu, vieneu_tts_server
-from ai_player.services.tts_voices import voice_gender
+from ai_player.adapters.tts import tts_base, tts_edge, tts_online, tts_vieneu
+from ai_player.adapters.tts.tts_voices import voice_gender
+from ai_player.configuration import AppConfig
 
 
 class _FakeResponse:
@@ -37,14 +37,6 @@ class _FakeResponse:
 )
 def test_normalize_tts_provider(value: str, expected: str) -> None:
     assert tts_base.normalize_tts_provider(value) == expected
-
-
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [("standard", "standard"), ("api", "turbo"), ("remote", "turbo"), ("cuda", "fast")],
-)
-def test_normalize_vieneu_mode(value: str, expected: str) -> None:
-    assert tts_vieneu.normalize_vieneu_mode(value) == expected
 
 
 @pytest.mark.parametrize(("value", "expected"), [("gpu", "cuda"), ("cpu", "cpu"), ("weird", "auto")])
@@ -95,59 +87,20 @@ def test_compatible_edge_voice_id_falls_back_by_gender(voice: str, expected: str
 
 
 def test_vieneu_preferred_voice_fallbacks_use_southern_voices_first() -> None:
-    turbo_config = AppConfig(vieneu_tts_mode="turbo")
-    standard_config = AppConfig(vieneu_tts_mode="standard")
+    turbo_config = AppConfig()
 
     assert tts_vieneu._preferred_vieneu_voice_ids(turbo_config, "female")[0] == "Thục Đoan"
-    assert tts_vieneu._preferred_vieneu_voice_ids(turbo_config, "male")[0] == "Xuân Vĩnh"
-    assert tts_vieneu._preferred_vieneu_voice_ids(standard_config, "female")[0] == "Doan"
-    assert tts_vieneu._preferred_vieneu_voice_ids(standard_config, "male")[0] == "Vinh"
-
-
-def test_removed_remote_vieneu_core_uses_local_fallbacks(monkeypatch) -> None:
-    config = AppConfig(
-        vieneu_tts_core="remote",
-        vieneu_tts_mode="turbo",
-        vieneu_tts_api_base="http://localhost:23333/v1",
-        vieneu_tts_python="D:/missing/python.exe",
-        vieneu_tts_runtime="subprocess",
-    )
-    monkeypatch.setattr(tts_vieneu, "_runtime_has_cuda", lambda: True)
-
-    candidates = tts_vieneu._vieneu_fallback_configs(config)
-
-    assert len(candidates) > 1
-    assert all(
-        tts_vieneu.resolve_vieneu_effective_mode(
-            candidate.vieneu_tts_core,
-            candidate.vieneu_tts_mode,
-            candidate.vieneu_tts_device,
-        )
-        != "remote"
-        for candidate in candidates
-    )
+    assert tts_vieneu._preferred_vieneu_voice_ids(turbo_config, "male")[0] == "Minh Triết"
 
 
 def test_vieneu_subprocess_requires_valid_python() -> None:
     provider = tts_vieneu.VieNeuTTSProvider(AppConfig(vieneu_tts_python="D:/missing/python.exe"))
 
-    assert not provider._should_use_subprocess(provider._config)
+    assert provider._should_use_subprocess(provider._config)
+    assert not provider._can_use_subprocess(provider._config)
 
 
-def test_removed_remote_vieneu_core_uses_turbo_voice_catalog() -> None:
-    config = AppConfig(vieneu_tts_core="remote", tts_voice="Thục Đoan")
-
-    assert [voice.id.split(" (", 1)[0] for voice in tts_vieneu.vieneu_voices(config)] == [
-        "Bích Ngọc",
-        "Phạm Tuyên",
-        "Thục Đoan",
-        "Xuân Vĩnh",
-    ]
-    assert tts_vieneu._compatible_vieneu_voice_id(config, "Thục Đoan").startswith("Thục Đoan")
-    assert tts_vieneu._compatible_vieneu_voice_id(config, "Xuân Vĩnh").startswith("Xuân Vĩnh")
-
-
-def test_removed_remote_vieneu_core_rejects_empty_audio_as_local(monkeypatch, tmp_path) -> None:
+def test_vieneu_v3_rejects_empty_audio(monkeypatch, tmp_path) -> None:
     class FakeEngine:
         def get_preset_voice(self, voice_id):
             return {"id": voice_id}
@@ -159,68 +112,12 @@ def test_removed_remote_vieneu_core_rejects_empty_audio_as_local(monkeypatch, tm
             with open(output_path, "wb") as handle:
                 handle.write(b"")
 
-    config = AppConfig(vieneu_tts_core="remote", vieneu_tts_api_base="http://localhost:23333/v1")
+    config = AppConfig()
     provider = tts_vieneu.VieNeuTTSProvider(config)
     monkeypatch.setattr(tts_vieneu, "_get_vieneu_engine", lambda _config: FakeEngine())
 
     with pytest.raises(tts_base.TTSError, match="audio"):
         provider._synthesize_in_process(config, "xin chao", tmp_path / "out.wav", "Doan")
-
-
-def test_removed_remote_vieneu_engine_kwargs_do_not_use_api_base() -> None:
-    kwargs = tts_vieneu._build_vieneu_engine_kwargs(
-        mode=tts_vieneu.normalize_vieneu_mode("remote"),
-        api_base="http://localhost:23333/v1",
-        model_name="pnnbao-ump/VieNeu-TTS",
-        device="cuda",
-        backend="native",
-    )
-
-    assert "api_base" not in kwargs
-    assert "codec_repo" not in kwargs
-    assert kwargs["backbone_repo"] == "pnnbao-ump/VieNeu-TTS"
-
-
-def test_removed_remote_vieneu_subprocess_kwargs_do_not_use_api_base() -> None:
-    kwargs = vieneu_tts_server._engine_kwargs(
-        mode=tts_vieneu.normalize_vieneu_mode("remote"),
-        api_base="http://localhost:23333/v1",
-        model_name="pnnbao-ump/VieNeu-TTS",
-        device="cuda",
-        backend="native",
-        decoder_path="",
-        encoder_path="",
-        standard_codec_path="",
-    )
-
-    assert "api_base" not in kwargs
-    assert "codec_repo" not in kwargs
-    assert kwargs["backbone_repo"] == "pnnbao-ump/VieNeu-TTS"
-
-
-def test_vieneu_effective_paths_fall_back_to_bundled_files(monkeypatch, tmp_path) -> None:
-    decoder = tmp_path / "vieneu_decoder.onnx"
-    encoder = tmp_path / "vieneu_encoder.onnx"
-    codec = tmp_path / "distill-neucodec"
-    decoder.write_bytes(b"decoder")
-    encoder.write_bytes(b"encoder")
-    codec.mkdir()
-    monkeypatch.setattr(tts_vieneu, "INTERNAL_VIENEU_TURBO_DECODER", str(decoder))
-    monkeypatch.setattr(tts_vieneu, "INTERNAL_VIENEU_TURBO_ENCODER", str(encoder))
-    monkeypatch.setattr(tts_vieneu, "INTERNAL_VIENEU_STANDARD_CODEC", str(codec))
-    config = AppConfig(
-        vieneu_tts_decoder_path="D:/missing/decoder.onnx",
-        vieneu_tts_encoder_path="D:/missing/encoder.onnx",
-        vieneu_tts_standard_codec_path="D:/missing/codec",
-    )
-
-    assert tts_vieneu._effective_vieneu_decoder_path(config) == str(decoder)
-    assert tts_vieneu._effective_vieneu_encoder_path(config) == str(encoder)
-    assert tts_vieneu._effective_vieneu_standard_codec_path(config) == str(codec)
-
-
-def test_vieneu_import_root_falls_back_to_bundled_runtime(tmp_path) -> None:
-    assert tts_vieneu._vieneu_import_root(tmp_path).name == "vieneu_tts"
 
 
 def test_tts_cache_text_normalizes_unicode_and_format_chars() -> None:
@@ -353,6 +250,33 @@ def test_edge_tts_provider_retries_empty_audio(monkeypatch, tmp_path) -> None:
     provider.synthesize(" xin chao ", tmp_path / "out.mp3")
 
     assert attempts == 3
+    assert (tmp_path / "out.mp3").read_bytes() == b"audio"
+
+
+def test_edge_tts_provider_gives_empty_audio_more_time_to_recover(monkeypatch, tmp_path) -> None:
+    attempts = 0
+    delays = []
+
+    class FakeCommunicate:
+        def __init__(self, _text, _voice) -> None:
+            pass
+
+        async def save(self, path) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts < 5:
+                raise RuntimeError("No audio was received. Please verify that your parameters are correct.")
+            with open(path, "wb") as handle:
+                handle.write(b"audio")
+
+    monkeypatch.setattr(tts_edge.edge_tts, "Communicate", FakeCommunicate)
+    monkeypatch.setattr(tts_edge.time, "sleep", delays.append)
+    provider = tts_edge.EdgeTTSProvider(AppConfig(tts_voice="vi-VN-HoaiMyNeural"))
+
+    provider.synthesize("Xin chao", tmp_path / "out.mp3")
+
+    assert attempts == 5
+    assert delays == [0.75, 1.5, 3.0, 6.0]
     assert (tmp_path / "out.mp3").read_bytes() == b"audio"
 
 

@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from ai_player.core import settings_store
-from ai_player.core.config import AppConfig
+from ai_player.adapters.storage import settings_store
+from ai_player.configuration import AppConfig
 
 
 @pytest.mark.parametrize("content", [None, "{", "[]"])
@@ -21,6 +21,35 @@ def test_read_settings_returns_empty_for_missing_or_invalid(tmp_path, monkeypatc
 @pytest.mark.parametrize(("value", "expected"), [("yes", True), ("0", False), (1, True)])
 def test_coerce_value_for_bool(value, expected: bool) -> None:
     assert settings_store._coerce_value(value, False) is expected
+
+
+def test_load_app_config_keeps_legacy_realtime_tuning_and_ignores_removed_fields(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(
+        json.dumps(
+            {
+                "version": 0,
+                "performance_preset": "balanced",
+                "dubbing_lookahead_segments": 2,
+                "dubbing_min_ready_ahead_seconds": 10,
+                "dubbing_prebuffer_segments": 1,
+                "translation_max_tokens": 152,
+                "removed_future_field": "ignored",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_store, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+
+    config = settings_store.load_app_config()
+
+    assert config.performance_preset == "balanced"
+    assert config.dubbing_lookahead_segments == 2
+    assert config.dubbing_min_ready_ahead_seconds == 10
+    assert config.dubbing_prebuffer_segments == 1
+    assert config.translation_max_tokens == 152
+    assert not hasattr(config, "removed_future_field")
 
 
 def test_save_app_config_omits_secret_and_resets_session_fields(tmp_path, monkeypatch) -> None:
@@ -50,9 +79,7 @@ def test_save_and_load_app_config_round_trips_secret_payload(tmp_path, monkeypat
     monkeypatch.setattr(
         settings_store,
         "reveal_text",
-        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
-        if isinstance(payload, dict)
-        else "",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:") if isinstance(payload, dict) else "",
     )
 
     settings_store.save_app_config(AppConfig(transcript_cleanup_api_key="cleanup-secret"))
@@ -77,9 +104,7 @@ def test_save_and_load_app_config_round_trips_tts_secret_payloads(tmp_path, monk
     monkeypatch.setattr(
         settings_store,
         "reveal_text",
-        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
-        if isinstance(payload, dict)
-        else "",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:") if isinstance(payload, dict) else "",
     )
 
     settings_store.save_app_config(AppConfig(tts_api_key="tts-key", tts_api_secret="tts-secret"))
@@ -106,9 +131,7 @@ def test_save_and_load_app_config_round_trips_speaker_gender_secret(tmp_path, mo
     monkeypatch.setattr(
         settings_store,
         "reveal_text",
-        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
-        if isinstance(payload, dict)
-        else "",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:") if isinstance(payload, dict) else "",
     )
 
     settings_store.save_app_config(AppConfig(speaker_gender_api_key="hf-secret"))
@@ -132,9 +155,7 @@ def test_save_and_load_app_config_round_trips_ocr_secret(tmp_path, monkeypatch) 
     monkeypatch.setattr(
         settings_store,
         "reveal_text",
-        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
-        if isinstance(payload, dict)
-        else "",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:") if isinstance(payload, dict) else "",
     )
 
     settings_store.save_app_config(AppConfig(ocr_api_key="ocr-secret"))
@@ -158,9 +179,7 @@ def test_save_app_config_splits_online_provider_user_config(tmp_path, monkeypatc
     monkeypatch.setattr(
         settings_store,
         "reveal_text",
-        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
-        if isinstance(payload, dict)
-        else "",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:") if isinstance(payload, dict) else "",
     )
 
     settings_store.save_app_config(
@@ -267,9 +286,7 @@ def test_asr_api_keys_are_saved_per_provider(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         settings_store,
         "reveal_text",
-        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
-        if isinstance(payload, dict)
-        else "",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:") if isinstance(payload, dict) else "",
     )
 
     settings_store.save_app_config(AppConfig(asr_provider="assemblyai", asr_api_key="assembly-key"))
@@ -296,9 +313,7 @@ def test_asr_provider_map_prevents_wrong_legacy_key_fallback(tmp_path, monkeypat
     monkeypatch.setattr(
         settings_store,
         "reveal_text",
-        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
-        if isinstance(payload, dict)
-        else "",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:") if isinstance(payload, dict) else "",
     )
     payload = {
         "version": 1,
@@ -328,9 +343,7 @@ def test_auto_asr_key_uses_inferred_provider_bucket(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(
         settings_store,
         "reveal_text",
-        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
-        if isinstance(payload, dict)
-        else "",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:") if isinstance(payload, dict) else "",
     )
 
     settings_store.save_app_config(
@@ -361,9 +374,7 @@ def test_provider_api_keys_are_saved_per_provider_for_online_groups(tmp_path, mo
     monkeypatch.setattr(
         settings_store,
         "reveal_text",
-        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
-        if isinstance(payload, dict)
-        else "",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:") if isinstance(payload, dict) else "",
     )
 
     settings_store.save_app_config(AppConfig(translator_provider="google_translate", translator_api_key="google-key"))
@@ -374,12 +385,7 @@ def test_provider_api_keys_are_saved_per_provider_for_online_groups(tmp_path, mo
     )
     settings_store.save_app_config(AppConfig(ocr_provider="azure_vision", ocr_api_key="azure-ocr-key"))
     settings_store.save_app_config(AppConfig(ocr_provider="google_vision", ocr_api_key="google-ocr-key"))
-    settings_store.save_app_config(
-        AppConfig(transcript_cleanup_provider="groq", transcript_cleanup_api_key="groq-key")
-    )
-    settings_store.save_app_config(
-        AppConfig(transcript_cleanup_provider="gemini", transcript_cleanup_api_key="gemini-key")
-    )
+    settings_store.save_app_config(AppConfig(transcript_cleanup_provider="groq", transcript_cleanup_api_key="groq-key"))
 
     online_path = settings_store.online_user_config_file_path()
     online_data = json.loads(online_path.read_text(encoding="utf-8"))
@@ -401,7 +407,6 @@ def test_provider_api_keys_are_saved_per_provider_for_online_groups(tmp_path, mo
     }
     assert online_data["transcript_cleanup_api_key_secrets"] == {
         "groq": {"scheme": "test", "value": "protected:groq-key"},
-        "gemini": {"scheme": "test", "value": "protected:gemini-key"},
     }
 
     online_data["translator_provider"] = "google_translate"
@@ -432,9 +437,7 @@ def test_provider_secret_map_prevents_wrong_legacy_key_fallback(tmp_path, monkey
     monkeypatch.setattr(
         settings_store,
         "reveal_text",
-        lambda payload: str(payload.get("value", "")).removeprefix("protected:")
-        if isinstance(payload, dict)
-        else "",
+        lambda payload: str(payload.get("value", "")).removeprefix("protected:") if isinstance(payload, dict) else "",
     )
     payload = {
         "version": 1,
@@ -640,10 +643,10 @@ def test_load_app_config_migrates_removed_vieneu_remote_core(tmp_path, monkeypat
     config = settings_store.load_app_config(AppConfig())
 
     assert config.vieneu_tts_core == "local"
-    assert config.vieneu_tts_mode == "turbo"
-    assert config.vieneu_tts_api_base == ""
+    assert config.vieneu_tts_mode == "v3turbo"
+    assert not hasattr(config, "vieneu_tts_api_base")
     assert config.vieneu_tts_model_name == AppConfig().vieneu_tts_model_name
-    assert config.vieneu_tts_path == AppConfig().vieneu_tts_path
+    assert not hasattr(config, "vieneu_tts_path")
     assert config.vieneu_tts_python == AppConfig().vieneu_tts_python
     assert config.vieneu_tts_offline is True
 
@@ -656,7 +659,6 @@ def test_save_app_config_removes_vieneu_remote_core(tmp_path, monkeypatch) -> No
         AppConfig(
             vieneu_tts_core="remote",
             vieneu_tts_mode="remote",
-            vieneu_tts_api_base="http://localhost:23333/v1",
             vieneu_tts_model_name="pnnbao-ump/VieNeu-TTS",
             vieneu_tts_offline=False,
         )
@@ -665,8 +667,8 @@ def test_save_app_config_removes_vieneu_remote_core(tmp_path, monkeypatch) -> No
     runtime_data = json.loads(settings_store.runtime_local_file_path().read_text(encoding="utf-8"))
 
     assert runtime_data["vieneu_tts_core"] == "local"
-    assert settings_data["vieneu_tts_mode"] == "turbo"
-    assert runtime_data["vieneu_tts_api_base"] == ""
+    assert settings_data["vieneu_tts_mode"] == "v3turbo"
+    assert "vieneu_tts_api_base" not in runtime_data
     assert runtime_data["vieneu_tts_model_name"] == AppConfig().vieneu_tts_model_name
     assert runtime_data["vieneu_tts_offline"] is True
 
@@ -753,7 +755,7 @@ def test_load_app_config_allows_env_to_enable_tts_warmup(tmp_path, monkeypatch) 
     assert config.runtime_warmup_tts is True
 
 
-def test_load_app_config_migrates_old_default_vieneu_voices_to_southern(tmp_path, monkeypatch) -> None:
+def test_load_app_config_migrates_old_vieneu_voices_to_v3(tmp_path, monkeypatch) -> None:
     settings_file = tmp_path / "settings.json"
     settings_file.write_text(
         json.dumps(
@@ -772,12 +774,12 @@ def test_load_app_config_migrates_old_default_vieneu_voices_to_southern(tmp_path
 
     config = settings_store.load_app_config(AppConfig())
 
-    assert config.tts_voice == "Thục Đoan"
-    assert config.tts_female_voice == "Thục Đoan"
-    assert config.tts_male_voice == "Xuân Vĩnh"
+    assert config.tts_voice == "Ngọc Linh"
+    assert config.tts_female_voice == "Ngọc Linh"
+    assert config.tts_male_voice == "Phạm Tuyên"
 
 
-def test_load_app_config_migrates_ascii_old_default_vieneu_voices_to_southern(tmp_path, monkeypatch) -> None:
+def test_load_app_config_migrates_ascii_old_vieneu_voices_to_v3(tmp_path, monkeypatch) -> None:
     settings_file = tmp_path / "settings.json"
     settings_file.write_text(
         json.dumps(
@@ -795,15 +797,15 @@ def test_load_app_config_migrates_ascii_old_default_vieneu_voices_to_southern(tm
 
     config = settings_store.load_app_config(AppConfig())
 
-    assert config.tts_voice == "Thục Đoan"
-    assert config.tts_female_voice == "Thục Đoan"
-    assert config.tts_male_voice == "Xuân Vĩnh"
+    assert config.tts_voice == "Ngọc Linh"
+    assert config.tts_female_voice == "Ngọc Linh"
+    assert config.tts_male_voice == "Phạm Tuyên"
 
 
 def test_load_app_config_keeps_custom_vieneu_voice(tmp_path, monkeypatch) -> None:
     settings_file = tmp_path / "settings.json"
     settings_file.write_text(
-        json.dumps({"tts_provider": "vieneu", "tts_voice": "Ngọc"}, ensure_ascii=False),
+        json.dumps({"tts_provider": "vieneu", "tts_voice": "Ngọc Huyền"}, ensure_ascii=False),
         encoding="utf-8",
     )
     monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
@@ -811,7 +813,7 @@ def test_load_app_config_keeps_custom_vieneu_voice(tmp_path, monkeypatch) -> Non
 
     config = settings_store.load_app_config(AppConfig())
 
-    assert config.tts_voice == "Ngọc"
+    assert config.tts_voice == "Ngọc Huyền"
 
 
 def test_load_app_config_coerces_numeric_values(tmp_path, monkeypatch) -> None:
@@ -920,18 +922,32 @@ def test_load_app_config_migrates_removed_translation_provider_and_models(tmp_pa
                 "local_translation_model": r"D:\project\ai.player\models\translation\marian\en-vi",
                 "transcript_cleanup_model": r"D:\project\ai.player\models\transcript_cleanup\Qwen2.5-7B-Instruct",
                 "original_audio_voice_filter_mode": "auto",
+                "whisper_model": r"D:\project\ai.player\models\asr\faster-whisper-base",
+                "ocr_provider": "huggingface_trocr",
+                "ocr_model": r"D:\project\ai.player\models\ocr\tessdata",
             }
         ),
         encoding="utf-8",
     )
-    cleanup_model = tmp_path / "Qwen2.5-3B-Instruct"
-    cleanup_model.mkdir()
     monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
-    monkeypatch.setattr(settings_store, "LOCAL_TRANSCRIPT_CLEANUP_MODEL_PATH", cleanup_model)
 
     config = settings_store.load_app_config(AppConfig())
 
-    assert config.translator_provider == "nllb_ct2"
-    assert config.local_translation_model == settings_store.LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH
-    assert config.transcript_cleanup_model == str(cleanup_model)
-    assert config.original_audio_voice_filter_mode == "fast"
+    assert config.translator_provider == "nllb"
+    assert config.local_translation_model == settings_store.LOCAL_TRANSLATION_MODEL_PATH
+    assert config.transcript_cleanup_provider == "groq"
+    assert config.transcript_cleanup_model == "openai/gpt-oss-20b"
+    assert config.original_audio_voice_filter_mode == "ai"
+    assert config.whisper_model == settings_store.LOCAL_WHISPER_MODEL_PATH
+    assert config.ocr_provider == "tesseract"
+    assert config.ocr_model == settings_store.DEFAULT_OCR_MODEL_PATH
+
+
+def test_load_app_config_migrates_removed_balanced_voice_gender_mode(tmp_path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"dubbing_auto_voice_gender_mode": "balanced"}), encoding="utf-8")
+    monkeypatch.setattr(settings_store, "SETTINGS_FILE", settings_file)
+
+    config = settings_store.load_app_config(AppConfig())
+
+    assert config.dubbing_auto_voice_gender_mode == "ai"

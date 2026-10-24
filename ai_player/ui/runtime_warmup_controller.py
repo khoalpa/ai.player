@@ -1,21 +1,25 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ai_player.ui.features.context import WindowContext
+
 
 from PySide6.QtWidgets import QApplication
 
-from ai_player.services.runtime_warmup import has_runtime_warmup_stage
+from ai_player.runtime.runtime_warmup import has_runtime_warmup_stage
 from ai_player.workers.player_window_workers import RuntimeWarmupWorker
 
 
 class RuntimeWarmupController:
-    def __init__(self, owner: Any) -> None:
-        self._owner = owner
+    def __init__(self, owner: WindowContext) -> None:
+        self.context = owner
         self._worker: RuntimeWarmupWorker | None = None
         self._last_status = ""
 
     def start(self) -> None:
-        config = self._owner._config
+        config = self.context.config
         if not config.runtime_warmup_enabled:
             return
         if not has_runtime_warmup_stage(config):
@@ -25,7 +29,7 @@ class RuntimeWarmupController:
             return
         if self._worker is not None:
             return
-        worker = RuntimeWarmupWorker(config, self._owner)
+        worker = RuntimeWarmupWorker(config, self.context.window)
         self._worker = worker
         worker.status_changed.connect(self.status_changed)
         worker.finished_successfully.connect(self.finished_successfully)
@@ -60,49 +64,51 @@ class RuntimeWarmupController:
     def finished_successfully(self, timings: object) -> None:
         if isinstance(timings, dict) and not timings:
             return
-        self.show_status(self._owner._tr("status_runtime_warmup_ready"))
+        self.show_status(self.context.settings._tr("status_runtime_warmup_ready"))
 
     def failed(self, message: str) -> None:
-        self.show_status(self._owner._tr("status_runtime_warmup_failed").format(detail=message))
+        self.show_status(self.context.settings._tr("status_runtime_warmup_failed").format(detail=message))
 
     def show_status(self, message: str) -> None:
-        set_detail = getattr(self._owner, "_set_background_task_detail", None)
+        set_detail = self.context.get("_set_background_task_detail", None)
         if callable(set_detail):
             set_detail("Runtime preloading", message, log_detail=self._log_detail_for_status(message))
         if self.can_replace_status():
             self._last_status = message
-            self._owner.statusBar().showMessage(message)
+            self.context.window.statusBar().showMessage(message)
 
     def can_replace_status(self) -> bool:
-        current = self._owner.statusBar().currentMessage()
+        current = self.context.window.statusBar().currentMessage()
         warmup_messages = {
-            self._owner._tr("warmup_loading_whisper"),
-            self._owner._tr("warmup_loading_translation"),
-            self._owner._tr("warmup_loading_transcript_cleanup"),
-            self._owner._tr("warmup_loading_tts"),
-            self._owner._tr("warmup_loaded_whisper"),
-            self._owner._tr("warmup_loaded_translation"),
-            self._owner._tr("warmup_loaded_transcript_cleanup"),
-            self._owner._tr("warmup_loaded_tts"),
-            self._owner._tr("status_runtime_warmup_ready"),
+            self.context.settings._tr("warmup_loading_whisper"),
+            self.context.settings._tr("warmup_loading_translation"),
+            self.context.settings._tr("warmup_loading_transcript_cleanup"),
+            self.context.settings._tr("warmup_loading_tts"),
+            self.context.settings._tr("warmup_loaded_whisper"),
+            self.context.settings._tr("warmup_loaded_translation"),
+            self.context.settings._tr("warmup_loaded_transcript_cleanup"),
+            self.context.settings._tr("warmup_loaded_tts"),
+            self.context.settings._tr("status_runtime_warmup_ready"),
         }
-        warmup_failed_prefix = self._owner._tr("status_runtime_warmup_failed").split("{detail}", 1)[0]
+        warmup_failed_prefix = self.context.settings._tr("status_runtime_warmup_failed").split("{detail}", 1)[0]
         return (
             not current
             or current == self._last_status
-            or current == self._owner._runtime_startup_status_message()
+            or current == self.context.runtime._runtime_startup_status_message()
             or current in warmup_messages
             or (bool(warmup_failed_prefix) and current.startswith(warmup_failed_prefix))
         )
 
     def _log_detail_for_status(self, message: str) -> str:
         started_messages = {
-            self._owner._tr("warmup_loading_whisper"): self._owner._tr("warmup_started_whisper"),
-            self._owner._tr("warmup_loading_translation"): self._owner._tr("warmup_started_translation"),
-            self._owner._tr("warmup_loading_transcript_cleanup"): self._owner._tr(
+            self.context.settings._tr("warmup_loading_whisper"): self.context.settings._tr("warmup_started_whisper"),
+            self.context.settings._tr("warmup_loading_translation"): self.context.settings._tr(
+                "warmup_started_translation"
+            ),
+            self.context.settings._tr("warmup_loading_transcript_cleanup"): self.context.settings._tr(
                 "warmup_started_transcript_cleanup"
             ),
-            self._owner._tr("warmup_loading_tts"): self._owner._tr("warmup_started_tts"),
+            self.context.settings._tr("warmup_loading_tts"): self.context.settings._tr("warmup_started_tts"),
         }
         return started_messages.get(message, message)
 

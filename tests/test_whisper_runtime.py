@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from ai_player.core.config import AppConfig
-from ai_player.services import whisper_runtime
+from ai_player.configuration import AppConfig
+from ai_player.runtime import whisper_runtime
 
 
 @pytest.mark.parametrize(

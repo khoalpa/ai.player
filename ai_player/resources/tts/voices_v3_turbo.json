@@ -1,0 +1,179 @@
+{
+  "meta": {
+    "note": "v3 turbo curated preset voices (named); `featured` 1..10 marks the editors' picks in display order; `aliases` keeps old names working (voice=\"Minh Quân\" / \"Minh Quân Pro\" → \"Hải Đăng\")",
+    "count": 25
+  },
+  "default_voice": "Hải Đăng",
+  "presets": {
+    "Adam bựa": {
+      "description": "Nam · Bắc · Phong cách tự nhiên",
+      "featured": 1,
+      "gender": "male",
+      "region": "Bắc",
+      "style": "tu_nhien"
+    },
+    "Trúc Ly": {
+      "description": "Nữ · Bắc · Phong cách tự nhiên",
+      "featured": 2,
+      "gender": "female",
+      "style": "tu_nhien",
+      "region": "Bắc"
+    },
+    "Thiện Minh": {
+      "description": "Nam · Bắc · Phong cách kể chuyện",
+      "featured": 3,
+      "gender": "male",
+      "region": "Bắc",
+      "style": "doc_truyen",
+      "aliases": [
+        "Anh Khôi"
+      ]
+    },
+    "Mai Anh": {
+      "description": "Nữ · Bắc · Phong cách tin tức",
+      "featured": 4,
+      "gender": "female",
+      "region": "Bắc",
+      "style": "tin_tuc"
+    },
+    "Hải Đăng": {
+      "description": "Nam · Bắc · Phong cách tự nhiên",
+      "featured": 5,
+      "gender": "male",
+      "region": "Bắc",
+      "style": "tu_nhien",
+      "aliases": [
+        "Minh Quân Pro",
+        "Minh Quân"
+      ]
+    },
+    "Thùy Dung": {
+      "description": "Nữ · Nam · Phong cách tin tức",
+      "featured": 6,
+      "gender": "female",
+      "style": "tin_tuc",
+      "region": "Nam"
+    },
+    "Thiền Tâm Đức": {
+      "description": "Nam · Bắc · Phong cách kể chuyện",
+      "featured": 7,
+      "gender": "male",
+      "region": "Bắc",
+      "style": "doc_truyen"
+    },
+    "Ngọc Huyền": {
+      "description": "Nữ · Bắc · Giọng đọc tự nhiên",
+      "featured": 8,
+      "gender": "female",
+      "region": "Bắc",
+      "style": "tu_nhien"
+    },
+    "Quang Sơn": {
+      "description": "Nam · Trung · Phong cách tự nhiên",
+      "featured": 9,
+      "gender": "male",
+      "style": "tu_nhien",
+      "region": "Trung"
+    },
+    "Ngọc Trân": {
+      "description": "Nữ · Trung · Phong cách tự nhiên",
+      "featured": 10,
+      "gender": "female",
+      "style": "tu_nhien",
+      "region": "Trung"
+    },
+    "Minh Đức": {
+      "description": "Nam · Bắc · Phong cách tin tức",
+      "gender": "male",
+      "region": "Bắc",
+      "style": "tin_tuc"
+    },
+    "Phạm Tuyên": {
+      "description": "Nam · Bắc · Phong cách tự nhiên",
+      "gender": "male",
+      "style": "tu_nhien",
+      "region": "Bắc"
+    },
+    "Thái Sơn": {
+      "description": "Nam · Nam · Phong cách kể chuyện",
+      "gender": "male",
+      "region": "Nam",
+      "style": "doc_truyen"
+    },
+    "Xuân Vĩnh": {
+      "description": "Nam · Bắc · Phong cách tự nhiên",
+      "gender": "male",
+      "region": "Bắc",
+      "style": "tu_nhien"
+    },
+    "Thanh Bình": {
+      "description": "Nam · Bắc · Phong cách kể chuyện",
+      "gender": "male",
+      "region": "Bắc",
+      "style": "doc_truyen"
+    },
+    "Ngọc Linh": {
+      "description": "Nữ · Bắc · Phong cách kể chuyện",
+      "gender": "female",
+      "region": "Bắc",
+      "style": "doc_truyen"
+    },
+    "Đoan Trang": {
+      "description": "Nữ · Bắc · Phong cách tự nhiên",
+      "gender": "female",
+      "region": "Bắc",
+      "style": "tu_nhien"
+    },
+    "Thục Đoan": {
+      "description": "Nữ · Nam · Phong cách kể chuyện",
+      "gender": "female",
+      "region": "Nam",
+      "style": "doc_truyen"
+    },
+    "Minh Triết": {
+      "description": "Nam · Nam · Phong cách tin tức",
+      "gender": "male",
+      "style": "tin_tuc",
+      "region": "Nam"
+    },
+    "Mỹ Duyên": {
+      "description": "Nữ · Nam · Phong cách đọc truyện",
+      "gender": "female",
+      "region": "Nam",
+      "style": "doc_truyen"
+    },
+    "Quỳnh Anh": {
+      "description": "Nữ · Bắc · Phong cách đọc truyện",
+      "gender": "female",
+      "region": "Bắc",
+      "style": "doc_truyen"
+    },
+    "Đức Trí": {
+      "description": "Nam · Nam · Phong cách đọc truyện",
+      "gender": "male",
+      "region": "Nam",
+      "style": "doc_truyen"
+    },
+    "Kim Thanh": {
+      "description": "Nữ · Nam · Phong cách đọc truyện",
+      "gender": "female",
+      "region": "Nam",
+      "style": "doc_truyen"
+    },
+    "Adam": {
+      "description": "Nam · Nam · Giọng đọc tự nhiên",
+      "gender": "male",
+      "region": "Nam",
+      "style": "tu_nhien"
+    },
+    "Quốc Tuấn": {
+      "description": "Nam · Bắc · Phong cách tự nhiên",
+      "gender": "male",
+      "region": "Bắc",
+      "style": "tu_nhien",
+      "aliases": [
+        "Mạnh Dũng"
+      ]
+    }
+  }
+}

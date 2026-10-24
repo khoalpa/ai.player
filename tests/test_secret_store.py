@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from ai_player.core.secret_store import protect_text, reveal_text
+from ai_player.adapters.storage.secret_store import protect_text, reveal_text
 
 
 def test_reveal_text_ignores_missing_payload() -> None:

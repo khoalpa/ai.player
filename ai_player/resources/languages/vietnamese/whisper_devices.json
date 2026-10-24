@@ -2,7 +2,7 @@
   "options": [
     {
       "value": "auto",
-      "label": "Tự động"
+      "label": "Tự động — ưu tiên GPU, dự phòng CPU"
     },
     {
       "value": "cuda",

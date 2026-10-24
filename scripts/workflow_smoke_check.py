@@ -9,8 +9,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from ai_player.adapters.media.ffmpeg import probe_duration_seconds, run_ffprobe
 from ai_player.core.cli_encoding import prefer_utf8_stdio
-from ai_player.services.ffmpeg import probe_duration_seconds, run_ffprobe
 
 SMOKE_SCHEMA_VERSION = 1
 DEFAULT_BASELINE_FILE = PROJECT_ROOT / "docs" / "workflow_smoke_baseline.json"

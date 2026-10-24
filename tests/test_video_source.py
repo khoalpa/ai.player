@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_player.services import video_source
+from ai_player.adapters.sources import video_source
 
 
 @pytest.mark.parametrize(
@@ -504,13 +504,10 @@ def test_downloaded_file_path_ignores_malformed_requested_downloads(tmp_path) ->
     downloaded = tmp_path / "demo.mp4"
     downloaded.write_text("video", encoding="utf-8")
 
-    assert (
-        video_source._downloaded_file_path(
-            {"requested_downloads": ["bad", {"filepath": str(downloaded)}]},
-            tmp_path,
-        )
-        == str(downloaded)
-    )
+    assert video_source._downloaded_file_path(
+        {"requested_downloads": ["bad", {"filepath": str(downloaded)}]},
+        tmp_path,
+    ) == str(downloaded)
 
 
 def test_stream_playback_url_ignores_malformed_format_items() -> None:

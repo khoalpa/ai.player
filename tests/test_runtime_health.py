@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from ai_player.core import runtime_health
-from ai_player.core.config import AppConfig
+import json
+import sys
+
+from ai_player.configuration import AppConfig
+from ai_player.runtime import runtime_health
+from ai_player.runtime.vieneu_v3 import CODEC_REVISION, CPU_FILES, MODEL_REVISION, SDK_VERSION
 
 
 def _item(items, name: str):
@@ -33,6 +37,13 @@ def test_runtime_health_reports_missing_online_credentials(monkeypatch) -> None:
 def test_runtime_health_reports_local_model_paths_and_export_tools(monkeypatch, tmp_path) -> None:
     model = tmp_path / "model"
     model.mkdir()
+    for name in CPU_FILES:
+        target = model / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"model")
+    (model / "manifest.json").write_text(
+        json.dumps({"sdk_version": SDK_VERSION, "model_revision": MODEL_REVISION, "codec_revision": CODEC_REVISION})
+    )
     monkeypatch.setattr(runtime_health, "_tool_exists", lambda _name: True)
     monkeypatch.setattr(runtime_health, "_executable_exists", lambda _value: True)
     config = AppConfig(
@@ -42,6 +53,7 @@ def test_runtime_health_reports_local_model_paths_and_export_tools(monkeypatch, 
         local_translation_model=str(model),
         tts_provider="vieneu",
         vieneu_tts_model_name=str(model),
+        vieneu_tts_python=sys.executable,
         ocr_provider="tesseract",
     )
 
@@ -64,7 +76,7 @@ def test_runtime_health_reports_missing_local_models(monkeypatch, tmp_path) -> N
         translator_provider="nllb_ct2",
         local_translation_model=str(missing / "translation"),
         tts_provider="vieneu",
-        vieneu_tts_model_name=str(missing / "tts.gguf"),
+        vieneu_tts_model_name=str(missing / "v3-turbo"),
     )
 
     items = runtime_health.build_runtime_health(config)
@@ -74,7 +86,7 @@ def test_runtime_health_reports_missing_local_models(monkeypatch, tmp_path) -> N
     assert _item(items, "Translation").status == "ATTENTION"
     assert "Local translation model path is missing" in _item(items, "Translation").detail
     assert _item(items, "TTS").status == "ATTENTION"
-    assert "VieNeu model path is missing" in _item(items, "TTS").detail
+    assert "Thiếu mô hình VieNeu v3 Turbo" in _item(items, "TTS").detail
 
 
 def test_runtime_health_formats_summary() -> None:

@@ -9,9 +9,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from ai_player.configuration import LOCAL_WHISPER_MODEL_PATH  # noqa: E402
 from ai_player.core.cli_encoding import prefer_utf8_stdio  # noqa: E402
-from ai_player.core.config import LOCAL_WHISPER_MODEL_PATH  # noqa: E402
-from ai_player.services.whisper_runtime import clear_shared_whisper_models, get_shared_whisper_model  # noqa: E402
+from ai_player.runtime.whisper_runtime import clear_shared_whisper_models, get_shared_whisper_model  # noqa: E402
 
 
 def main() -> int:
@@ -69,7 +69,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a small Faster Whisper ASR regression pass.")
     parser.add_argument(
         "--samples",
-        default=str(Path("ai_player") / "vieneu_tts" / "vieneu" / "assets" / "samples"),
+        default=str(Path("samples")),
         help="Folder containing .wav samples with matching .txt references.",
     )
     parser.add_argument("--model", default=LOCAL_WHISPER_MODEL_PATH)

@@ -5,8 +5,7 @@ from types import SimpleNamespace
 import pytest
 import requests
 
-from ai_player.core.config import AppConfig
-from ai_player.services.asr import (
+from ai_player.adapters.ai.asr import (
     AsrSegment,
     OnlineAsrError,
     clear_asr_transcript_cache,
@@ -16,6 +15,7 @@ from ai_player.services.asr import (
     transcribe_asr,
     transcribe_online_asr,
 )
+from ai_player.configuration import AppConfig
 
 
 class FakeResponse:
@@ -186,7 +186,7 @@ def test_online_asr_falls_back_to_local_transcriber(tmp_path) -> None:
 
 
 def test_transcribe_asr_reuses_cached_local_result(monkeypatch, tmp_path) -> None:
-    from ai_player.services import asr
+    from ai_player.adapters.ai import asr
 
     monkeypatch.setattr(asr, "RUNTIME_DIR", tmp_path)
     clear_asr_transcript_cache()
@@ -221,7 +221,7 @@ def test_transcribe_asr_reuses_cached_local_result(monkeypatch, tmp_path) -> Non
 
 
 def test_transcribe_asr_cache_respects_workflow_details(monkeypatch, tmp_path) -> None:
-    from ai_player.services import asr
+    from ai_player.adapters.ai import asr
 
     monkeypatch.setattr(asr, "RUNTIME_DIR", tmp_path)
     clear_asr_transcript_cache()
@@ -254,7 +254,7 @@ def test_transcribe_asr_cache_respects_workflow_details(monkeypatch, tmp_path) -
 
 
 def test_transcribe_asr_skips_cache_when_audio_hash_is_unavailable(monkeypatch, tmp_path) -> None:
-    from ai_player.services import asr
+    from ai_player.adapters.ai import asr
 
     monkeypatch.setattr(asr, "RUNTIME_DIR", tmp_path)
     clear_asr_transcript_cache()

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from ai_player.core.config import AppConfig
+from ai_player.configuration import AppConfig
 from ai_player.ui import runtime_warmup_controller
 from ai_player.ui.runtime_warmup_controller import RuntimeWarmupController
+from tests.ui_context_helpers import context_for
 
 
 class _FakeSignal:
@@ -96,7 +97,7 @@ def test_runtime_warmup_controller_starts_and_stops_worker(monkeypatch) -> None:
     monkeypatch.setattr(runtime_warmup_controller, "RuntimeWarmupWorker", _FakeWorker)
     monkeypatch.setattr(runtime_warmup_controller, "has_runtime_warmup_stage", lambda _config: True)
     monkeypatch.setattr(runtime_warmup_controller.QApplication, "instance", lambda: _FakeApp())
-    controller = RuntimeWarmupController(_FakeOwner())
+    controller = RuntimeWarmupController(context_for(_FakeOwner()))
 
     controller.start()
 
@@ -112,7 +113,7 @@ def test_runtime_warmup_controller_starts_and_stops_worker(monkeypatch) -> None:
 def test_runtime_warmup_controller_keeps_user_status() -> None:
     owner = _FakeOwner()
     owner.statusBar().showMessage("User opened a file")
-    controller = RuntimeWarmupController(owner)
+    controller = RuntimeWarmupController(context_for(owner))
 
     controller.status_changed("Preloading translator...")
     controller.failed("boom")
@@ -122,7 +123,7 @@ def test_runtime_warmup_controller_keeps_user_status() -> None:
 
 def test_runtime_warmup_controller_logs_historical_events_separately() -> None:
     owner = _FakeOwner()
-    controller = RuntimeWarmupController(owner)
+    controller = RuntimeWarmupController(context_for(owner))
 
     controller.status_changed("Preloading Whisper...")
     controller.status_changed("Preloaded Whisper in 0.2s.")

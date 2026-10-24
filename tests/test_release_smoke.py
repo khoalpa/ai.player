@@ -5,10 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from ai_player.core.config import AppConfig
-from ai_player.services import document_reader as docs
-from ai_player.services.ffmpeg import probe_duration_seconds, run_ffmpeg
-from ai_player.workers import export_worker
+from ai_player.adapters import workflow_bindings
+from ai_player.adapters.media import document_reader as docs
+from ai_player.adapters.media.ffmpeg import probe_duration_seconds, run_ffmpeg
+from ai_player.application.workflows import export as export_worker
+from ai_player.configuration import AppConfig
 from scripts import workflow_smoke_check
 
 
@@ -21,7 +22,7 @@ class _SilentTTSProvider:
                 "-i",
                 "sine=frequency=440:duration=0.8",
                 "-ar",
-                44100,
+                48000,
                 "-ac",
                 2,
                 "-c:a",
@@ -35,12 +36,12 @@ class _SilentTTSProvider:
         pass
 
 
-def test_packaged_vieneu_sample_asset_names_are_ascii() -> None:
-    sample_dir = Path("ai_player/vieneu_tts/vieneu/assets/samples")
-    sample_names = [path.name for path in sample_dir.iterdir() if path.is_file()]
-
-    assert sample_names
-    assert all(name.isascii() for name in sample_names)
+def test_packaged_vieneu_v3_voice_metadata_replaces_old_runtime() -> None:
+    catalog = json.loads(Path("ai_player/resources/tts/voices_v3_turbo.json").read_text(encoding="utf-8"))
+    assert len(catalog["presets"]) == 25
+    assert catalog["default_voice"] in catalog["presets"]
+    assert all(entry["gender"] in {"male", "female"} for entry in catalog["presets"].values())
+    assert not list(Path("ai_player/vieneu_tts").rglob("*.py"))
 
 
 def test_release_smoke_tts_output_duration(tmp_path) -> None:
@@ -74,14 +75,15 @@ def test_release_smoke_exports_sample_media_with_transcript_tts(monkeypatch, qap
         vieneu_tts_offline=False,
         export_video_quality="compact",
     )
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: _SilentTTSProvider())
-    monkeypatch.setattr(export_worker, "_export_worker_count", lambda: 1)
+    monkeypatch.setattr("ai_player.adapters.tts.tts.create_tts_provider", lambda _config: _SilentTTSProvider())
+    monkeypatch.setattr("ai_player.adapters.pipeline.export_utils._export_worker_count", lambda: 1)
     worker = export_worker.DubbingExportWorker(
         str(sample_video),
         str(output_path),
         export_kind,
         config,
         export_worker.ExportRange(0.0, 1.3),
+        dependencies=workflow_bindings.export(),
     )
     failures: list[str] = []
     worker.failed.connect(failures.append)
@@ -113,15 +115,15 @@ def test_release_smoke_exports_staged_sample_media(monkeypatch, qapp, tmp_path) 
         str(tmp_path),
         config,
         export_worker.ExportRange(0.0, 1.2),
+        dependencies=workflow_bindings.export(),
     )
     failures: list[str] = []
     finished: list[str] = []
     worker.failed.connect(failures.append)
     worker.export_finished.connect(finished.append)
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: _SilentTTSProvider())
+    monkeypatch.setattr("ai_player.adapters.tts.tts.create_tts_provider", lambda _config: _SilentTTSProvider())
     monkeypatch.setattr(
-        export_worker,
-        "get_shared_vietnamese_translator",
+        "ai_player.runtime.translation_runtime.get_shared_vietnamese_translator",
         lambda _config: type("Translator", (), {"translate_many": lambda self, texts, _language: list(texts)})(),
     )
     worker._validate_whisper_model = lambda: None
@@ -163,14 +165,15 @@ def test_release_smoke_document_text_to_transcript_audio_export(monkeypatch, qap
         tts_provider="vieneu",
         vieneu_tts_offline=False,
     )
-    monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: _SilentTTSProvider())
-    monkeypatch.setattr(export_worker, "_export_worker_count", lambda: 1)
+    monkeypatch.setattr("ai_player.adapters.tts.tts.create_tts_provider", lambda _config: _SilentTTSProvider())
+    monkeypatch.setattr("ai_player.adapters.pipeline.export_utils._export_worker_count", lambda: 1)
     worker = export_worker.DubbingExportWorker(
         str(sample_video),
         str(output_path),
         "audio",
         config,
         export_worker.ExportRange(0.0, 2.0),
+        dependencies=workflow_bindings.export(),
     )
     failures: list[str] = []
     worker.failed.connect(failures.append)

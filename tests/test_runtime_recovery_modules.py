@@ -1,18 +1,18 @@
 import os
 from pathlib import Path
 
-from ai_player.core.config import AppConfig
-from ai_player.services import demucs_runner, demucs_separation
-from ai_player.services import ffmpeg as ffmpeg_service
-from ai_player.services.audio_playback import _pcm_bytes_to_float32
-from ai_player.services.runtime_warmup import RuntimeWarmupCancelled, warm_runtime_components
-from ai_player.services.translation_runtime import (
+from ai_player.adapters.media import demucs_runner, demucs_separation
+from ai_player.adapters.media import ffmpeg as ffmpeg_service
+from ai_player.adapters.media.audio_playback import _pcm_bytes_to_float32
+from ai_player.adapters.tts.tts_base import tts_output_suffix
+from ai_player.configuration import AppConfig
+from ai_player.runtime.runtime_warmup import RuntimeWarmupCancelled, warm_runtime_components
+from ai_player.runtime.translation_runtime import (
     clear_shared_vietnamese_translators,
     get_shared_vietnamese_translator,
     translation_runtime_key,
 )
-from ai_player.services.tts_base import tts_output_suffix
-from ai_player.services.whisper_runtime import (
+from ai_player.runtime.whisper_runtime import (
     clear_shared_whisper_models,
     effective_whisper_compute_type,
     effective_whisper_device,
@@ -64,7 +64,7 @@ def test_runtime_warmup_skips_online_tts(monkeypatch) -> None:
         tts_provider="azure_tts",
     )
     monkeypatch.setattr(
-        "ai_player.services.runtime_warmup.create_tts_provider",
+        "ai_player.runtime.runtime_warmup.create_tts_provider",
         lambda _config: (_ for _ in ()).throw(AssertionError("online TTS should not warm")),
     )
 
@@ -103,13 +103,13 @@ def test_demucs_command_ignores_python_without_demucs(monkeypatch, tmp_path) -> 
 
 def test_demucs_two_stem_args_use_selected_model_and_output(tmp_path) -> None:
     args = demucs_separation.demucs_two_stem_args(
-        ["python", "-m", "ai_player.services.demucs_runner"],
+        ["python", "-m", "ai_player.adapters.media.demucs_runner"],
         tmp_path / "source.wav",
         tmp_path / "stems",
         model="mdx_extra",
     )
 
-    assert args[:3] == ["python", "-m", "ai_player.services.demucs_runner"]
+    assert args[:3] == ["python", "-m", "ai_player.adapters.media.demucs_runner"]
     assert args[args.index("-n") + 1] == "mdx_extra"
     assert args[args.index("--two-stems") + 1] == "vocals"
     assert args[args.index("-o") + 1] == str(tmp_path / "stems")

@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_player.core.config import AppConfig
-from ai_player.services import provider_preview
+from ai_player.adapters.ai import provider_preview
+from ai_player.configuration import AppConfig
 
 
 def test_translation_preview_uses_configured_translator(monkeypatch) -> None:
@@ -48,10 +48,7 @@ def test_cleanup_preview_enables_light_mode_when_cleanup_is_off(monkeypatch) -> 
 
     assert seen_modes == ["light"]
     assert result.provider == "openai"
-    assert result.message == (
-        f"Input: {provider_preview.CLEANUP_PREVIEW_INPUT}\n"
-        "Output: OpenAI API nay da sach."
-    )
+    assert result.message == (f"Input: {provider_preview.CLEANUP_PREVIEW_INPUT}\nOutput: OpenAI API nay da sach.")
 
 
 def test_tts_preview_writes_audio_file(monkeypatch, tmp_path) -> None:

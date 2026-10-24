@@ -1,4 +1,4 @@
-from ai_player.workers.text_dedupe import collapse_repeated_phrases
+from ai_player.domain.text_dedupe import collapse_repeated_phrases
 
 
 def test_collapse_repeated_comma_clauses() -> None:

@@ -15,14 +15,14 @@
         "source_language": "en",
         "config": {
           "asr_provider": "faster_whisper",
-          "whisper_model": "models/asr/faster-whisper-base",
+          "whisper_model": "models/asr/faster-whisper-large-v3",
           "whisper_device": "auto",
           "whisper_compute_type": "int8",
-          "translator_provider": "nllb_ct2",
-          "local_translation_model": "models/translation/nllb-200-distilled-600M-ct2-int8",
+          "translator_provider": "nllb",
+          "local_translation_model": "models/translation/nllb-200-1.3B",
           "tts_provider": "vieneu",
-          "tts_voice": "Thuc Doan",
-          "vieneu_tts_mode": "turbo",
+          "tts_voice": "Doan",
+          "vieneu_tts_mode": "standard",
           "vieneu_tts_device": "auto"
         },
         "timings": {
@@ -48,14 +48,14 @@
         "source_language": "en",
         "config": {
           "asr_provider": "faster_whisper",
-          "whisper_model": "models/asr/faster-whisper-base",
+          "whisper_model": "models/asr/faster-whisper-large-v3",
           "whisper_device": "auto",
           "whisper_compute_type": "int8",
-          "translator_provider": "nllb_ct2",
-          "local_translation_model": "models/translation/nllb-200-distilled-600M-ct2-int8",
+          "translator_provider": "nllb",
+          "local_translation_model": "models/translation/nllb-200-1.3B",
           "tts_provider": "vieneu",
-          "tts_voice": "Thuc Doan",
-          "vieneu_tts_mode": "turbo",
+          "tts_voice": "Doan",
+          "vieneu_tts_mode": "standard",
           "vieneu_tts_device": "auto"
         },
         "timings": {
@@ -78,14 +78,14 @@
         "source_language": "en",
         "config": {
           "asr_provider": "faster_whisper",
-          "whisper_model": "models/asr/faster-whisper-base",
+          "whisper_model": "models/asr/faster-whisper-large-v3",
           "whisper_device": "auto",
           "whisper_compute_type": "int8",
-          "translator_provider": "nllb_ct2",
-          "local_translation_model": "models/translation/nllb-200-distilled-600M-ct2-int8",
+          "translator_provider": "nllb",
+          "local_translation_model": "models/translation/nllb-200-1.3B",
           "tts_provider": "vieneu",
-          "tts_voice": "Thuc Doan",
-          "vieneu_tts_mode": "turbo",
+          "tts_voice": "Doan",
+          "vieneu_tts_mode": "standard",
           "vieneu_tts_device": "auto"
         },
         "timings": {

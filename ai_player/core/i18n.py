@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from ai_player.core.runtime_catalog import load_gui_translations
+from ai_player.runtime.runtime_catalog import load_gui_translations
 
 
 @lru_cache(maxsize=1)

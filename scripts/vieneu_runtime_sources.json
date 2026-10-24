@@ -1,0 +1,17 @@
+[
+  "__init__.py",
+  "configuration/__init__.py",
+  "configuration/defaults.py",
+  "configuration/sections.py",
+  "core/__init__.py",
+  "core/redaction.py",
+  "core/value_utils.py",
+  "runtime/__init__.py",
+  "runtime/vieneu_v3.py",
+  "runtime/vieneu_profile.py",
+  "adapters/__init__.py",
+  "adapters/storage/__init__.py",
+  "adapters/storage/atomic.py",
+  "adapters/tts/__init__.py",
+  "adapters/tts/vieneu_tts_server.py"
+]

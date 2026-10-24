@@ -29,7 +29,7 @@ jobs:
         run: python -m ruff check .
 
       - name: Test
-        run: python -m pytest
+        run: python -m pytest -m fast
 
       - name: Benchmark preset guard
         run: |
@@ -68,7 +68,7 @@ jobs:
         run: python -m ruff check .
 
       - name: Test
-        run: python -m pytest
+        run: python -m pytest -m slow
 
       - name: Runtime doctor
         run: python scripts/runtime_doctor.py --ci

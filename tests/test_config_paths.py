@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ai_player.core import config
+from ai_player.configuration import defaults as config
 
 
 def test_project_root_env_override(monkeypatch, tmp_path) -> None:

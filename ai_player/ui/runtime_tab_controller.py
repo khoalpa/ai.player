@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ai_player.ui.features.context import WindowContext
+
 import json
 import os
 import platform
@@ -7,18 +12,18 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
 
 from PySide6.QtWidgets import QLabel, QPushButton, QWidget
 
+from ai_player.adapters.media.ffmpeg import ffprobe_executable
 from ai_player.core.redaction import redact_secrets
-from ai_player.core.runtime_diagnostics import (
+from ai_player.runtime.runtime_diagnostics import (
     collect_runtime_diagnostics,
     format_runtime_diagnostics_summary,
 )
-from ai_player.core.runtime_health import build_runtime_health, format_runtime_health
-from ai_player.core.runtime_privacy import build_runtime_privacy, format_runtime_privacy
-from ai_player.services.ffmpeg import ffprobe_executable
+from ai_player.runtime.runtime_health import build_runtime_health, format_runtime_health
+from ai_player.runtime.runtime_privacy import build_runtime_privacy, format_runtime_privacy
+from ai_player.runtime.runtime_telemetry import RUNTIME_TELEMETRY, format_runtime_telemetry
 from ai_player.ui.player_window_state import RuntimeStatusState
 from ai_player.ui.player_window_utils import (
     float_value as _float_value,
@@ -44,8 +49,8 @@ from ai_player.ui.task_center import collect_background_tasks, format_background
 
 
 class RuntimeTabController:
-    def __init__(self, owner: Any, state: RuntimeStatusState) -> None:
-        self._owner = owner
+    def __init__(self, owner: WindowContext, state: RuntimeStatusState) -> None:
+        self.context = owner
         self._state = state
         self._labels: dict[str, QLabel] = {}
         self._stop_tasks_button: QPushButton | None = None
@@ -89,7 +94,7 @@ class RuntimeTabController:
 
         self._labels["process_cpu"].setText(f"{process_cpu:.1f}%")
         self._labels["process_memory"].setText(
-            self._owner._format_bytes(process_memory) if process_memory else self._tr("runtime_unavailable")
+            self.context.runtime._format_bytes(process_memory) if process_memory else self._tr("runtime_unavailable")
         )
         self._labels["system_cpu"].setText(
             f"{system_cpu:.1f}%" if system_cpu is not None else self._tr("runtime_unavailable")
@@ -97,21 +102,22 @@ class RuntimeTabController:
         if memory:
             used, total, percent = memory
             self._labels["system_memory"].setText(
-                f"{self._owner._format_bytes(used)} / {self._owner._format_bytes(total)} ({percent:.1f}%)"
+                f"{self.context.runtime._format_bytes(used)} / "
+                f"{self.context.runtime._format_bytes(total)} ({percent:.1f}%)"
             )
         else:
             self._labels["system_memory"].setText(self._tr("runtime_unavailable"))
         self._labels["media"].setText(self.media_info_text_current())
         self._labels["health"].setText(self.health_summary())
         self._labels["privacy"].setText(self.privacy_summary())
-        tasks = collect_background_tasks(self._owner)
+        tasks = collect_background_tasks(self.context)
         self._labels["tasks"].setText(self.task_summary(tasks))
         if not self._state.doctor_profile_text or (runtime_tab_active and self._state.gpu_tick % 10 == 0):
             self._state.doctor_profile_text = self.doctor_profile_summary()
         self._labels["doctor_profiles"].setText(self._state.doctor_profile_text)
         if self._stop_tasks_button is not None:
             self._stop_tasks_button.setEnabled(bool(tasks))
-        if runtime_tab_active or getattr(self._owner, "_settings_tabs", None) is None:
+        if runtime_tab_active or self.context.get("_settings_tabs", None) is None:
             self._labels["gpu_runtime"].setText(self.gpu_runtime_text())
         else:
             self._labels["gpu_runtime"].setText(self.gpu_runtime_config_text())
@@ -123,25 +129,25 @@ class RuntimeTabController:
             self._labels["diagnostics"].setText(self.diagnostics_summary())
 
     def tab_changed(self, index: int) -> None:
-        tabs = getattr(self._owner, "_settings_tabs", None)
+        tabs = self.context.get("_settings_tabs", None)
         if self._tab_widget is None or tabs is None:
             return
-        if self._owner._settings_tab_contains(tabs.widget(index), self._tab_widget):
+        if self.context.runtime._settings_tab_contains(tabs.widget(index), self._tab_widget):
             self._state.gpu_tick = 0
             self._state.media_info_text = self.media_info_text_current(force=True)
             self.refresh()
 
     def is_active(self) -> bool:
-        tabs = getattr(self._owner, "_settings_tabs", None)
+        tabs = self.context.get("_settings_tabs", None)
         return bool(
             tabs is not None
             and self._tab_widget is not None
-            and self._owner._settings_tab_contains(tabs.currentWidget(), self._tab_widget)
+            and self.context.runtime._settings_tab_contains(tabs.currentWidget(), self._tab_widget)
         )
 
     def media_info_text_current(self, force: bool = False) -> str:
-        source_path = self._state.media_path or (getattr(self._owner, "_video_path", "") or "")
-        if self._owner._document_mode:
+        source_path = self._state.media_path or (self.context.get("_video_path", "") or "")
+        if self.context.media.document.mode:
             return self.document_runtime_info()
         if not source_path:
             self._state.media_info_path = ""
@@ -154,19 +160,19 @@ class RuntimeTabController:
         return self._state.media_info_text
 
     def document_runtime_info(self) -> str:
-        if not self._owner._document_pages:
+        if not self.context.media.document.pages:
             return self._tr("runtime_document_no_page")
-        total_seconds = self._owner._document_duration_ms / 1000.0
-        current_seconds = self._owner._document_time_ms() / 1000.0
-        image_pages = sum(1 for page in self._owner._document_pages if page.image_path)
+        total_seconds = self.context.media.document.duration_ms / 1000.0
+        current_seconds = self.context.media._document_time_ms() / 1000.0
+        image_pages = sum(1 for page in self.context.media.document.pages if page.image_path)
         return "\n".join(
             [
                 self._tr("runtime_source_document"),
-                self._tr("runtime_pages").format(count=len(self._owner._document_pages), image_count=image_pages),
-                self._tr("runtime_duration").format(duration=self._owner._format_seconds(total_seconds)),
-                self._tr("runtime_position").format(position=self._owner._format_seconds(current_seconds)),
+                self._tr("runtime_pages").format(count=len(self.context.media.document.pages), image_count=image_pages),
+                self._tr("runtime_duration").format(duration=self.context.runtime._format_seconds(total_seconds)),
+                self._tr("runtime_position").format(position=self.context.runtime._format_seconds(current_seconds)),
                 self._tr("runtime_transcript").format(
-                    path=self._owner._transcript_path_edit.text().strip() or self._tr("runtime_none")
+                    path=self.context.layout._transcript_path_edit.text().strip() or self._tr("runtime_none")
                 ),
             ]
         )
@@ -231,8 +237,10 @@ class RuntimeTabController:
             self._tr("runtime_container").format(
                 container=fmt.get("format_long_name") or fmt.get("format_name") or path.suffix.lstrip(".") or unknown
             ),
-            self._tr("runtime_size").format(size=self._owner._format_bytes(file_size)),
-            self._tr("runtime_duration").format(duration=self._owner._format_seconds(_float_value(fmt.get("duration")))),
+            self._tr("runtime_size").format(size=self.context.runtime._format_bytes(file_size)),
+            self._tr("runtime_duration").format(
+                duration=self.context.runtime._format_seconds(_float_value(fmt.get("duration")))
+            ),
             self._tr("runtime_total_bitrate").format(bitrate=_format_bitrate(fmt.get("bit_rate"), unknown)),
         ]
         if video:
@@ -348,11 +356,12 @@ class RuntimeTabController:
     def gpu_runtime_config_text(self) -> str:
         return self._tr("runtime_config_line").format(
             whisper=(
-                f"{self._owner._selected_whisper_device()}/"
-                f"{self._owner._selected_whisper_compute()} b{int(self._owner._whisper_beam_slider.value())}"
+                f"{self.context.settings._selected_whisper_device()}/"
+                f"{self.context.settings._selected_whisper_compute()} "
+                f"b{int(self.context.layout._whisper_beam_slider.value())}"
             ),
-            translator=self._owner._selected_translation_device(),
-            vieneu=self._owner._selected_vieneu_device(),
+            translator=self.context.settings._selected_translation_device(),
+            vieneu=self.context.settings._selected_vieneu_device(),
         )
 
     def diagnostics_summary(self) -> str:
@@ -364,14 +373,20 @@ class RuntimeTabController:
 
     def health_summary(self) -> str:
         try:
-            return format_runtime_health(build_runtime_health(self._owner._current_runtime_config()))
+            config = self.context.settings._current_runtime_config()
+            health = format_runtime_health(build_runtime_health(config))
+            telemetry = format_runtime_telemetry(
+                RUNTIME_TELEMETRY.snapshot(),
+                getattr(config, "gui_language", "vi"),
+            )
+            return f"{health}\n{telemetry}"
         except Exception as exc:
             return self._tr("runtime_health_failed").format(detail=_repair_mojibake(redact_secrets(exc)))
 
     def privacy_summary(self) -> str:
         try:
             return format_runtime_privacy(
-                build_runtime_privacy(self._owner._current_runtime_config()),
+                build_runtime_privacy(self.context.settings._current_runtime_config()),
                 offline_text=self._tr("runtime_privacy_offline"),
                 translate=self._tr,
             )
@@ -381,7 +396,7 @@ class RuntimeTabController:
     def task_summary(self, tasks: tuple[object, ...] | None = None) -> str:
         try:
             if tasks is None:
-                tasks = collect_background_tasks(self._owner)
+                tasks = collect_background_tasks(self.context)
             return format_background_tasks(
                 tasks,
                 idle_text=self._tr("runtime_tasks_idle"),
@@ -396,13 +411,13 @@ class RuntimeTabController:
             return self._tr("runtime_diagnostics_failed").format(detail=_repair_mojibake(redact_secrets(exc)))
 
     def stop_background_tasks(self) -> None:
-        summary = stop_background_tasks(self._owner)
+        summary = stop_background_tasks(self.context)
         self.refresh()
         if summary.failed:
             message = self._tr("runtime_tasks_stop_partial").format(failed=", ".join(summary.failed))
         else:
             message = self._tr("runtime_tasks_stopped").format(count=summary.stopped)
-        self._owner.statusBar().showMessage(message)
+        self.context.window.statusBar().showMessage(message)
 
     def _tr(self, key: str) -> str:
-        return self._owner._tr(key)
+        return self.context.settings._tr(key)

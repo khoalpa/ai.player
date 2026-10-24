@@ -5,6 +5,19 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_requirements_matches_the_canonical_offline_profile() -> None:
+    from packaging.requirements import Requirement
+
+    project = _load_pyproject()["project"]
+    expected = project["dependencies"] + project["optional-dependencies"]["offline-ai"]
+    actual = [
+        line.strip()
+        for line in (PROJECT_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert {str(Requirement(item)) for item in actual} == {str(Requirement(item)) for item in expected}
+
+
 def test_heavy_runtime_dependencies_stay_out_of_base_profile() -> None:
     pyproject = _load_pyproject()
     base_dependencies = _normalized_dependencies(pyproject["project"]["dependencies"])

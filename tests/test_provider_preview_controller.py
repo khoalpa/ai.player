@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from ai_player.core.config import AppConfig
+from ai_player.configuration import AppConfig
 from ai_player.ui import provider_preview_controller
 from ai_player.ui.provider_preview_controller import ProviderPreviewController
+from tests.ui_context_helpers import context_for
 
 
 class _FakeSignal:
@@ -92,7 +93,7 @@ def test_provider_preview_controller_starts_worker_and_stops_cleanly(monkeypatch
     _FakeWorker.instances = []
     monkeypatch.setattr(provider_preview_controller, "ProviderPreviewWorker", _FakeWorker)
     owner = _FakeOwner()
-    controller = ProviderPreviewController(owner)
+    controller = ProviderPreviewController(context_for(owner))
 
     controller.start("tts")
 
@@ -113,7 +114,7 @@ def test_provider_preview_controller_starts_worker_and_stops_cleanly(monkeypatch
 
 def test_provider_preview_controller_formats_success_and_failure() -> None:
     owner = _FakeOwner()
-    controller = ProviderPreviewController(owner)
+    controller = ProviderPreviewController(context_for(owner))
 
     controller.ready(
         SimpleNamespace(
@@ -138,7 +139,7 @@ def test_provider_preview_controller_formats_success_and_failure() -> None:
 
 def test_provider_preview_controller_preserves_cleanup_input_output_lines() -> None:
     owner = _FakeOwner()
-    controller = ProviderPreviewController(owner)
+    controller = ProviderPreviewController(context_for(owner))
 
     controller.ready(
         SimpleNamespace(
@@ -157,7 +158,7 @@ def test_provider_preview_controller_preserves_cleanup_input_output_lines() -> N
 
 def test_provider_preview_controller_redacts_failure_detail() -> None:
     owner = _FakeOwner()
-    controller = ProviderPreviewController(owner)
+    controller = ProviderPreviewController(context_for(owner))
     controller.start = lambda _kind: None
     controller._kind = "asr"
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from ai_player.core import runtime_privacy
-from ai_player.core.config import AppConfig
+from ai_player.configuration import AppConfig
+from ai_player.runtime import runtime_privacy
 
 
 def test_runtime_privacy_reports_offline_default() -> None:

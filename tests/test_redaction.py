@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import logging
 
+from ai_player.adapters.tts import tts_base
 from ai_player.core.app_logging import _RedactionFilter
 from ai_player.core.redaction import REDACTED, compact_redacted_text, redact_secrets, redacted_json_text
-from ai_player.services import tts_base
-from ai_player.workers import worker_values
+from ai_player.domain import worker_values
 
 
 def test_redact_secrets_hides_query_keys_in_urls() -> None:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from ai_player.core.i18n import ui_text
-from ai_player.services.youtube_channel import (
+from ai_player.adapters.sources.youtube_channel import (
     YouTubeChannelError,
     YouTubeChannelPage,
     _channel_videos_url,
@@ -9,6 +8,7 @@ from ai_player.services.youtube_channel import (
     is_youtube_channel_url,
     is_youtube_playlist_url,
 )
+from ai_player.core.i18n import ui_text
 
 
 def list_youtube_channel_items(

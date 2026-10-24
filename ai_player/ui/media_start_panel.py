@@ -60,7 +60,7 @@ def recent_source_label(source: str, *, max_length: int = 48) -> str:
         label = f"{parsed.netloc}{parsed.path}"
     else:
         label = Path(value).name or value
-    return label if len(label) <= max_length else f"...{label[-(max_length - 3):]}"
+    return label if len(label) <= max_length else f"...{label[-(max_length - 3) :]}"
 
 
 def workflow_badge_key(workflow: str) -> str:

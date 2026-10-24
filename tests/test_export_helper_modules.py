@@ -7,18 +7,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_player.core.config import AppConfig
-from ai_player.workers import (
+from ai_player.adapters import workflow_bindings
+from ai_player.adapters.pipeline import (
     aligned_audio,
     document_export_voice,
     export_media,
-    export_worker,
     source_export_voice,
     staged_audio_stems,
     staged_export_utils,
     staged_target_voice,
     transcript_export_voice,
 )
+from ai_player.application.workflows import export as export_worker
+from ai_player.configuration import AppConfig
 
 
 def test_media_mux_video_args_apply_export_range(tmp_path) -> None:
@@ -70,22 +71,22 @@ def test_full_quality_audio_args_preserve_stereo_pcm(tmp_path) -> None:
 
 @pytest.mark.parametrize("source", ["transcript", "document_editor", " Transcript "])
 def test_export_audio_source_helpers_identify_transcript_sources(source: str) -> None:
-    assert export_worker.export_uses_transcript_source(source)
-    assert not export_worker.export_requires_asr(source)
-    assert not export_worker.export_rejects_audio_source(source)
+    assert workflow_bindings.export().export_uses_transcript_source(source)
+    assert not workflow_bindings.export().export_requires_asr(source)
+    assert not workflow_bindings.export().export_rejects_audio_source(source)
 
 
 @pytest.mark.parametrize("source", ["system", "microphone", "system_microphone", "subtitle"])
 def test_export_audio_source_helpers_reject_live_sources(source: str) -> None:
-    assert export_worker.export_rejects_audio_source(source)
-    assert export_worker.export_requires_asr(source)
-    assert not export_worker.export_uses_transcript_source(source)
+    assert workflow_bindings.export().export_rejects_audio_source(source)
+    assert workflow_bindings.export().export_requires_asr(source)
+    assert not workflow_bindings.export().export_uses_transcript_source(source)
 
 
 def test_export_audio_source_helpers_require_asr_for_original_media() -> None:
-    assert export_worker.export_requires_asr("original")
-    assert not export_worker.export_rejects_audio_source("original")
-    assert not export_worker.export_uses_transcript_source("original")
+    assert workflow_bindings.export().export_requires_asr("original")
+    assert not workflow_bindings.export().export_rejects_audio_source("original")
+    assert not workflow_bindings.export().export_uses_transcript_source("original")
 
 
 def test_document_video_concat_extends_last_page_to_audio_duration(tmp_path) -> None:
@@ -264,8 +265,9 @@ def test_staged_target_voice_helper_replaces_non_speech_with_silence(tmp_path) -
             synthesize=lambda *_args, **_kwargs: pytest.fail("non-speech should not be synthesized")
         ),
         tts_lock=nullcontext(),
-        make_silence=lambda _duration, output_path: final_paths.append(output_path)
-        or Path(output_path).write_bytes(b"silence"),
+        make_silence=lambda _duration, output_path: (
+            final_paths.append(output_path) or Path(output_path).write_bytes(b"silence")
+        ),
         trim_leading_silence=lambda path: path,
         to_wav=lambda *_args: pytest.fail("non-speech should not be matched"),
         match_to_reference=lambda **_kwargs: pytest.fail("non-speech should not be matched"),
@@ -291,12 +293,14 @@ def test_staged_target_voice_helper_replaces_pathological_tts_with_silence(tmp_p
         config=AppConfig(tts_provider="edge"),
         tts_dir=tmp_path,
         tts_provider=SimpleNamespace(
-            synthesize=lambda text, output_path, voice=None: synthesized.append(text)
-            or Path(output_path).write_bytes(b"loop")
+            synthesize=lambda text, output_path, voice=None: (
+                synthesized.append(text) or Path(output_path).write_bytes(b"loop")
+            )
         ),
         tts_lock=nullcontext(),
-        make_silence=lambda duration, output_path: silences.append((duration, output_path))
-        or Path(output_path).write_bytes(b"silence"),
+        make_silence=lambda duration, output_path: (
+            silences.append((duration, output_path)) or Path(output_path).write_bytes(b"silence")
+        ),
         trim_leading_silence=lambda path: pytest.fail("pathological TTS should not be trimmed"),
         to_wav=lambda *_args: pytest.fail("pathological TTS should not be converted"),
         match_to_reference=lambda **_kwargs: pytest.fail("pathological TTS should not be matched"),
@@ -412,8 +416,9 @@ def test_source_export_voice_helper_synthesizes_and_matches_trimmed_audio(tmp_pa
         temp_dir=tmp_path,
         config=AppConfig(tts_provider="edge"),
         tts_provider=SimpleNamespace(
-            synthesize=lambda text, path, voice=None: synthesized.append((text, path, voice))
-            or Path(path).write_bytes(b"tts")
+            synthesize=lambda text, path, voice=None: (
+                synthesized.append((text, path, voice)) or Path(path).write_bytes(b"tts")
+            )
         ),
         tts_lock=nullcontext(),
         make_silence=lambda *_args: pytest.fail("speech target should not create silence"),
@@ -450,8 +455,9 @@ def test_source_export_voice_helper_replaces_pathological_tts_with_silence(tmp_p
             synthesize=lambda text, path, voice=None: synthesized.append(text) or Path(path).write_bytes(b"loop")
         ),
         tts_lock=nullcontext(),
-        make_silence=lambda duration, output_path: silences.append((duration, output_path))
-        or Path(output_path).write_bytes(b"silence"),
+        make_silence=lambda duration, output_path: (
+            silences.append((duration, output_path)) or Path(output_path).write_bytes(b"silence")
+        ),
         trim_leading_silence=lambda path: pytest.fail("pathological TTS should not be trimmed"),
         match_to_reference=lambda **_kwargs: pytest.fail("pathological TTS should not be matched"),
         cancel_callback=lambda: False,
@@ -474,12 +480,11 @@ def test_prepare_source_export_items_extracts_reference_and_selects_voice(tmp_pa
         temp_dir=tmp_path,
         config=AppConfig(dubbing_auto_voice_gender=True, tts_provider="edge"),
         voice_selector=SimpleNamespace(
-            select_voice=lambda reference_path, **_kwargs: selected.append(reference_path)
-            or SimpleNamespace(voice="selected")
+            select_voice=lambda reference_path, **_kwargs: (
+                selected.append(reference_path) or SimpleNamespace(voice="selected")
+            )
         ),
-        extract_audio_range=lambda _source, start, duration, path, **_kwargs: extracted.append(
-            (start, duration, path)
-        ),
+        extract_audio_range=lambda _source, start, duration, path, **_kwargs: extracted.append((start, duration, path)),
         should_stop=lambda: False,
         cancel_callback=lambda: False,
     )
@@ -537,9 +542,7 @@ def test_translate_export_items_collapses_repeated_phrases() -> None:
     emitted: list[tuple[str, str]] = []
     items = [SimpleNamespace(original="I do not know.")]
     translator = SimpleNamespace(
-        translate_many=lambda _texts, _language: [
-            "Tôi không biết, tôi không biết, tôi không biết, tôi không biết."
-        ]
+        translate_many=lambda _texts, _language: ["Tôi không biết, tôi không biết, tôi không biết, tôi không biết."]
     )
 
     translated = source_export_voice.translate_export_items(
@@ -615,8 +618,9 @@ def test_transcript_export_voice_helper_creates_silence_for_disabled_tts(tmp_pat
             synthesize=lambda *_args, **_kwargs: pytest.fail("disabled TTS should not synthesize")
         ),
         tts_lock=nullcontext(),
-        make_silence=lambda duration, output_path: silences.append((duration, output_path))
-        or Path(output_path).write_bytes(b"silence"),
+        make_silence=lambda duration, output_path: (
+            silences.append((duration, output_path)) or Path(output_path).write_bytes(b"silence")
+        ),
         trim_leading_silence=lambda path: path,
         to_wav=lambda *_args: pytest.fail("disabled TTS should not convert audio"),
     )
@@ -650,8 +654,9 @@ def test_transcript_export_voice_helper_replaces_pathological_tts_with_silence(t
             synthesize=lambda text, path, voice=None: synthesized.append(text) or Path(path).write_bytes(b"loop")
         ),
         tts_lock=nullcontext(),
-        make_silence=lambda duration, output_path: silences.append((duration, output_path))
-        or Path(output_path).write_bytes(b"silence"),
+        make_silence=lambda duration, output_path: (
+            silences.append((duration, output_path)) or Path(output_path).write_bytes(b"silence")
+        ),
         trim_leading_silence=lambda path: pytest.fail("pathological TTS should not be trimmed"),
         to_wav=lambda *_args: pytest.fail("pathological TTS should not be converted"),
     )
@@ -809,8 +814,9 @@ def test_document_export_voice_helper_sanitizes_invalid_cue_timing(tmp_path) -> 
             synthesize=lambda *_args, **_kwargs: pytest.fail("disabled TTS should not synthesize")
         ),
         tts_lock=nullcontext(),
-        make_silence=lambda duration, output_path: silences.append((duration, output_path))
-        or Path(output_path).write_bytes(b"silence"),
+        make_silence=lambda duration, output_path: (
+            silences.append((duration, output_path)) or Path(output_path).write_bytes(b"silence")
+        ),
         trim_leading_silence=lambda path: path,
         to_wav=lambda *_args: pytest.fail("disabled TTS should not convert audio"),
     )
@@ -838,8 +844,9 @@ def test_document_export_voice_helper_replaces_pathological_tts_with_silence(tmp
             synthesize=lambda text, path, voice=None: synthesized.append(text) or Path(path).write_bytes(b"loop")
         ),
         tts_lock=nullcontext(),
-        make_silence=lambda duration, output_path: silences.append((duration, output_path))
-        or Path(output_path).write_bytes(b"silence"),
+        make_silence=lambda duration, output_path: (
+            silences.append((duration, output_path)) or Path(output_path).write_bytes(b"silence")
+        ),
         trim_leading_silence=lambda path: pytest.fail("pathological TTS should not be trimmed"),
         to_wav=lambda *_args: pytest.fail("pathological TTS should not be converted"),
     )

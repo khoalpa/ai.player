@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from ai_player.core.config import AppConfig
-from ai_player.workers import worker_values
+from ai_player.configuration import AppConfig
+from ai_player.domain import worker_values
 
 
 def test_clean_worker_text_decodes_bytes_and_collapses_space() -> None:

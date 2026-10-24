@@ -6,20 +6,25 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
+from ai_player.ui.features.channel_browser import PlayerChannelBrowserFeature
+from ai_player.ui.features.channel_flow import PlayerChannelFlowFeature
+from ai_player.ui.features.media import PlayerMediaFeature
+from ai_player.ui.features.runtime import PlayerRuntimeFeature
+from ai_player.ui.features.sources import PlayerSourceFeature
 from ai_player.ui.player_window import PlayerWindow
 
 
 @pytest.fixture(autouse=True)
 def disable_clickthrough_background_startups(monkeypatch) -> None:
-    monkeypatch.setattr(PlayerWindow, "_start_runtime_warmup", lambda self: None)
-    monkeypatch.setattr(PlayerWindow, "_start_telegram_worker", lambda self, *args, **kwargs: None)
+    monkeypatch.setattr(PlayerRuntimeFeature, "_start_runtime_warmup", lambda self: None)
+    monkeypatch.setattr(PlayerChannelFlowFeature, "_start_telegram_worker", lambda self, *args, **kwargs: None)
 
 
 class _Signal:
     def __init__(self) -> None:
         self._callbacks = []
 
-    def connect(self, callback) -> None:
+    def connect(self, callback, *_connection_options) -> None:
         self._callbacks.append(callback)
 
     def emit(self, *args) -> None:
@@ -89,19 +94,19 @@ def test_source_ui_clickthrough_smoke_video_transcript_document_preset_and_dubbi
     shown_video = []
 
     monkeypatch.setattr(
-        "ai_player.ui.player_window_sources.QFileDialog.getOpenFileName",
+        "ai_player.ui.features.sources.QFileDialog.getOpenFileName",
         lambda *_args, **_kwargs: next(open_file_results),
     )
-    monkeypatch.setattr("ai_player.ui.player_window_dubbing.DubbingWorker", _FakeDubbingWorker)
-    monkeypatch.setattr(PlayerWindow, "_auto_select_video_aspect_ratio", lambda self, *args, **kwargs: None)
+    monkeypatch.setattr("ai_player.ui.features.dubbing.DubbingWorker", _FakeDubbingWorker)
+    monkeypatch.setattr(PlayerMediaFeature, "_auto_select_video_aspect_ratio", lambda self, *args, **kwargs: None)
     monkeypatch.setattr(
-        PlayerWindow,
+        PlayerMediaFeature,
         "_load_current_video_for_playback",
-        lambda self: loaded_videos.append(self._video_path),
+        lambda self: loaded_videos.append(self.context.channel_browser._video_path),
     )
-    monkeypatch.setattr(PlayerWindow, "_show_video_output", lambda self: shown_video.append(True))
+    monkeypatch.setattr(PlayerChannelBrowserFeature, "_show_video_output", lambda self: shown_video.append(True))
     monkeypatch.setattr(
-        PlayerWindow,
+        PlayerSourceFeature,
         "_load_document",
         lambda self, path, start_dubbing=True: loaded_documents.append(path),
     )
@@ -114,61 +119,61 @@ def test_source_ui_clickthrough_smoke_video_transcript_document_preset_and_dubbi
         window.show()
         qapp.processEvents()
 
-        QTest.mouseClick(window._open_file_button, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(window.features.layout._open_file_button, Qt.MouseButton.LeftButton)
         qapp.processEvents()
 
         assert loaded_videos == [str(sample_video)]
         assert shown_video == [True]
-        assert window._video_path == str(sample_video)
-        assert window._source_label.text() == str(sample_video)
+        assert window.features.channel_browser._video_path == str(sample_video)
+        assert window.features.layout._source_label.text() == str(sample_video)
 
-        window._set_combo_data(window._audio_source_combo, "transcript")
+        window.features.settings._set_combo_data(window.features.layout._audio_source_combo, "transcript")
         qapp.processEvents()
-        QTest.mouseClick(window._transcript_file_button, Qt.MouseButton.LeftButton)
-        qapp.processEvents()
-
-        assert window._selected_audio_source() == "transcript"
-        assert window._transcript_path_edit.text() == str(transcript_path)
-
-        window._set_combo_data(window._performance_preset_combo, "offline_lite")
-        window._apply_selected_performance_preset()
+        QTest.mouseClick(window.features.layout._transcript_file_button, Qt.MouseButton.LeftButton)
         qapp.processEvents()
 
-        assert window._current_runtime_config().performance_preset == "offline_lite"
+        assert window.features.settings._selected_audio_source() == "transcript"
+        assert window.features.layout._transcript_path_edit.text() == str(transcript_path)
 
-        window._set_combo_data(window._audio_source_combo, "transcript")
-        window._transcript_path_edit.setText(str(transcript_path))
-        QTest.mouseClick(window._dub_button, Qt.MouseButton.LeftButton)
+        window.features.settings._set_combo_data(window.features.layout._performance_preset_combo, "offline_lite")
+        window.features.settings._apply_selected_performance_preset()
+        qapp.processEvents()
+
+        assert window.features.settings._current_runtime_config().performance_preset == "offline_lite"
+
+        window.features.settings._set_combo_data(window.features.layout._audio_source_combo, "transcript")
+        window.features.layout._transcript_path_edit.setText(str(transcript_path))
+        QTest.mouseClick(window.features.layout._dub_button, Qt.MouseButton.LeftButton)
         qapp.processEvents()
 
         assert _FakeDubbingWorker.started_paths == [str(sample_video)]
-        assert window._dub_worker is not None
-        assert window._dub_button.isChecked()
-        assert window.statusBar().currentMessage() == window._tr("status_dubbing_starting")
+        assert window.features.lifecycle.workers.dubbing_worker is not None
+        assert window.features.layout._dub_button.isChecked()
+        assert window.statusBar().currentMessage() == window.features.settings._tr("status_dubbing_starting")
 
-        QTest.mouseClick(window._dub_button, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(window.features.layout._dub_button, Qt.MouseButton.LeftButton)
         qapp.processEvents()
 
-        assert window._dub_worker is None
-        assert not window._dub_button.isChecked()
+        assert window.features.lifecycle.workers.dubbing_worker is None
+        assert not window.features.layout._dub_button.isChecked()
         assert _FakeDubbingWorker.stopped_count == 1
         assert _FakeDubbingWorker.deleted_count == 1
 
-        QTest.mouseClick(window._start_dubbing_button, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(window.features.layout._start_dubbing_button, Qt.MouseButton.LeftButton)
         qapp.processEvents()
 
         assert _FakeDubbingWorker.started_paths == [str(sample_video), str(sample_video)]
-        assert window._dub_worker is not None
-        assert window._dub_button.isChecked()
+        assert window.features.lifecycle.workers.dubbing_worker is not None
+        assert window.features.layout._dub_button.isChecked()
 
-        QTest.mouseClick(window._open_document_button, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(window.features.layout._open_document_button, Qt.MouseButton.LeftButton)
         qapp.processEvents()
 
         assert loaded_documents == [str(document_path)]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
-        if window._dub_worker is not None:
-            window._dub_worker.stop()
-            window._dub_worker.wait(5000)
-            window._dub_worker = None
+        if window.features.lifecycle.workers.dubbing_worker is not None:
+            window.features.lifecycle.workers.dubbing_worker.stop()
+            window.features.lifecycle.workers.dubbing_worker.wait(5000)
+            window.features.lifecycle.workers.dubbing_worker = None
         window.close()

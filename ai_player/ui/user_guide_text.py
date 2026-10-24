@@ -22,7 +22,7 @@ GUIDE_TEXT = {
             ),
             (
                 "Chạy offline",
-                "<b>Preset</b> Offline nhẹ, <b>Translator</b> NLLB CTranslate2, <b>TTS</b> VieNeu local.",
+                "<b>Preset</b> Offline, <b>Translator</b> NLLB 1.3B, <b>TTS</b> VieNeu local.",
                 "Nên dùng GPU nếu có; CPU vẫn chạy được nhưng đoạn đầu có thể lâu.",
             ),
             (
@@ -181,7 +181,7 @@ GUIDE_TEXT = {
             "ocr_provider": "Backend OCR dùng khi đọc phụ đề cứng hoặc nội dung hình ảnh. OCR.space có demo key public `helloworld` nhưng quota thấp; nên dùng key riêng khi chạy batch/export.",
             "ocr_model": "Thư mục/model OCR đang được dùng.",
             "transcript_cleanup": "Mức làm sạch lời thoại sau ASR/OCR trước khi dịch.",
-            "cleanup_provider": "Backend làm sạch lời thoại: local, Ollama, Groq hoặc Gemini.",
+            "cleanup_provider": "Backend làm sạch lời thoại Groq.",
             "cleanup_model": "Model dùng cho tác vụ làm sạch lời thoại.",
             "cleanup_api_base": "Endpoint API dùng khi provider làm sạch lời thoại cần server; để trống để dùng mặc định của provider online.",
             "cleanup_api_key": "Khóa API cho provider làm sạch lời thoại online, nếu cần. Transcript sẽ được gửi tới provider đó.",
@@ -239,7 +239,7 @@ GUIDE_TEXT = {
         "label_ok": "Ổn",
         "finding_vieneu_cpu": "VieNeu local trên CPU có thể mất lâu ở đoạn đầu, đặc biệt với Editor/Transcript.",
         "finding_edge": "Edge TTS thường phản hồi nhanh hơn và không load model local nặng.",
-        "finding_ct2": "NLLB CTranslate2 là lựa chọn hợp lý cho tốc độ offline.",
+        "finding_ct2": "NLLB 1.3B là lựa chọn local ưu tiên chất lượng.",
         "finding_buffer": "Bộ đệm 20s trở lên ổn định hơn nhưng làm thời gian chờ ban đầu dài hơn.",
         "finding_editor": "Nguồn Editor phù hợp để đọc văn bản; ưu tiên Edge TTS nếu cần nhanh.",
         "finding_default": "Cấu hình hiện tại không có điểm rủi ro lớn.",
@@ -261,7 +261,7 @@ GUIDE_TEXT = {
             "subtitle": "OCR phụ đề cứng từ video.",
         },
         "translator_notes": {
-            "nllb_ct2": "Khuyến nghị cho tốc độ offline.",
+            "nllb_ct2": "Cấu hình cũ; ứng dụng sẽ chuyển sang NLLB 1.3B.",
             "auto": "Tiện lợi nhưng có thể chậm do thử nhiều backend.",
             "none": "Không dịch, chỉ đọc văn bản nguồn.",
         },
@@ -312,16 +312,12 @@ GUIDE_TEXT = {
                 "speechmatics": {
                     "description": "Provider online Speechmatics cho batch transcription đa ngôn ngữ.",
                     "when": "Dùng khi cần nhận dạng online với quota miễn phí rộng và hỗ trợ nhiều ngôn ngữ.",
-                }
+                },
             },
             "asr_model": {
-                "faster-whisper-base": {
-                    "description": "Model Whisper base local, cân bằng giữa tốc độ, dung lượng và độ chính xác cơ bản.",
-                    "when": "Phù hợp cho máy CPU/GPU phổ thông và nhu cầu nhận dạng nhanh.",
-                },
-                "base": {
-                    "description": "Biến thể base của Whisper/Faster-Whisper, nhẹ và khởi động nhanh.",
-                    "when": "Dùng khi ưu tiên tốc độ hoặc máy yếu.",
+                "faster-whisper-large-v3": {
+                    "description": "Model Whisper large-v3 local cho độ chính xác nhận dạng cao.",
+                    "when": "Khuyến nghị cho nhận dạng và xuất bản nội dung.",
                 },
             },
             "ocr_provider": {
@@ -337,34 +333,18 @@ GUIDE_TEXT = {
                 }
             },
             "cleanup_provider": {
-                "local": {
-                    "description": "Chạy model làm sạch lời thoại ngay trên máy.",
-                    "when": "Dùng khi muốn offline và đã có model local đủ nhẹ.",
-                },
-                "ollama": {
-                    "description": "Gọi model qua Ollama local server.",
-                    "when": "Dùng khi đã chạy Ollama và muốn đổi model linh hoạt.",
-                },
-                "openai": {
-                    "description": "Gọi API tương thích OpenAI để làm sạch lời thoại.",
-                    "when": "Dùng khi chấp nhận dùng API ngoài để có chất lượng sửa câu tốt hơn.",
+                "groq": {
+                    "description": "Gọi Groq GPT OSS 20B để làm sạch lời thoại với độ trễ thấp.",
+                    "when": "Dùng khi cần xử lý trực tuyến nhanh và có khóa API Groq.",
                 },
             },
             "cleanup_model": {
-                "Qwen2.5": {
-                    "description": "Model chat local phù hợp sửa câu, bỏ nhiễu nhẹ và giữ thuật ngữ.",
-                    "when": "Dùng khi cần làm sạch lời thoại offline/local.",
-                },
-                "llama": {
-                    "description": "Model qua Ollama/API, chất lượng phụ thuộc model đang được server cung cấp.",
-                    "when": "Dùng khi model local mặc định chưa có hoặc muốn thử model khác.",
+                "gpt-oss": {
+                    "description": "Model GPT OSS 20B do Groq phục vụ cho làm sạch lời thoại.",
+                    "when": "Khuyến nghị cho tốc độ và chất lượng cân bằng.",
                 },
             },
             "translator": {
-                "nllb_ct2": {
-                    "description": "NLLB chạy bằng CTranslate2, tối ưu tốc độ và bộ nhớ.",
-                    "when": "Khuyến nghị mặc định cho dịch offline nhanh.",
-                },
                 "nllb": {
                     "description": "NLLB PyTorch/local, thường nặng hơn nhưng có thể hữu ích với một số model đầy đủ.",
                     "when": "Dùng khi ưu tiên chất lượng và máy đủ RAM/CPU/GPU.",
@@ -407,51 +387,29 @@ GUIDE_TEXT = {
                 },
             },
             "vieneu_mode": {
-                "turbo": {
-                    "description": "Chế độ VieNeu nhanh hơn, tối ưu cho phản hồi thấp.",
-                    "when": "Dùng cho xem nhanh hoặc máy có GPU phù hợp.",
-                },
-                "standard": {
-                    "description": "Chế độ VieNeu chuẩn, có thể nặng hơn nhưng ổn định với model chuẩn.",
-                    "when": "Dùng khi cần giọng local và chấp nhận tốc độ chậm hơn.",
-                },
+                "v3turbo": {
+                    "description": "VieNeu-TTS v3 Turbo, âm thanh 48 kHz.",
+                    "when": "Giọng đọc ngoại tuyến trên CPU hoặc GPU.",
+                }
             },
             "vieneu_model": {
-                "Turbo": {
-                    "description": "Model Turbo của VieNeu-TTS, ưu tiên tốc độ tạo giọng.",
-                    "when": "Khuyến nghị cho phát gần thời gian thực.",
-                },
-                "Standard": {
-                    "description": "Model Standard của VieNeu-TTS, thiên về chất lượng/ổn định.",
-                    "when": "Dùng cho đọc tài liệu hoặc xuất bản khi không quá gấp.",
-                },
+                "v3 Turbo": {
+                    "description": "Bộ mô hình và codec v3 đã cố định phiên bản.",
+                    "when": "Tải một lần trong mục Mô hình offline.",
+                }
             },
             "vieneu_runtime": {
                 "subprocess": {
-                    "description": "Chạy TTS trong tiến trình phụ để cô lập lỗi native/GPU.",
-                    "when": "Khuyến nghị mặc định để app chính ổn định hơn.",
-                },
-                "inprocess": {
-                    "description": "Chạy TTS trong tiến trình app chính, ít overhead hơn nhưng rủi ro crash cao hơn.",
-                    "when": "Chỉ dùng khi môi trường TTS rất ổn định.",
-                },
-                "auto": {
-                    "description": "Để app tự chọn runtime phù hợp.",
-                    "when": "Dùng khi không chắc môi trường nào tốt nhất.",
-                },
+                    "description": "Chạy trong môi trường TTS riêng.",
+                    "when": "Giữ ứng dụng phản hồi khi tạo hoặc hủy giọng đọc.",
+                }
             },
             "vieneu_backend": {
-                "auto": {
-                    "description": "Tự chọn backend tăng tốc phù hợp với máy.",
-                    "when": "Khuyến nghị cho đa số trường hợp.",
-                },
-                "native": {
-                    "description": "Backend native/local cơ bản, ít phụ thuộc hơn.",
-                    "when": "Dùng khi backend tăng tốc gặp lỗi.",
-                },
-                "lmdeploy": {
-                    "description": "Backend tăng tốc LMDeploy cho môi trường tương thích.",
-                    "when": "Dùng khi GPU/runtime hỗ trợ tốt và cần tốc độ.",
+                "auto": {"description": "Tự chọn GPU nếu đã cài, hoặc CPU.", "when": "Lựa chọn mặc định."},
+                "onnx": {"description": "Chạy v3 Turbo trên CPU.", "when": "Dùng trên mọi máy đã tải bộ mô hình CPU."},
+                "pytorch": {
+                    "description": "Chạy v3 Turbo trên GPU NVIDIA.",
+                    "when": "Cài bộ CUDA và mô hình GPU trước khi chọn.",
                 },
             },
             "source_filter_provider": {
@@ -485,12 +443,6 @@ GUIDE_TEXT = {
         },
         "translator_rows": [
             (
-                "NLLB CTranslate2",
-                "Nhanh hơn NLLB PyTorch, hợp CPU.",
-                "Cần model CT2 đã chuẩn bị.",
-                "Khuyến nghị cho tốc độ offline.",
-            ),
-            (
                 "Local NLLB",
                 "Chất lượng tốt hơn cho nhiều đoạn khó.",
                 "Nặng RAM/CPU và khởi động chậm.",
@@ -499,19 +451,7 @@ GUIDE_TEXT = {
             ("Không dịch", "Nhanh nhất.", "Không tạo bản dịch đích.", "Dùng khi văn bản nguồn đã phù hợp."),
         ],
         "model_rows": [
-            (
-                "nllb-200-distilled-600M",
-                "Nhẹ hơn, tải nhanh hơn.",
-                "Kém hơn ở câu dài hoặc thuật ngữ khó.",
-                "Cần phản hồi nhanh.",
-            ),
             ("nllb-200-1.3B", "Giữ nghĩa tốt hơn.", "Nặng hơn và chậm hơn.", "Xuất bản hoặc tài liệu quan trọng."),
-            (
-                "nllb-200-distilled-600M-ct2-int8",
-                "Tối ưu tốc độ và bộ nhớ.",
-                "Chất lượng đổi lấy tốc độ.",
-                "Thiết lập offline khuyến nghị.",
-            ),
         ],
         "advanced_items": [
             "<b>Whisper device/compute</b>: CPU + int8 an toàn, CUDA + float16 nhanh nếu GPU ổn.",
@@ -541,7 +481,7 @@ GUIDE_TEXT = {
             ),
             (
                 "Offline run",
-                "<b>Preset</b> Offline lite, <b>Translator</b> NLLB CTranslate2, <b>TTS</b> VieNeu local.",
+                "<b>Preset</b> Offline, <b>Translator</b> NLLB 1.3B, <b>TTS</b> VieNeu local.",
                 "Use a GPU when available; CPU works but the first segment can take time.",
             ),
             (
@@ -703,7 +643,7 @@ GUIDE_TEXT = {
             "ocr_provider": "OCR backend used for hard subtitles or image-based text. OCR.space has a public `helloworld` demo key with low quota; use a personal key for batch/export workflows.",
             "ocr_model": "OCR model or tessdata folder currently used.",
             "transcript_cleanup": "Cleanup strength applied after ASR/OCR and before translation.",
-            "cleanup_provider": "Transcript cleanup backend: local, Ollama, Groq, or Gemini.",
+            "cleanup_provider": "Groq transcript cleanup backend.",
             "cleanup_model": "Model used for transcript cleanup.",
             "cleanup_api_base": "API endpoint used when cleanup provider needs a server; leave blank for the online provider default.",
             "cleanup_api_key": "API key for online transcript cleanup providers, if required. Transcript text is sent to that provider.",
@@ -764,7 +704,7 @@ GUIDE_TEXT = {
         "label_ok": "OK",
         "finding_vieneu_cpu": "VieNeu local TTS on CPU may take a long time on the first segment, especially with Editor/Transcript.",
         "finding_edge": "Edge TTS usually responds faster and avoids loading heavy local models.",
-        "finding_ct2": "NLLB CTranslate2 is a good choice for offline speed.",
+        "finding_ct2": "NLLB 1.3B is the quality-focused local translation option.",
         "finding_buffer": "A buffer of 20s or more improves stability but increases the initial wait.",
         "finding_editor": "Editor source is good for reading text; prefer Edge TTS when speed matters.",
         "finding_default": "The current configuration has no major risk.",
@@ -786,7 +726,7 @@ GUIDE_TEXT = {
             "subtitle": "Runs OCR on burned-in video subtitles.",
         },
         "translator_notes": {
-            "nllb_ct2": "Recommended for offline speed.",
+            "nllb_ct2": "Legacy configuration; the app migrates it to NLLB 1.3B.",
             "auto": "Convenient, but may be slow because it tries multiple backends.",
             "none": "No translation; reads the source text.",
         },
@@ -827,9 +767,7 @@ GUIDE_TEXT = {
             },
             "asr_provider": {
                 "faster_whisper": {
-                    "description": (
-                        "Faster-Whisper backend using CTranslate2 for faster, lighter speech recognition."
-                    ),
+                    "description": ("Faster-Whisper backend using CTranslate2 for faster, lighter speech recognition."),
                     "when": "Recommended default for video, live, meeting, and audio-derived transcripts.",
                 },
                 "assemblyai": {
@@ -839,18 +777,12 @@ GUIDE_TEXT = {
                 "speechmatics": {
                     "description": "Speechmatics online provider for multilingual batch transcription.",
                     "when": "Use when you want online ASR with a broad free quota and multilingual coverage.",
-                }
+                },
             },
             "asr_model": {
-                "faster-whisper-base": {
-                    "description": (
-                        "Local Whisper base model, balanced for speed, size, and basic recognition accuracy."
-                    ),
-                    "when": "Use on common CPU/GPU machines when fast recognition matters.",
-                },
-                "base": {
-                    "description": "Base Whisper/Faster-Whisper variant, lightweight and quick to start.",
-                    "when": "Use when speed or low-resource hardware is the priority.",
+                "faster-whisper-large-v3": {
+                    "description": "Local Whisper large-v3 model for high-accuracy speech recognition.",
+                    "when": "Recommended for transcription and publication workflows.",
                 },
             },
             "ocr_provider": {
@@ -861,7 +793,7 @@ GUIDE_TEXT = {
                 "ocr_space": {
                     "description": "OCR.space online API. If the key is blank, the app uses the public `helloworld` demo key with very low quota.",
                     "when": "Use for quick online OCR trials; batch/export workflows should use a personal API key to avoid rate limits.",
-                }
+                },
             },
             "ocr_model": {
                 "tessdata": {
@@ -870,50 +802,18 @@ GUIDE_TEXT = {
                 }
             },
             "cleanup_provider": {
-                "local": {
-                    "description": "Runs the dialogue cleanup model directly on this machine.",
-                    "when": "Use when offline processing is preferred and a suitable local model is installed.",
-                },
-                "ollama": {
-                    "description": "Calls a model through a local Ollama server.",
-                    "when": "Use when Ollama is running and you want flexible model switching.",
-                },
-                "openai": {
-                    "description": "Calls an OpenAI-compatible API for dialogue cleanup.",
-                    "when": "Use when an external API is acceptable and better sentence repair is desired.",
-                },
                 "groq": {
-                    "description": "Calls Groq's OpenAI-compatible API for fast dialogue cleanup.",
-                    "when": "Use when low-latency online cleanup and free Groq quota are useful.",
-                },
-                "gemini": {
-                    "description": "Calls the Google Gemini API through generateContent for transcript normalization.",
-                    "when": "Use when you want to use Google AI Studio/Gemini API free quota.",
-                },
-                "openrouter": {
-                    "description": "Calls OpenRouter chat-completions for free-router or free-model cleanup.",
-                    "when": "Use when you want quick switching between free models or a fallback provider.",
-                },
-                "huggingface": {
-                    "description": "Calls Hugging Face Inference Providers through the OpenAI-compatible router.",
-                    "when": "Use when you have an HF token and want to try online instruct models.",
+                    "description": "Calls Groq GPT OSS 20B for low-latency dialogue cleanup.",
+                    "when": "Use for fast online cleanup with a Groq API key.",
                 },
             },
             "cleanup_model": {
-                "Qwen2.5": {
-                    "description": "Local chat model suitable for sentence repair, light denoising, and term preservation.",
-                    "when": "Use for offline/local dialogue cleanup.",
-                },
-                "llama": {
-                    "description": "Model served by Ollama/API; quality depends on the model exposed by the server.",
-                    "when": "Use when the default local model is unavailable or you want to try another model.",
+                "gpt-oss": {
+                    "description": "Groq-hosted GPT OSS 20B model for dialogue cleanup.",
+                    "when": "Recommended for a balance of speed and quality.",
                 },
             },
             "translator": {
-                "nllb_ct2": {
-                    "description": "NLLB running through CTranslate2, optimized for speed and memory.",
-                    "when": "Recommended default for fast offline translation.",
-                },
                 "nllb": {
                     "description": "Local/PyTorch NLLB, usually heavier but useful with some full models.",
                     "when": "Use when quality matters and the machine has enough RAM/CPU/GPU.",
@@ -968,51 +868,29 @@ GUIDE_TEXT = {
                 },
             },
             "vieneu_mode": {
-                "turbo": {
-                    "description": "Faster VieNeu mode optimized for low response latency.",
-                    "when": "Use for quick preview or when a suitable GPU is available.",
-                },
-                "standard": {
-                    "description": "Standard VieNeu mode, potentially heavier but stable with standard models.",
-                    "when": "Use when local voice quality matters and slower generation is acceptable.",
-                },
+                "v3turbo": {
+                    "description": "VieNeu-TTS v3 Turbo, 48 kHz audio.",
+                    "when": "Offline speech on CPU or GPU.",
+                }
             },
             "vieneu_model": {
-                "Turbo": {
-                    "description": "VieNeu-TTS Turbo model, prioritizing generation speed.",
-                    "when": "Recommended for near real-time playback.",
-                },
-                "Standard": {
-                    "description": "VieNeu-TTS Standard model, leaning toward quality and stability.",
-                    "when": "Use for document reading or exports that are not time-sensitive.",
-                },
+                "v3 Turbo": {
+                    "description": "Pinned v3 model and codec bundle.",
+                    "when": "Download once from Offline Models.",
+                }
             },
             "vieneu_runtime": {
                 "subprocess": {
-                    "description": "Runs TTS in a helper process to isolate native/GPU failures.",
-                    "when": "Recommended default for keeping the main app more stable.",
-                },
-                "inprocess": {
-                    "description": "Runs TTS inside the main app process, with less overhead but higher crash risk.",
-                    "when": "Use only when the TTS environment is known to be stable.",
-                },
-                "auto": {
-                    "description": "Lets the app choose the suitable runtime.",
-                    "when": "Use when you are unsure which environment is best.",
-                },
+                    "description": "Runs in a separate TTS environment.",
+                    "when": "Keeps the application responsive during synthesis and cancellation.",
+                }
             },
             "vieneu_backend": {
-                "auto": {
-                    "description": "Automatically chooses the acceleration backend that fits the machine.",
-                    "when": "Recommended for most cases.",
-                },
-                "native": {
-                    "description": "Basic native/local backend with fewer moving parts.",
-                    "when": "Use when an acceleration backend fails.",
-                },
-                "lmdeploy": {
-                    "description": "LMDeploy acceleration backend for compatible environments.",
-                    "when": "Use when the GPU/runtime supports it well and speed is needed.",
+                "auto": {"description": "Selects an installed GPU runtime or CPU.", "when": "Default selection."},
+                "onnx": {"description": "Runs v3 Turbo on CPU.", "when": "Use with the CPU model bundle."},
+                "pytorch": {
+                    "description": "Runs v3 Turbo on an NVIDIA GPU.",
+                    "when": "Install the CUDA runtime and GPU models first.",
                 },
             },
             "source_filter_provider": {
@@ -1046,12 +924,6 @@ GUIDE_TEXT = {
         },
         "translator_rows": [
             (
-                "NLLB CTranslate2",
-                "Faster than PyTorch NLLB and CPU-friendly.",
-                "Requires a prepared CT2 model.",
-                "Recommended for offline speed.",
-            ),
-            (
                 "Local NLLB",
                 "Better quality on difficult passages.",
                 "Heavier RAM/CPU usage and slower startup.",
@@ -1065,19 +937,7 @@ GUIDE_TEXT = {
             ),
         ],
         "model_rows": [
-            (
-                "nllb-200-distilled-600M",
-                "Lighter and faster to load.",
-                "Weaker on long sentences or hard terminology.",
-                "You need fast response.",
-            ),
             ("nllb-200-1.3B", "Preserves meaning better.", "Heavier and slower.", "Publishing or important documents."),
-            (
-                "nllb-200-distilled-600M-ct2-int8",
-                "Optimized for speed and memory.",
-                "Trades some quality for speed.",
-                "Recommended offline setup.",
-            ),
         ],
         "advanced_items": [
             "<b>Whisper device/compute</b>: CPU + int8 is safer; CUDA + float16 is faster on a stable GPU.",

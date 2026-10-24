@@ -7,7 +7,7 @@ import traceback
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication
 
-from ai_player.core.config import RUNTIME_DIR
+from ai_player.configuration import RUNTIME_DIR
 from ai_player.core.optional_imports import install_unneeded_transformers_optional_import_blocks
 from ai_player.core.redaction import redact_secrets
 

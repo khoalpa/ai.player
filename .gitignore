@@ -1,4 +1,6 @@
 .venv/
+.venv-vieneu/
+/output/vieneu-v3-verification/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -21,3 +23,6 @@ ai-player-staged-dubbing/
 /AssemblyAI*.pdf
 /App configuration*.pdf
 /Tài khoản*.pdf
+
+# Local rollback copies for AI Themes
+.theme-backups/

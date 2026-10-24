@@ -4,7 +4,7 @@ import ast
 import json
 from pathlib import Path
 
-from ai_player.core.config import AppConfig
+from ai_player.configuration import AppConfig
 from ai_player.ui import player_window_utils as utils
 from ai_player.ui.user_guide_text import GUIDE_TEXT
 
@@ -28,8 +28,7 @@ def test_ai_player_python_strings_have_no_repairable_mojibake() -> None:
         (path.as_posix(), location, value)
         for path in sorted(Path("ai_player").rglob("*.py"))
         for location, value in _python_string_literals(path)
-        if not _is_mojibake_repair_helper_marker(path, location)
-        and utils.repair_mojibake(value) != value
+        if not _is_mojibake_repair_helper_marker(path, location) and utils.repair_mojibake(value) != value
     ]
 
     assert changed == []
@@ -63,10 +62,42 @@ def test_safe_native_dubbing_config_forces_cpu_when_cuda_is_disabled(monkeypatch
 
 def test_safe_native_dubbing_config_keeps_cuda_when_runtime_is_ready(monkeypatch) -> None:
     monkeypatch.delenv("AI_PLAYER_DISABLE_CUDA", raising=False)
-    monkeypatch.setattr(utils, "_cuda_runtime_ready", lambda: True)
+    monkeypatch.setattr(utils, "ctranslate2_cuda_available", lambda: True)
+    monkeypatch.setattr(utils, "torch_cuda_available", lambda: True)
     config = AppConfig(local_translation_device="cuda", whisper_device="cuda", vieneu_tts_device="cuda")
 
     assert utils.safe_native_dubbing_config(config) == config
+
+
+def test_safe_native_dubbing_config_falls_back_per_runtime(monkeypatch) -> None:
+    monkeypatch.delenv("AI_PLAYER_DISABLE_CUDA", raising=False)
+    monkeypatch.setattr(utils, "ctranslate2_cuda_available", lambda: False)
+    monkeypatch.setattr(utils, "torch_cuda_available", lambda: True)
+    config = AppConfig(
+        local_translation_device="cuda",
+        whisper_device="cuda",
+        whisper_compute_type="float16",
+        vieneu_tts_device="cuda",
+    )
+
+    safe = utils.safe_native_dubbing_config(config)
+
+    assert safe.whisper_device == "cpu"
+    assert safe.whisper_compute_type == "int8"
+    assert safe.local_translation_device == "cuda"
+    assert safe.vieneu_tts_device == "cuda"
+
+
+def test_safe_native_dubbing_config_auto_prefers_each_available_gpu_runtime(monkeypatch) -> None:
+    monkeypatch.delenv("AI_PLAYER_DISABLE_CUDA", raising=False)
+    monkeypatch.setattr(utils, "ctranslate2_cuda_available", lambda: True)
+    monkeypatch.setattr(utils, "torch_cuda_available", lambda: False)
+
+    safe = utils.safe_native_dubbing_config(AppConfig())
+
+    assert safe.whisper_device == "auto"
+    assert safe.local_translation_device == "cpu"
+    assert safe.vieneu_tts_device == "cpu"
 
 
 def test_gui_language_packs_have_matching_keys() -> None:
@@ -107,17 +138,9 @@ def _walk_strings(path: str, value: object) -> list[tuple[str, str]]:
     if isinstance(value, str):
         return [(path, value)]
     if isinstance(value, dict):
-        return [
-            item
-            for key, child in value.items()
-            for item in _walk_strings(f"{path}.{key}", child)
-        ]
+        return [item for key, child in value.items() for item in _walk_strings(f"{path}.{key}", child)]
     if isinstance(value, list | tuple):
-        return [
-            item
-            for index, child in enumerate(value)
-            for item in _walk_strings(f"{path}[{index}]", child)
-        ]
+        return [item for index, child in enumerate(value) for item in _walk_strings(f"{path}[{index}]", child)]
     return []
 
 

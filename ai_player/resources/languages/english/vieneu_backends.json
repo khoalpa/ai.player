@@ -5,12 +5,12 @@
       "label": "Auto"
     },
     {
-      "value": "native",
-      "label": "Native"
+      "value": "onnx",
+      "label": "ONNX (CPU)"
     },
     {
-      "value": "lmdeploy",
-      "label": "LMDeploy"
+      "value": "pytorch",
+      "label": "PyTorch (GPU)"
     }
   ]
 }

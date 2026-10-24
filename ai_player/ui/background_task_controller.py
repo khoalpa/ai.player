@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
 
 
 class BackgroundTaskController:
-    def __init__(self, owner: Any) -> None:
-        self._owner = owner
+    def __init__(
+        self,
+        *,
+        record_event: Callable[[str, object], None],
+        refresh: Callable[[], None],
+    ) -> None:
+        self._record_event = record_event
+        self._refresh = refresh
         self._details: dict[str, str] = {}
 
     @property
@@ -22,12 +28,8 @@ class BackgroundTaskController:
             return
         task_name = str(name)
         self._details[task_name] = text[:500]
-        record_task = getattr(self._owner, "_record_task_center_event", None)
-        if callable(record_task):
-            record_task(task_name, text if log_detail is None else log_detail)
+        self._record_event(task_name, text if log_detail is None else log_detail)
 
     def clear_detail(self, name: str) -> None:
         self._details.pop(str(name), None)
-        refresh_task_center = getattr(self._owner, "_refresh_task_center", None)
-        if callable(refresh_task_center):
-            refresh_task_center()
+        self._refresh()

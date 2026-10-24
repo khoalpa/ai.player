@@ -1,14 +1,14 @@
 param(
-    [ValidateSet("fast", "best")]
-    [string]$Quality = "fast",
+    [ValidateSet("best")]
+    [string]$Quality = "best",
     [string[]]$Languages = @("eng", "vie", "osd")
 )
 
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$Repo = if ($Quality -eq "best") { "tessdata_best" } else { "tessdata_fast" }
-$Folder = if ($Quality -eq "best") { "tessdata_best" } else { "tessdata" }
+$Repo = "tessdata_best"
+$Folder = "tessdata_best"
 $Target = Join-Path $ProjectRoot "models\ocr\$Folder"
 New-Item -ItemType Directory -Force -Path $Target | Out-Null
 

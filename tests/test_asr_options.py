@@ -5,11 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_player.core.config import AppConfig
-from ai_player.workers import meeting_worker
-from ai_player.workers.dubbing_worker import DubbingWorker
-from ai_player.workers.export_worker import DubbingExportWorker, StagedDubbingExportWorker
-from ai_player.workers.meeting_worker import MeetingWorker
+from ai_player.adapters import workflow_bindings
+from ai_player.application.workflows import meeting as meeting_worker
+from ai_player.application.workflows.export import DubbingExportWorker, StagedDubbingExportWorker
+from ai_player.application.workflows.meeting import MeetingWorker
+from ai_player.application.workflows.realtime import DubbingWorker
+from ai_player.configuration import AppConfig
 
 
 class FakeWhisperModel:
@@ -42,6 +43,8 @@ def test_dubbing_worker_uses_configured_asr_options() -> None:
         _selected_whisper_language=lambda: "vi",
     )
 
+    worker.dependencies = workflow_bindings.realtime()
+
     DubbingWorker._transcribe_with_fallback(worker, Path("sample.wav"))
 
     assert model.calls == [{"audio_path": "sample.wav", "beam_size": 4, "vad_filter": False, "language": "vi"}]
@@ -68,6 +71,8 @@ def test_dubbing_worker_falls_back_to_cpu_int8_on_asr_compute_error() -> None:
 
     worker._switch_whisper_to_cpu = switch_to_cpu
 
+    worker.dependencies = workflow_bindings.realtime()
+
     DubbingWorker._transcribe_with_fallback(worker, Path("sample.wav"))
 
     assert statuses == ["worker_whisper_cpu_compute_fallback"]
@@ -81,6 +86,8 @@ def test_export_worker_uses_configured_asr_options() -> None:
         _load_whisper_model=lambda: model,
         _selected_whisper_language=lambda: "en",
     )
+
+    worker.dependencies = workflow_bindings.export()
 
     DubbingExportWorker._transcribe_with_fallback(worker, Path("source.wav"))
 
@@ -105,6 +112,8 @@ def test_staged_export_retries_transcribe_without_word_timestamps_when_unsupport
         _emit_progress=lambda *_args, **_kwargs: None,
     )
 
+    worker.dependencies = workflow_bindings.export()
+
     StagedDubbingExportWorker._transcribe_staged(worker, Path("source-full.wav"))
 
     assert model.calls == [
@@ -127,6 +136,8 @@ def test_meeting_worker_uses_configured_asr_options() -> None:
         _load_model=lambda: model,
         _selected_whisper_language=lambda: None,
     )
+
+    worker.dependencies = workflow_bindings.meeting()
 
     MeetingWorker._transcribe_segments(worker, Path("meeting.wav"))
 
@@ -152,6 +163,8 @@ def test_meeting_worker_falls_back_to_cpu_on_cuda_asr_error() -> None:
 
     worker._switch_whisper_to_cpu = switch_to_cpu
 
+    worker.dependencies = workflow_bindings.meeting()
+
     MeetingWorker._transcribe_segments(worker, Path("meeting.wav"))
 
     assert cpu_model.calls == [{"audio_path": "meeting.wav", "beam_size": 2, "vad_filter": False, "language": "en"}]
@@ -168,6 +181,7 @@ def test_meeting_worker_does_not_retry_cpu_asr_error() -> None:
     )
 
     with pytest.raises(RuntimeError, match="compute type unsupported"):
+        worker.dependencies = workflow_bindings.meeting()
         MeetingWorker._transcribe_segments(worker, Path("meeting.wav"))
 
 
@@ -199,4 +213,6 @@ def test_meeting_worker_sanitizes_segment_text_language_and_timing(tmp_path) -> 
 
 
 def test_meeting_worker_ffmpeg_escape_uses_concat_escape() -> None:
-    assert meeting_worker._ffmpeg_escape(Path("C:/Audio/O'Clock/demo.wav")) == "C:/Audio/O'\\''Clock/demo.wav"
+    assert (
+        workflow_bindings.meeting()._ffmpeg_escape(Path("C:/Audio/O'Clock/demo.wav")) == "C:/Audio/O'\\''Clock/demo.wav"
+    )

@@ -42,4 +42,3 @@ def coded_user_message(exc: BaseException, *, fallback: object = "") -> str:
     if info is None:
         return redact_secrets(clean_message(fallback or exc))
     return f"{info.message} [{info.code}]"
-

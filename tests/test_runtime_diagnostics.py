@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ai_player.core import runtime_diagnostics as diag
+from ai_player.runtime import runtime_diagnostics as diag
 
 
 def test_runtime_diagnostics_failure_count_counts_required_misses() -> None:
@@ -50,14 +50,12 @@ def test_package_section_marks_non_profile_package_optional(monkeypatch) -> None
     assert section.items[0].required is False
 
 
-def test_offline_profile_checks_llama_cpp_runtime() -> None:
+def test_offline_profile_does_not_require_legacy_tts_runtime() -> None:
     packages = {
-        name
-        for package_info in diag.PYTHON_PACKAGES
-        for name, _profiles in (diag._package_requirement(package_info),)
+        name for package_info in diag.PYTHON_PACKAGES for name, _profiles in (diag._package_requirement(package_info),)
     }
 
-    assert "llama_cpp" in packages
+    assert "llama_cpp" not in packages
 
 
 @pytest.mark.parametrize("candidate_index", [0, 1])

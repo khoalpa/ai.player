@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from ai_player.services import document_reader as docs
+from ai_player.adapters.media import document_reader as docs
 from scripts import workflow_smoke_check
 
 

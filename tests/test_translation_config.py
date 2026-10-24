@@ -5,21 +5,21 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_player.core.config import DEFAULT_PRESERVED_SOURCE_TERMS, AppConfig
-from ai_player.services import translation
+from ai_player.adapters.ai import translation
+from ai_player.configuration import DEFAULT_PRESERVED_SOURCE_TERMS, AppConfig
 
 
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
         ("off", "none"),
-        ("offline auto", "nllb_ct2"),
+        ("offline auto", "nllb"),
         ("azure", "azure_translator"),
         ("google", "google_translate"),
         ("deepl", "deepl"),
-        ("ct2", "nllb_ct2"),
+        ("ct2", "nllb"),
         ("nllb", "nllb"),
-        ("anything", "nllb_ct2"),
+        ("anything", "nllb"),
     ],
 )
 def test_normalize_translator_provider_aliases(value: str, expected: str) -> None:
@@ -186,6 +186,49 @@ def test_protect_and_restore_preserved_source_language_terms() -> None:
     assert "OpenAI" in restored
 
 
+def test_bilingual_glossary_restores_approved_vietnamese_term() -> None:
+    config = AppConfig(
+        preserve_source_terms=True,
+        preserved_source_terms="人工智能 = trí tuệ nhân tạo\n师傅 => sư phụ",
+        preserved_english_terms="",
+    )
+
+    protected = translation._protect_english_terms("人工智能由师傅讲解。", config)
+    restored = translation._restore_english_terms(protected.text.upper(), protected)
+
+    assert restored == "trí tuệ nhân tạo由sư phụ讲解。"
+
+
+def test_glossary_prefers_longest_source_term() -> None:
+    entries = translation._glossary_entries("人工=nhân công\n人工智能=trí tuệ nhân tạo")
+
+    assert [entry.source for entry in entries] == ["人工智能", "人工"]
+
+
+def test_chinese_to_vietnamese_translation_polishes_punctuation() -> None:
+    assert (
+        translation._polish_target_text("Xin chào ， thế giới！ （ thử nghiệm ）", "zh-CN", "vi")
+        == "Xin chào, thế giới! (thử nghiệm)"
+    )
+
+
+def test_translation_polish_does_not_change_other_language_pairs() -> None:
+    text = "Hello ， world！"
+
+    assert translation._polish_target_text(text, "en", "vi") == text
+
+
+def test_chinese_translation_protects_numbers_dates_and_percentages() -> None:
+    config = AppConfig(preserve_source_terms=True, preserved_source_terms="", preserved_english_terms="")
+
+    protected = translation._protect_english_terms("价格是 3.5 元，增长 15%，日期 2026.10.12。", config, "zh")
+    restored = translation._restore_english_terms(protected.text.upper(), protected)
+
+    assert "3.5" in restored
+    assert "15%" in restored
+    assert "2026.10.12" in restored
+
+
 def test_legacy_english_terms_are_still_used_as_source_terms() -> None:
     config = AppConfig(
         preserve_source_terms=True,
@@ -253,7 +296,7 @@ def test_ctranslate2_model_path_detection(tmp_path) -> None:
     assert translation._resolve_ctranslate2_model_path(Path("plain-nllb")).name.endswith("ct2-int8")
 
 
-def test_effective_translator_provider_uses_ct2_for_ct2_model(tmp_path) -> None:
+def test_effective_translator_provider_does_not_restore_removed_ct2_provider(tmp_path) -> None:
     model = tmp_path / "custom-ct2"
     model.mkdir()
     (model / "model.bin").write_text("", encoding="utf-8")
@@ -261,7 +304,7 @@ def test_effective_translator_provider_uses_ct2_for_ct2_model(tmp_path) -> None:
 
     config = AppConfig(translator_provider="nllb", local_translation_model=str(model))
 
-    assert translation.effective_translator_provider(config) == "nllb_ct2"
+    assert translation.effective_translator_provider(config) == "nllb"
 
 
 def test_ctranslate2_translator_preserves_empty_segments(monkeypatch) -> None:

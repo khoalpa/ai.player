@@ -6,6 +6,8 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+from ai_player.runtime.runtime_telemetry import RUNTIME_TELEMETRY
+
 _LOGGER = logging.getLogger("ai_player.performance")
 
 
@@ -20,6 +22,7 @@ def measure_stage(worker: str, stage: str, **details: object) -> Iterator[None]:
         yield
     finally:
         elapsed_ms = (time.perf_counter() - started) * 1000.0
+        RUNTIME_TELEMETRY.observe_stage(worker, stage, elapsed_ms)
         if performance_logging_enabled():
             suffix = " ".join(f"{key}={value}" for key, value in details.items() if value is not None)
             _LOGGER.info("%s.%s %.1fms %s", worker, stage, elapsed_ms, suffix)

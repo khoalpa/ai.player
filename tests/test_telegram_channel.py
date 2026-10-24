@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_player.services import telegram_channel
+from ai_player.adapters.sources import telegram_channel
 
 SAMPLE_CHANNEL_HTML = """
 <div class="tgme_widget_message" data-post="shunv8388/101">
@@ -176,36 +176,28 @@ def test_authenticated_operations_forward_to_private_adapter(monkeypatch) -> Non
     loaded = telegram_channel.TelegramLoginConfig(api_id=67890, api_hash="cached", phone="+84000000000")
     videos = [telegram_channel.TelegramChannelVideo("Demo", "https://t.me/demo/1", "1", authenticated=True)]
 
+    def list_videos(value, received, limit=50, before_post_id="", search="", language_id=None):
+        calls.append(("list", value, received, limit, before_post_id, search, language_id))
+        return videos
+
+    def list_items(value, received, limit=50, before_post_id="", search="", language_id=None):
+        calls.append(("items", value, received, limit, before_post_id, search, language_id))
+        return videos
+
     adapter = SimpleNamespace(
         load_telegram_login_config=lambda: loaded,
         delete_telegram_login_data=lambda: calls.append(("delete",)),
-        start_telegram_login=lambda received, language_id=None: calls.append(("start", received, language_id))
-        or request,
+        start_telegram_login=lambda received, language_id=None: (
+            calls.append(("start", received, language_id)) or request
+        ),
         complete_telegram_login=lambda received, code, password="", language_id=None: calls.append(
             ("complete", received, code, password, language_id)
         ),
-        list_telegram_channel_videos_authenticated=lambda value,
-        received,
-        limit=50,
-        before_post_id="",
-        search="",
-        language_id=None: calls.append(
-            ("list", value, received, limit, before_post_id, search, language_id)
-        )
-        or videos,
-        list_telegram_channel_items_authenticated=lambda value,
-        received,
-        limit=50,
-        before_post_id="",
-        search="",
-        language_id=None: calls.append(
-            ("items", value, received, limit, before_post_id, search, language_id)
-        )
-        or videos,
-        download_telegram_channel_video=lambda value, post_id, received, language_id=None: calls.append(
-            ("download", value, post_id, received, language_id)
-        )
-        or "video.mp4",
+        list_telegram_channel_videos_authenticated=list_videos,
+        list_telegram_channel_items_authenticated=list_items,
+        download_telegram_channel_video=lambda value, post_id, received, language_id=None: (
+            calls.append(("download", value, post_id, received, language_id)) or "video.mp4"
+        ),
     )
     monkeypatch.setattr(telegram_channel, "_telegram_private_adapter", lambda: adapter)
 
@@ -214,12 +206,18 @@ def test_authenticated_operations_forward_to_private_adapter(monkeypatch) -> Non
     telegram_channel.delete_telegram_login_data()
     assert telegram_channel.start_telegram_login(config, language_id="en") == request
     telegram_channel.complete_telegram_login(request, "12345", password="secret", language_id="en")
-    assert telegram_channel.list_telegram_channel_videos_authenticated(
-        "https://t.me/demo", config, limit=10, before_post_id="99", search="demo", language_id="en"
-    ) == videos
-    assert telegram_channel.list_telegram_channel_items_authenticated(
-        "https://t.me/demo", config, limit=10, before_post_id="99", search="demo", language_id="en"
-    ) == videos
+    assert (
+        telegram_channel.list_telegram_channel_videos_authenticated(
+            "https://t.me/demo", config, limit=10, before_post_id="99", search="demo", language_id="en"
+        )
+        == videos
+    )
+    assert (
+        telegram_channel.list_telegram_channel_items_authenticated(
+            "https://t.me/demo", config, limit=10, before_post_id="99", search="demo", language_id="en"
+        )
+        == videos
+    )
     assert telegram_channel.download_telegram_channel_video("https://t.me/demo", "1", config, language_id="en") == (
         "video.mp4"
     )
@@ -275,14 +273,17 @@ def test_authenticated_download_forwards_supported_progress_and_cancel_callbacks
     adapter = SimpleNamespace(download_telegram_channel_video=download)
     monkeypatch.setattr(telegram_channel, "_telegram_private_adapter", lambda: adapter)
 
-    assert telegram_channel.download_telegram_channel_video(
-        "https://t.me/demo",
-        "1",
-        config,
-        progress_callback=progress,
-        cancel_callback=cancelled,
-        language_id="en",
-    ) == "video.mp4"
+    assert (
+        telegram_channel.download_telegram_channel_video(
+            "https://t.me/demo",
+            "1",
+            config,
+            progress_callback=progress,
+            cancel_callback=cancelled,
+            language_id="en",
+        )
+        == "video.mp4"
+    )
     assert calls == [
         ("download", True, True, "en"),
         ("progress-callback", {"status": "downloading"}),

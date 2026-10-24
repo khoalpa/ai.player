@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterable
 from html import escape as html_escape
 from urllib.parse import parse_qs, urlparse
 
-from ai_player.services.youtube_channel import is_youtube_channel_url, is_youtube_playlist_url
+from ai_player.adapters.sources.youtube_channel import is_youtube_channel_url, is_youtube_playlist_url
 
 CHANNEL_MEDIA_FILTERS = {"all", "video", "photo", "document", "audio", "text", "blacklist"}
 

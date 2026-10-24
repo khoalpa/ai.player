@@ -4,15 +4,15 @@ from dataclasses import replace
 
 import pytest
 
-from ai_player.core.config import AppConfig
-from ai_player.services import translation_runtime
-from ai_player.services.workflow_cache import clear_workflow_text_cache
+from ai_player.adapters.storage.workflow_cache import clear_workflow_text_cache
+from ai_player.configuration import AppConfig
+from ai_player.runtime import translation_runtime
 
 
 def test_translation_runtime_key_normalizes_provider() -> None:
     key = translation_runtime.translation_runtime_key(AppConfig(translator_provider="ct2"))
 
-    assert key.provider == "nllb_ct2"
+    assert key.provider == "nllb"
 
 
 @pytest.mark.parametrize(

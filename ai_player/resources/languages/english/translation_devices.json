@@ -2,15 +2,15 @@
   "options": [
     {
       "value": "auto",
-      "label": "Auto"
-    },
-    {
-      "value": "cpu",
-      "label": "CPU"
+      "label": "Auto — prefer GPU, fall back to CPU"
     },
     {
       "value": "cuda",
       "label": "CUDA"
+    },
+    {
+      "value": "cpu",
+      "label": "CPU"
     }
   ]
 }

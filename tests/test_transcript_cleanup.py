@@ -10,9 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_player.core.config import AppConfig
-from ai_player.services import transcript_cleanup
-from ai_player.services.workflow_cache import clear_workflow_text_cache
+from ai_player.adapters.ai import transcript_cleanup
+from ai_player.adapters.storage.workflow_cache import clear_workflow_text_cache
+from ai_player.configuration import AppConfig
 
 REGRESSION_CASES = json.loads(
     (Path(__file__).parent / "fixtures" / "transcript_cleanup_regression.json").read_text(encoding="utf-8")
@@ -67,7 +67,7 @@ def test_clean_many_uses_batch_json_response(monkeypatch) -> None:
 
     def fake_call(prompt: str, provider: str, config: AppConfig) -> str:
         prompts.append(prompt)
-        assert provider == "ollama"
+        assert provider == "groq"
         return '["Xin chào", "Tạm biệt"]'
 
     monkeypatch.setattr(transcript_cleanup, "_call_cleanup_provider", fake_call)
@@ -115,7 +115,9 @@ def test_clean_many_falls_back_when_batch_shape_is_wrong(monkeypatch) -> None:
         return "Câu hai"
 
     monkeypatch.setattr(transcript_cleanup, "_call_cleanup_provider", fake_call)
-    cleaner = transcript_cleanup.TranscriptCleaner(AppConfig(transcript_cleanup_mode="light"))
+    cleaner = transcript_cleanup.TranscriptCleaner(
+        AppConfig(transcript_cleanup_mode="light", transcript_cleanup_api_key="failure-test")
+    )
 
     assert cleaner.clean_many(["câu một", "câu hai"], "vi") == ["Câu một", "Câu hai"]
     assert len(calls) == 3
@@ -135,9 +137,7 @@ def test_clean_many_falls_back_to_single_cleanup_when_batch_json_is_invalid(monk
     monkeypatch.setattr(transcript_cleanup, "_call_cleanup_provider", fake_call)
     cleaner = transcript_cleanup.TranscriptCleaner(AppConfig(transcript_cleanup_mode="strong"))
 
-    result = cleaner.clean_many(
-        ["hom nay minh demo n l l b", "open ai api key khong nen de trong file cau hinh"], "vi"
-    )
+    result = cleaner.clean_many(["hom nay minh demo n l l b", "open ai api key khong nen de trong file cau hinh"], "vi")
 
     assert result == [
         "Hôm nay mình demo NLLB",
@@ -151,9 +151,11 @@ def test_cleanup_failure_logs_once_and_returns_original(monkeypatch, caplog) -> 
         raise transcript_cleanup.TranscriptCleanupError("model unavailable")
 
     monkeypatch.setattr(transcript_cleanup, "_call_cleanup_provider", raise_error)
-    cleaner = transcript_cleanup.TranscriptCleaner(AppConfig(transcript_cleanup_mode="light"))
+    cleaner = transcript_cleanup.TranscriptCleaner(
+        AppConfig(transcript_cleanup_mode="light", transcript_cleanup_api_key="removed-gemini-test")
+    )
 
-    with caplog.at_level(logging.WARNING, logger="ai_player.services.transcript_cleanup"):
+    with caplog.at_level(logging.WARNING, logger="ai_player.adapters.ai.transcript_cleanup"):
         assert cleaner.clean("xin chao", "vi") == "xin chao"
         assert cleaner.clean("tam biet", "vi") == "tam biet"
 
@@ -193,10 +195,10 @@ def test_transcript_cleaner_serializes_stateful_clean_calls(monkeypatch) -> None
         ("mạnh", "strong"),
         ("openai-compatible", "openai"),
         ("groqcloud", "groq"),
-        ("google-gemini", "gemini"),
+        ("google-gemini", "groq"),
         ("openrouter-free", "openrouter"),
         ("hf-router", "huggingface"),
-        ("headless-local", "local"),
+        ("headless-local", "groq"),
     ],
 )
 def test_cleanup_aliases(value: str, expected: str) -> None:
@@ -212,7 +214,7 @@ def test_cleanup_aliases(value: str, expected: str) -> None:
 @pytest.mark.parametrize(
     ("provider", "url", "model"),
     [
-        ("groq", "https://api.groq.com/openai/v1/chat/completions", "llama-3.1-8b-instant"),
+        ("groq", "https://api.groq.com/openai/v1/chat/completions", "openai/gpt-oss-20b"),
         ("openrouter", "https://openrouter.ai/api/v1/chat/completions", "openrouter/free"),
         ("huggingface", "https://router.huggingface.co/v1/chat/completions", "meta-llama/Llama-3.1-8B-Instruct"),
     ],
@@ -246,61 +248,10 @@ def test_online_openai_compatible_cleanup_providers_use_provider_defaults(
     assert kwargs["timeout"] == 12.0
 
 
-def test_cleanup_provider_defaults_replace_stale_provider_base_and_model(monkeypatch) -> None:
-    calls: list[dict[str, object]] = []
-
-    def fake_post(*args, **kwargs):
-        calls.append({"args": args, "kwargs": kwargs})
-        return FakeResponse({"candidates": [{"content": {"parts": [{"text": "Xin chÃƒÂ o."}]}}]})
-
-    monkeypatch.setattr(transcript_cleanup.requests, "post", fake_post)
-    config = AppConfig(
-        transcript_cleanup_provider="gemini",
-        transcript_cleanup_model="openrouter/free",
-        transcript_cleanup_api_base="https://api.groq.com/openai/v1",
-        transcript_cleanup_api_key="gemini-key",
-    )
-
-    transcript_cleanup._call_cleanup_provider("raw prompt", "gemini", config)
-
-    assert calls[0]["args"] == (
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
-    )
-
-
-def test_gemini_cleanup_uses_generate_content_endpoint(monkeypatch) -> None:
-    calls: list[dict[str, object]] = []
-
-    def fake_post(*args, **kwargs):
-        calls.append({"args": args, "kwargs": kwargs})
-        return FakeResponse({"candidates": [{"content": {"parts": [{"text": "Xin chÃ o."}]}}]})
-
-    monkeypatch.setattr(transcript_cleanup.requests, "post", fake_post)
-    config = AppConfig(
-        transcript_cleanup_provider="gemini",
-        transcript_cleanup_model="",
-        transcript_cleanup_api_base="",
-        transcript_cleanup_api_key="gemini-key",
-        transcript_cleanup_timeout_seconds=20,
-    )
-
-    result = transcript_cleanup._call_cleanup_provider("raw prompt", "gemini", config)
-
-    assert result == "Xin chÃ o."
-    assert calls[0]["args"] == (
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
-    )
-    kwargs = calls[0]["kwargs"]
-    assert kwargs["headers"] == {"Content-Type": "application/json", "X-goog-api-key": "gemini-key"}
-    assert kwargs["json"]["contents"] == [{"parts": [{"text": "raw prompt"}]}]
-    assert kwargs["json"]["generationConfig"] == {"temperature": 0.1}
-    assert kwargs["timeout"] == 20
-
-
 def test_online_cleanup_provider_detection() -> None:
     assert transcript_cleanup.is_online_transcript_cleanup_provider("groq") is True
     assert transcript_cleanup.is_online_transcript_cleanup_provider("gemini") is True
-    assert transcript_cleanup.is_online_transcript_cleanup_provider("local") is False
+    assert transcript_cleanup.is_online_transcript_cleanup_provider("local") is True
 
 
 def test_timeout_seconds_rejects_non_finite_values() -> None:

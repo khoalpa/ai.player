@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-from ai_player.core import runtime_catalog as catalog
-from ai_player.core.config import DEFAULT_PERFORMANCE_PRESET, AppConfig
-from ai_player.services import tts_base
-from ai_player.services.tts_voices import voice_gender
+from ai_player.adapters.tts import tts_base
+from ai_player.adapters.tts.tts_voices import voice_gender
+from ai_player.configuration import DEFAULT_PERFORMANCE_PRESET, AppConfig
+from ai_player.runtime import runtime_catalog as catalog
 from scripts.compare_performance_presets import compare_presets
 
 
@@ -33,13 +33,8 @@ def test_available_translation_provider_options_uses_language_pack_labels() -> N
     english = catalog.available_translation_provider_options("en")
     vietnamese = catalog.available_translation_provider_options("vi")
 
-    assert [option.id for option in english] == [
-        "nllb_ct2",
-        "nllb",
-        "none",
-    ]
+    assert [option.id for option in english] == ["nllb", "none"]
     assert [option.id for option in catalog.available_translation_provider_options("en", include_advanced=True)] == [
-        "nllb_ct2",
         "nllb",
         "none",
         "azure_translator",
@@ -54,7 +49,7 @@ def test_transcript_cleanup_provider_options_are_primary_profiles_only() -> None
     english = catalog.available_dropdown_options("transcript_cleanup_providers", language_id="en")
     vietnamese = catalog.available_dropdown_options("transcript_cleanup_providers", language_id="vi")
 
-    expected = ["ollama", "local", "groq", "gemini"]
+    expected = ["groq"]
     assert [option.value for option in english] == expected
     assert [option.value for option in vietnamese] == expected
     assert "openrouter" not in {option.value for option in english}
@@ -86,21 +81,12 @@ def test_load_gui_translations_has_fallback_language() -> None:
     assert isinstance(translations["vi"], dict)
 
 
-def test_available_local_llm_options_skips_tts_gguf(monkeypatch, tmp_path) -> None:
-    llm = tmp_path / "Qwen"
-    llm.mkdir()
-    (llm / "config.json").write_text("{}", encoding="utf-8")
-    (llm / "tokenizer.json").write_text("{}", encoding="utf-8")
-    (llm / "model.safetensors").write_text("", encoding="utf-8")
-    tts = tmp_path / "tts" / "vieneu.gguf"
-    tts.parent.mkdir()
-    tts.write_text("", encoding="utf-8")
-    monkeypatch.setattr(catalog, "TRANSCRIPT_CLEANUP_MODELS_PATH", tmp_path)
-
+def test_available_local_llm_options_only_lists_supported_online_models() -> None:
     options = catalog.available_local_llm_options()
 
-    assert "Qwen" in [option.name for option in options]
-    assert catalog.RuntimeOption("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite") in options
+    assert options == [
+        catalog.RuntimeOption("openai/gpt-oss-20b", "Groq GPT OSS 20B"),
+    ]
     assert catalog.RuntimeOption("openrouter/free", "OpenRouter Free Router") not in options
     assert catalog.RuntimeOption("meta-llama/Llama-3.1-8B-Instruct", "HF Llama 3.1 8B Instruct") not in options
 
@@ -138,7 +124,7 @@ def test_available_ocr_models_scans_tessdata_dirs(monkeypatch, tmp_path) -> None
 
     tessdata_option = catalog.RuntimeOption(str(tessdata.resolve()), "tessdata (en, vi)")
     assert tessdata_option in options
-    assert catalog.RuntimeOption("microsoft/trocr-base-handwritten", "HF TrOCR base handwritten") in options
+    assert all("trocr" not in option.id.lower() for option in options)
 
 
 def test_available_speaker_gender_models_scans_audio_classifiers(monkeypatch, tmp_path) -> None:
@@ -174,13 +160,13 @@ def test_resolve_preset_settings_expands_project_root_placeholder() -> None:
     settings = catalog._resolve_preset_settings(
         {
             "local_translation_model": "${PROJECT_ROOT}\\models\\translation\\demo",
-            "vieneu_tts_model_name": "models\\tts\\demo.gguf",
+            "vieneu_tts_model_name": "models\\tts\\demo-v3",
             "tts_voice": "vi-VN-HoaiMyNeural",
         }
     )
 
     assert settings["local_translation_model"] == str(catalog.PROJECT_ROOT / "models" / "translation" / "demo")
-    assert settings["vieneu_tts_model_name"] == str(catalog.PROJECT_ROOT / "models" / "tts" / "demo.gguf")
+    assert settings["vieneu_tts_model_name"] == str(catalog.PROJECT_ROOT / "models" / "tts" / "demo-v3")
     assert settings["tts_voice"] == "vi-VN-HoaiMyNeural"
 
 
@@ -304,7 +290,7 @@ def test_default_realtime_preset_disables_expensive_reference_features() -> None
     assert presets["balanced"]["original_audio_voice_filter"] is False
     assert presets["balanced"]["translation_num_beams"] == 1
     assert presets["online_lite"]["asr_provider"] == "faster_whisper"
-    assert presets["online_lite"]["translator_provider"] == "nllb_ct2"
+    assert presets["online_lite"]["translator_provider"] == "nllb"
     assert presets["online_lite"]["transcript_cleanup_provider"] == "groq"
     assert presets["online_lite"]["local_translation_offline"] is True
     assert presets["quality"]["dubbing_auto_match_audio"] is True
@@ -318,10 +304,10 @@ def test_vieneu_defaults_use_southern_voice() -> None:
 
     assert config.tts_voice == "Thục Đoan"
     assert config.tts_female_voice == "Thục Đoan"
-    assert config.tts_male_voice == "Xuân Vĩnh"
+    assert config.tts_male_voice == "Minh Triết"
     assert presets["balanced"]["tts_voice"] == "Thục Đoan"
     assert presets["balanced"]["tts_female_voice"] == "Thục Đoan"
-    assert presets["balanced"]["tts_male_voice"] == "Xuân Vĩnh"
+    assert presets["balanced"]["tts_male_voice"] == "Minh Triết"
 
 
 def test_performance_preset_comparison_orders_latency_and_quality() -> None:

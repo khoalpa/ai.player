@@ -272,6 +272,20 @@ Copy-Item -LiteralPath $AppDist -Destination $PortableRoot -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "README.md") -Destination $PortableRoot -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "LICENSE") -Destination $PortableRoot -Force
 
+# Bootstrap the separate TTS environment on the destination machine; venvs are not relocatable.
+$PortableScripts = Join-Path $PortableRoot "scripts"
+New-Item -ItemType Directory -Force -Path $PortableScripts | Out-Null
+foreach ($Name in @("setup_vieneu_runtime.ps1", "prepare_vieneu_runtime.py", "download_vieneu_tts_models.ps1", "download_vieneu_v3.py")) {
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $Name) -Destination $PortableScripts -Force
+}
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "requirements-vieneu.txt") -Destination $PortableRoot -Force
+$RuntimeSources = Get-Content -LiteralPath (Join-Path $PSScriptRoot "vieneu_runtime_sources.json") -Raw | ConvertFrom-Json
+foreach ($Relative in $RuntimeSources) {
+    $Destination = Join-Path $PortableRoot ("ai_player\" + $Relative)
+    New-Item -ItemType Directory -Force -Path (Split-Path $Destination) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $ProjectRoot ("ai_player\" + $Relative)) -Destination $Destination -Force
+}
+
 $PortableExe = Join-Path $PortableRoot "AI Player\AI Player.exe"
 if ($RequireSignature) {
     if (-not (Test-Path $PortableExe)) {

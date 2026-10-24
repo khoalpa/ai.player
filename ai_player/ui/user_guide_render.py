@@ -15,7 +15,4 @@ def html_list(items: Iterable[str], *, ordered: bool = False) -> str:
 
 
 def table_rows(rows: Iterable[Sequence[str]]) -> str:
-    return "\n".join(
-        "<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>"
-        for row in rows
-    )
+    return "\n".join("<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>" for row in rows)

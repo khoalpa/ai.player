@@ -253,3 +253,17 @@ Use this file to keep a short, build-specific record before sharing a Windows bu
 - Record CPU/GPU details when a smoke run uses real AI models.
 - Mark unavailable hardware explicitly instead of treating it as a failure.
 - Keep generated media paths in `data/tmp` or another ignored location.
+# VieNeu v3 Turbo verification — 2026-10-24
+
+- SDK: `vieneu==3.8.3`, isolated in `.venv-vieneu`; CPU ONNX and CUDA PyTorch dependencies pass `pip check`.
+- Pinned model and codec bundles passed SHA-256 verification. CPU and CUDA each synthesized two Vietnamese voices
+  at 48 kHz with an empty Hugging Face cache and socket calls denied. The checks recorded zero network attempts.
+- The application provider synthesized a 48 kHz clip using the saved v3 configuration.
+- Fast suite: 771 passed. Window/shutdown suite: 133 passed, one theme button-size test failed; that test passed
+  with the pre-existing theme wrapper disabled in the test process. Four selected release/audio export tests passed.
+- A new PyInstaller build at `data/tmp/vieneu-v3-dist/AI Player` stayed running for 12 seconds. Its unpacked TTS
+  module also synthesized offline at 48 kHz. The packaged archive contains the v3 adapter and no legacy VieNeu engines.
+- Legacy tracked source/sample assets were removed. Permanent deletion of the remaining old model folders and
+  bytecode caches was rejected by automatic approval review (`blocked by policy`).
+  `scripts/remove_legacy_vieneu.ps1` prepares a bounded cleanup after verifying the v3 offline report; it has not been executed.
+

@@ -4,13 +4,11 @@ import asyncio
 import contextlib
 import json
 import platform
+import time
 from pathlib import Path
 from typing import Any
 
-from ai_player.core.config import CONFIG_DIR, RUNTIME_DIR
-from ai_player.core.i18n import ui_text
-from ai_player.core.secret_store import SecretStoreError, protect_text, reveal_text
-from ai_player.services.telegram_channel import (
+from ai_player.adapters.sources.telegram_channel import (
     TelegramChannelError,
     TelegramChannelVideo,
     TelegramLoginConfig,
@@ -22,6 +20,9 @@ from ai_player.services.telegram_channel import (
     _safe_filename,
     _truncate,
 )
+from ai_player.adapters.storage.secret_store import SecretStoreError, protect_text, reveal_text
+from ai_player.configuration import CONFIG_DIR, RUNTIME_DIR
+from ai_player.core.i18n import ui_text
 
 PRIVATE_TELEGRAM_CONFIG_DIR = CONFIG_DIR / "private" / "telegram"
 TELEGRAM_LOGIN_CONFIG_PATH = PRIVATE_TELEGRAM_CONFIG_DIR / "telegram_login.json"
@@ -150,10 +151,20 @@ def download_telegram_channel_video(
     post_id: str,
     config: TelegramLoginConfig,
     *,
+    progress_callback=None,
+    cancel_callback=None,
     language_id: str | None = None,
 ) -> str:
     try:
-        return _run_async(_download_authenticated_video(value, post_id, config))
+        return _run_async(
+            _download_authenticated_video(
+                value,
+                post_id,
+                config,
+                progress_callback=progress_callback,
+                cancel_callback=cancel_callback,
+            )
+        )
     except TelegramChannelError:
         raise
     except Exception as exc:
@@ -264,7 +275,14 @@ async def _list_authenticated_items(
         await client.disconnect()
 
 
-async def _download_authenticated_video(value: str, post_id: str, config: TelegramLoginConfig) -> str:
+async def _download_authenticated_video(
+    value: str,
+    post_id: str,
+    config: TelegramLoginConfig,
+    *,
+    progress_callback=None,
+    cancel_callback=None,
+) -> str:
     channel = _channel_name(value)
     message_id = int(str(post_id).strip())
     client = _telegram_client(config)
@@ -278,11 +296,54 @@ async def _download_authenticated_video(value: str, post_id: str, config: Telegr
         TELEGRAM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         output_path = TELEGRAM_CACHE_DIR / f"{_safe_filename(channel)}-{message_id}{_message_video_suffix(message)}"
         if output_path.exists() and output_path.stat().st_size > 0:
+            _emit_download_progress(
+                progress_callback,
+                status="cached",
+                output_path=output_path,
+                downloaded_bytes=output_path.stat().st_size,
+                total_bytes=output_path.stat().st_size,
+            )
             return str(output_path)
         partial_path = output_path.with_suffix(f"{output_path.suffix}.part")
         if partial_path.exists():
             partial_path.unlink()
-        downloaded = await client.download_media(message, file=str(partial_path))
+        total_bytes = _message_file_size(message)
+        started_at = time.monotonic()
+        _emit_download_progress(
+            progress_callback,
+            status="downloading",
+            output_path=output_path,
+            downloaded_bytes=0,
+            total_bytes=total_bytes,
+        )
+
+        def report_progress(received: int, total: int) -> None:
+            if callable(cancel_callback) and cancel_callback():
+                raise _TelegramDownloadCancelled()
+            elapsed = max(0.001, time.monotonic() - started_at)
+            received = max(0, int(received or 0))
+            total = max(0, int(total or total_bytes or 0))
+            speed = received / elapsed
+            remaining = max(0, total - received)
+            _emit_download_progress(
+                progress_callback,
+                status="downloading",
+                output_path=output_path,
+                downloaded_bytes=received,
+                total_bytes=total,
+                speed=speed,
+                eta=remaining / speed if speed > 0 and total else None,
+            )
+
+        try:
+            downloaded = await client.download_media(
+                message,
+                file=str(partial_path),
+                progress_callback=report_progress,
+            )
+        except _TelegramDownloadCancelled:
+            partial_path.unlink(missing_ok=True)
+            raise
         downloaded_path = Path(str(downloaded or partial_path))
         if not downloaded_path.exists() or downloaded_path.stat().st_size <= 0:
             raise TelegramChannelError("Telegram download did not create a video file.")
@@ -290,6 +351,37 @@ async def _download_authenticated_video(value: str, post_id: str, config: Telegr
         return str(output_path)
     finally:
         await client.disconnect()
+
+
+class _TelegramDownloadCancelled(RuntimeError):
+    pass
+
+
+def _emit_download_progress(
+    callback,
+    *,
+    status: str,
+    output_path: Path,
+    downloaded_bytes: int,
+    total_bytes: int,
+    speed: float | None = None,
+    eta: float | None = None,
+) -> None:
+    if not callable(callback):
+        return
+    callback(
+        {
+            "status": status,
+            "provider": "telegram",
+            "quality": "original",
+            "cache_dir": str(output_path.parent),
+            "filename": str(output_path),
+            "downloaded_bytes": max(0, int(downloaded_bytes or 0)),
+            "total_bytes": max(0, int(total_bytes or 0)),
+            "speed": speed,
+            "eta": eta,
+        }
+    )
 
 
 def _telegram_client(config: TelegramLoginConfig):

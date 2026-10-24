@@ -10,9 +10,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from ai_player.configuration import DEFAULT_PERFORMANCE_PRESET  # noqa: E402
 from ai_player.core.cli_encoding import prefer_utf8_stdio  # noqa: E402
-from ai_player.core.config import DEFAULT_PERFORMANCE_PRESET  # noqa: E402
-from ai_player.core.runtime_catalog import available_dropdown_options, load_performance_presets  # noqa: E402
+from ai_player.runtime.runtime_catalog import available_dropdown_options, load_performance_presets  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -83,7 +83,7 @@ def _quality_score(settings: dict[str, object]) -> float:
 
     tts_provider = _lower(settings.get("tts_provider"))
     tts_mode = _lower(settings.get("vieneu_tts_mode"))
-    if tts_provider == "vieneu" and tts_mode == "standard":
+    if tts_provider == "vieneu" and tts_mode == "v3turbo":
         score += 18
     elif tts_provider == "vieneu":
         score += 12
@@ -135,7 +135,7 @@ def _latency_score(settings: dict[str, object]) -> float:
 
     tts_provider = _lower(settings.get("tts_provider"))
     tts_mode = _lower(settings.get("vieneu_tts_mode"))
-    if tts_provider == "vieneu" and tts_mode == "standard":
+    if tts_provider == "vieneu" and tts_mode == "v3turbo":
         score += 5
     elif tts_provider == "vieneu":
         score += 2

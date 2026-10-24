@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ai_player.ui.features.context import WindowContext
+
 from dataclasses import dataclass
 from typing import Any
+
+from ai_player.application.jobs import TERMINAL_STATUSES
 
 
 @dataclass(frozen=True)
@@ -11,7 +18,7 @@ class BackgroundTask:
     detail: str
 
 
-def collect_background_tasks(owner: Any) -> tuple[BackgroundTask, ...]:
+def collect_background_tasks(owner: WindowContext) -> tuple[BackgroundTask, ...]:
     tasks = [
         _controller_task(owner, "Provider preview", "_provider_preview"),
         _controller_task(owner, "Runtime preloading", "_runtime_warmup"),
@@ -26,7 +33,16 @@ def collect_background_tasks(owner: Any) -> tuple[BackgroundTask, ...]:
         _worker_task(owner, "Playback compatibility", "_playback_compat_worker"),
         _offline_model_task(owner),
     ]
-    return tuple(task for task in tasks if task is not None)
+    current = {task.name: task for task in tasks if task is not None}
+    manager = owner.get("job_manager", None)
+    if manager is not None:
+        for job in manager.snapshots():
+            if job.status in TERMINAL_STATUSES:
+                continue
+            previous = current.get(job.name)
+            detail = job.detail or (previous.detail if previous else "")
+            current[job.name] = BackgroundTask(job.name, "RUNNING", detail)
+    return tuple(current.values())
 
 
 @dataclass(frozen=True)
@@ -35,7 +51,7 @@ class BackgroundTaskStopSummary:
     failed: tuple[str, ...] = ()
 
 
-def stop_background_tasks(owner: Any, *, wait_ms: int = 1500) -> BackgroundTaskStopSummary:
+def stop_background_tasks(owner: WindowContext, *, wait_ms: int = 1500) -> BackgroundTaskStopSummary:
     active_names = {task.name for task in collect_background_tasks(owner)}
     stopped = 0
     failed: list[str] = []
@@ -56,8 +72,8 @@ def format_background_tasks(tasks: tuple[BackgroundTask, ...], *, idle_text: str
     return "\n".join(f"{task.name}: {task.status} - {task.detail}" for task in active)
 
 
-def _controller_task(owner: Any, name: str, attr_name: str) -> BackgroundTask | None:
-    controller = getattr(owner, attr_name, None)
+def _controller_task(owner: WindowContext, name: str, attr_name: str) -> BackgroundTask | None:
+    controller = owner.get(attr_name, None)
     is_running = getattr(controller, "is_running", None)
     if not callable(is_running) or not is_running():
         return None
@@ -65,8 +81,8 @@ def _controller_task(owner: Any, name: str, attr_name: str) -> BackgroundTask | 
     return BackgroundTask(name, "RUNNING", detail)
 
 
-def _video_url_task(owner: Any) -> BackgroundTask | None:
-    controller = getattr(owner, "_video_url", None)
+def _video_url_task(owner: WindowContext) -> BackgroundTask | None:
+    controller = owner.get("_video_url", None)
     is_opening = getattr(controller, "is_opening", None)
     if not callable(is_opening) or not is_opening():
         return None
@@ -74,39 +90,39 @@ def _video_url_task(owner: Any) -> BackgroundTask | None:
     return BackgroundTask("URL/cache loading", "RUNNING", detail)
 
 
-def _meeting_task(owner: Any) -> BackgroundTask | None:
-    worker = getattr(owner, "_meeting_worker", None)
+def _meeting_task(owner: WindowContext) -> BackgroundTask | None:
+    worker = owner.get("_meeting_worker", None)
     if not _worker_running(worker):
         return None
-    elapsed = str(getattr(owner, "_meeting_elapsed", "") or "").strip()
+    elapsed = str(owner.get("_meeting_elapsed", "") or "").strip()
     detail = _stored_task_detail(owner, "Meeting recorder")
     detail = detail or (f"Elapsed {elapsed}" if elapsed else _worker_detail(worker))
     return BackgroundTask("Meeting recorder", "RUNNING", detail)
 
 
-def _source_filter_task(owner: Any) -> BackgroundTask | None:
-    worker = getattr(owner, "_source_filter_worker", None)
+def _source_filter_task(owner: WindowContext) -> BackgroundTask | None:
+    worker = owner.get("_source_filter_worker", None)
     if not _worker_running(worker):
         return None
-    mode = str(getattr(owner, "_source_filter_worker_mode", "") or "").strip()
-    model = str(getattr(owner, "_source_filter_worker_model", "") or "").strip()
+    mode = str(owner.get("_source_filter_worker_mode", "") or "").strip()
+    model = str(owner.get("_source_filter_worker_model", "") or "").strip()
     detail = _stored_task_detail(owner, "Source voice filter")
     detail = detail or " / ".join(part for part in (mode, model) if part) or _worker_detail(worker)
     return BackgroundTask("Source voice filter", "RUNNING", detail)
 
 
-def _offline_model_task(owner: Any) -> BackgroundTask | None:
-    process = getattr(owner, "_offline_model_process", None)
+def _offline_model_task(owner: WindowContext) -> BackgroundTask | None:
+    process = owner.get("_offline_model_process", None)
     if process is None:
         return None
-    key = str(getattr(owner, "_offline_model_running_key", "") or "").strip()
+    key = str(owner.get("_offline_model_running_key", "") or "").strip()
     detail = _stored_task_detail(owner, "Offline model download")
     detail = detail or (f"Downloading {key}" if key else "Download script is running.")
     return BackgroundTask("Offline model download", "RUNNING", detail)
 
 
-def _worker_task(owner: Any, name: str, attr_name: str) -> BackgroundTask | None:
-    worker = getattr(owner, attr_name, None)
+def _worker_task(owner: WindowContext, name: str, attr_name: str) -> BackgroundTask | None:
+    worker = owner.get(attr_name, None)
     if not _worker_running(worker):
         return None
     return BackgroundTask(name, "RUNNING", _stored_task_detail(owner, name) or _worker_detail(worker))
@@ -133,14 +149,14 @@ def _controller_detail(controller: Any) -> str:
     return " ".join(str(detail() or "").split())
 
 
-def _stored_task_detail(owner: Any, name: str) -> str:
-    details = getattr(owner, "_background_task_details", {})
+def _stored_task_detail(owner: WindowContext, name: str) -> str:
+    details = owner.get("_background_task_details", {})
     if not isinstance(details, dict):
         return ""
     return " ".join(str(details.get(name) or "").split())
 
 
-def _task_stoppers(owner: Any, wait_ms: int):
+def _task_stoppers(owner: WindowContext, wait_ms: int):
     return (
         ("Provider preview", lambda: _call_owner_stop(owner, "_stop_provider_preview", wait_ms=wait_ms)),
         ("Runtime preloading", lambda: _call_owner_stop(owner, "_stop_runtime_warmup", wait_ms=wait_ms)),
@@ -166,8 +182,8 @@ def _task_stoppers(owner: Any, wait_ms: int):
     )
 
 
-def _call_owner_stop(owner: Any, method_name: str, *args: object, wait_ms: int | None = None) -> bool:
-    method = getattr(owner, method_name, None)
+def _call_owner_stop(owner: WindowContext, method_name: str, *args: object, wait_ms: int | None = None) -> bool:
+    method = owner.get(method_name, None)
     if not callable(method):
         return False
     try:

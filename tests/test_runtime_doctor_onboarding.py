@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ai_player.core.runtime_diagnostics import DiagnosticItem, DiagnosticSection, RuntimeDiagnostics
+from ai_player.runtime.runtime_diagnostics import DiagnosticItem, DiagnosticSection, RuntimeDiagnostics
 from ai_player.ui import runtime_doctor_onboarding
 
 

@@ -35,9 +35,10 @@ The script writes:
 - `data\tmp\dependency-audit\pip-audit-requirements.json`
 
 By default the script ignores the accepted advisory `CVE-2025-69872`, which is a
-`diskcache` finding pulled in by `llama-cpp-python`. AI Player depends on
-`llama-cpp-python` for offline VieNeu-TTS GGUF models and optional local GGUF
-transcript cleanup. The application does not configure or read shared
+`diskcache` finding pulled in by the optional `local-gguf` extra's
+`llama-cpp-python` dependency for local GGUF transcript cleanup. VieNeu v3 Turbo
+uses a separate environment and no longer requires this dependency.
+The application does not configure or read shared
 user-writable `diskcache` cache directories through `llama-cpp-python`; keep
 model and runtime cache folders under the per-user project/runtime directories.
 Remove the ignore once an upstream fixed `diskcache` release is available.

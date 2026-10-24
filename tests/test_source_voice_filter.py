@@ -9,10 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from ai_player.services import source_voice_filter as filter_service
-from ai_player.services.ffmpeg import ffmpeg_executable
-from ai_player.workers import player_window_workers
-from ai_player.workers.player_window_workers import (
+from ai_player.adapters import workflow_bindings
+from ai_player.adapters.media import source_voice_filter as filter_service
+from ai_player.adapters.media.ffmpeg import ffmpeg_executable
+from ai_player.application.workflows import sources as player_window_workers
+from ai_player.application.workflows.sources import (
     SourceAudioFilterWorker,
     _format_process_exception,
     _process_executable_name,
@@ -288,9 +289,13 @@ def test_source_filter_worker_resolves_command_before_popen(monkeypatch, tmp_pat
         def poll(self) -> int:
             return self.returncode
 
-    monkeypatch.setattr(player_window_workers, "resolve_source_voice_filter_command", fake_resolve)
+    monkeypatch.setattr(
+        "ai_player.adapters.media.source_voice_filter.resolve_source_voice_filter_command", fake_resolve
+    )
     monkeypatch.setattr(player_window_workers.subprocess, "Popen", FakeProcess)
-    worker = SourceAudioFilterWorker("source.mp4", tmp_path / "filtered.mp4", mode="ai")
+    worker = SourceAudioFilterWorker(
+        "source.mp4", tmp_path / "filtered.mp4", mode="ai", dependencies=workflow_bindings.sources()
+    )
 
     worker._run_process(["demucs", "-n", "htdemucs"])
 
@@ -354,7 +359,7 @@ def test_source_filter_process_error_keeps_tail_of_long_stderr() -> None:
 
 
 def test_source_filter_process_error_names_demucs_wrapper() -> None:
-    command = ["python", "-m", "ai_player.services.demucs_runner", "-n", "htdemucs"]
+    command = ["python", "-m", "ai_player.adapters.media.demucs_runner", "-n", "htdemucs"]
 
     assert _process_executable_name(command) == "demucs"
 

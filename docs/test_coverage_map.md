@@ -14,6 +14,13 @@ protect them.
 
 ## Covered Workflows
 
+- Architecture, configuration migrations, jobs and runtime packaging:
+  - `tests/test_architecture.py`
+  - `tests/test_application_jobs.py`
+  - `tests/test_qt_workflow_thread.py`
+  - `tests/test_settings_schema.py`
+  - `tests/test_packaged_runtime_sources.py`
+  - `tests/test_vieneu_profile.py`
 - App startup and UI wiring:
   - `tests/test_player_window_smoke.py`
   - `tests/test_ui_clickthrough_smoke.py`
@@ -69,7 +76,8 @@ protect them.
   opening a small document.
 - Real AI model quality is covered by smoke/manual tests, not deterministic unit
   assertions, because model output varies by hardware/runtime.
-- Packaging is smoke-built in CI, but portable app launch remains a manual smoke
-  step before release.
+- CI builds and smoke-launches the Windows package. Actual CPU/CUDA model
+  inference is verified locally with the prepared model bundle; hosted runners
+  do not carry that bundle or a CUDA device.
 - External policy issues such as Windows Application Control, code signing, and
   antivirus reputation need a dedicated release-machine checklist entry.

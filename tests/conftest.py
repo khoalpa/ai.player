@@ -34,7 +34,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 @pytest.fixture(autouse=True)
 def isolated_settings_file(tmp_path, monkeypatch) -> None:
-    from ai_player.core import settings_store
+    from ai_player.adapters.storage import settings_store
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(settings_store, "CONFIG_DIR", config_dir)

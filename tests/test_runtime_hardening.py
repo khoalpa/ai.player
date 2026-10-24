@@ -4,9 +4,9 @@ import sys
 
 import pytest
 
-from ai_player.core import gpu, offline_env, optional_imports
-from ai_player.core.config import AppConfig
-from ai_player.services import runtime_warmup
+from ai_player.configuration import AppConfig
+from ai_player.core import optional_imports
+from ai_player.runtime import gpu, offline_env, runtime_warmup
 
 
 def test_offline_environment_sets_and_restores(monkeypatch) -> None:
@@ -83,32 +83,6 @@ def test_warm_runtime_components_reports_progress_when_dependencies_are_stubbed(
     assert calls[-1].startswith("Preloaded Whisper in ")
 
 
-def test_warm_runtime_components_warms_transcript_cleanup(monkeypatch) -> None:
-    calls: list[str] = []
-
-    class FakeCleaner:
-        def __init__(self, _config: AppConfig) -> None:
-            pass
-
-        def clean(self, text: str, source_language: str | None = None) -> str:
-            calls.append(text)
-            return text
-
-    monkeypatch.setattr(runtime_warmup, "TranscriptCleaner", FakeCleaner)
-    config = AppConfig(
-        runtime_warmup_enabled=True,
-        runtime_warmup_whisper=False,
-        runtime_warmup_translation=False,
-        runtime_warmup_tts=False,
-        transcript_cleanup_mode="light",
-    )
-
-    timings = runtime_warmup.warm_runtime_components(config)
-
-    assert "transcript_cleanup_seconds" in timings
-    assert calls
-
-
 def test_runtime_warmup_stage_detection_skips_empty_configuration() -> None:
     config = AppConfig(
         runtime_warmup_enabled=True,
@@ -164,18 +138,6 @@ def test_warm_runtime_components_keeps_tts_default_off(monkeypatch) -> None:
     )
 
     assert runtime_warmup.warm_runtime_components(config) == {}
-
-
-def test_runtime_warmup_stage_detection_includes_cleanup() -> None:
-    config = AppConfig(
-        runtime_warmup_enabled=True,
-        runtime_warmup_whisper=False,
-        runtime_warmup_translation=False,
-        runtime_warmup_tts=False,
-        transcript_cleanup_mode="light",
-    )
-
-    assert runtime_warmup.has_runtime_warmup_stage(config) is True
 
 
 def test_runtime_warmup_skips_online_cleanup(monkeypatch) -> None:

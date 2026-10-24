@@ -1,20 +1,8 @@
 {
   "options": [
     {
-      "value": "ollama",
-      "label": "Ollama"
-    },
-    {
-      "value": "local",
-      "label": "Local"
-    },
-    {
       "value": "groq",
       "label": "Groq"
-    },
-    {
-      "value": "gemini",
-      "label": "Google Gemini"
     }
   ]
 }

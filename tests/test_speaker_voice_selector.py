@@ -6,10 +6,10 @@ import struct
 import wave
 from pathlib import Path
 
-from ai_player.core.config import INTERNAL_VIENEU_STANDARD_GGUF, AppConfig
-from ai_player.services import audio_matcher
-from ai_player.services import speaker_voice_selector as selector
-from ai_player.services.audio_matcher import AudioProfile
+from ai_player.adapters.ai import speaker_voice_selector as selector
+from ai_player.adapters.media import audio_matcher
+from ai_player.adapters.media.audio_matcher import AudioProfile
+from ai_player.configuration import INTERNAL_VIENEU_V3_PATH, AppConfig
 
 
 class _FakeResponse:
@@ -52,17 +52,17 @@ def test_balanced_selector_uses_gendered_voice(monkeypatch, tmp_path) -> None:
     config = AppConfig(
         dubbing_auto_voice_gender_mode="balanced",
         tts_provider="vieneu",
-        tts_voice="Doan",
-        tts_male_voice="Binh",
-        tts_female_voice="Doan",
-        vieneu_tts_mode="standard",
-        vieneu_tts_model_name=INTERNAL_VIENEU_STANDARD_GGUF,
+        tts_voice="Thục Đoan",
+        tts_male_voice="Thanh Bình",
+        tts_female_voice="Thục Đoan",
+        vieneu_tts_mode="v3turbo",
+        vieneu_tts_model_name=str(INTERNAL_VIENEU_V3_PATH),
     )
 
     decision = selector.VoiceGenderSelector(config).select_voice(tmp_path / "ref.wav", provider="vieneu", config=config)
 
     assert decision.gender == "male"
-    assert decision.voice == "Binh"
+    assert decision.voice == "Thanh Bình"
 
 
 def test_selector_locks_one_voice_per_gender(monkeypatch, tmp_path) -> None:
@@ -126,11 +126,11 @@ def test_stable_selector_waits_for_repeated_gender(monkeypatch, tmp_path) -> Non
     config = AppConfig(
         dubbing_auto_voice_gender_mode="stable",
         tts_provider="vieneu",
-        tts_voice="Binh",
-        tts_male_voice="Binh",
-        tts_female_voice="Doan",
-        vieneu_tts_mode="standard",
-        vieneu_tts_model_name=INTERNAL_VIENEU_STANDARD_GGUF,
+        tts_voice="Thanh Bình",
+        tts_male_voice="Thanh Bình",
+        tts_female_voice="Thục Đoan",
+        vieneu_tts_mode="v3turbo",
+        vieneu_tts_model_name=str(INTERNAL_VIENEU_V3_PATH),
     )
     voice_selector = selector.VoiceGenderSelector(config)
 
@@ -138,9 +138,9 @@ def test_stable_selector_waits_for_repeated_gender(monkeypatch, tmp_path) -> Non
     second = voice_selector.select_voice(tmp_path / "ref2.wav", provider="vieneu", config=config)
 
     assert first.gender == "unknown"
-    assert first.voice == "Binh"
+    assert first.voice == "Thanh Bình"
     assert second.gender == "female"
-    assert second.voice == "Doan"
+    assert second.voice == "Thục Đoan"
 
 
 def test_ai_mode_falls_back_to_pitch_profile(monkeypatch, tmp_path) -> None:
@@ -149,17 +149,17 @@ def test_ai_mode_falls_back_to_pitch_profile(monkeypatch, tmp_path) -> None:
     config = AppConfig(
         dubbing_auto_voice_gender_mode="ai",
         tts_provider="vieneu",
-        tts_voice="Binh",
-        tts_male_voice="Binh",
-        tts_female_voice="Doan",
-        vieneu_tts_mode="standard",
-        vieneu_tts_model_name=INTERNAL_VIENEU_STANDARD_GGUF,
+        tts_voice="Thanh Bình",
+        tts_male_voice="Thanh Bình",
+        tts_female_voice="Thục Đoan",
+        vieneu_tts_mode="v3turbo",
+        vieneu_tts_model_name=str(INTERNAL_VIENEU_V3_PATH),
     )
 
     decision = selector.VoiceGenderSelector(config).select_voice(Path("ref.wav"), provider="vieneu", config=config)
 
     assert decision.gender == "female"
-    assert decision.voice == "Doan"
+    assert decision.voice == "Thục Đoan"
 
 
 def test_huggingface_gender_provider_uses_online_classification(monkeypatch, tmp_path) -> None:
@@ -179,18 +179,18 @@ def test_huggingface_gender_provider_uses_online_classification(monkeypatch, tmp
         speaker_gender_api_key="hf-token",
         speaker_gender_model="audeering/wav2vec2-large-robust-6-ft-age-gender",
         tts_provider="vieneu",
-        tts_voice="Binh",
-        tts_male_voice="Binh",
-        tts_female_voice="Doan",
-        vieneu_tts_mode="standard",
-        vieneu_tts_model_name=INTERNAL_VIENEU_STANDARD_GGUF,
+        tts_voice="Thanh Bình",
+        tts_male_voice="Thanh Bình",
+        tts_female_voice="Thục Đoan",
+        vieneu_tts_mode="v3turbo",
+        vieneu_tts_model_name=str(INTERNAL_VIENEU_V3_PATH),
     )
 
     decision = selector.VoiceGenderSelector(config).select_voice(reference, provider="vieneu", config=config)
 
     assert decision.gender == "female"
     assert decision.confidence == 0.91
-    assert decision.voice == "Doan"
+    assert decision.voice == "Thục Đoan"
     assert decision.profile is not None
     assert decision.profile.detector == "huggingface"
     assert calls[0][0].endswith("/audeering%2Fwav2vec2-large-robust-6-ft-age-gender")
@@ -206,17 +206,17 @@ def test_huggingface_gender_provider_falls_back_when_missing_key(monkeypatch, tm
         speaker_gender_provider="huggingface_gender",
         speaker_gender_api_key="",
         tts_provider="vieneu",
-        tts_voice="Doan",
-        tts_male_voice="Binh",
-        tts_female_voice="Doan",
-        vieneu_tts_mode="standard",
-        vieneu_tts_model_name=INTERNAL_VIENEU_STANDARD_GGUF,
+        tts_voice="Thục Đoan",
+        tts_male_voice="Thanh Bình",
+        tts_female_voice="Thục Đoan",
+        vieneu_tts_mode="v3turbo",
+        vieneu_tts_model_name=str(INTERNAL_VIENEU_V3_PATH),
     )
 
     decision = selector.VoiceGenderSelector(config).select_voice(tmp_path / "ref.wav", provider="vieneu", config=config)
 
     assert decision.gender == "male"
-    assert decision.voice == "Binh"
+    assert decision.voice == "Thanh Bình"
 
 
 def test_ai_model_source_uses_local_default_when_available(monkeypatch, tmp_path) -> None:
@@ -254,23 +254,23 @@ def test_real_audio_selector_uses_pitch_gender_when_ffprobe_has_no_duration(monk
     config = AppConfig(
         dubbing_auto_voice_gender_mode="balanced",
         tts_provider="vieneu",
-        tts_voice="Doan",
-        tts_male_voice="Binh",
-        tts_female_voice="Doan",
-        vieneu_tts_mode="standard",
-        vieneu_tts_model_name=INTERNAL_VIENEU_STANDARD_GGUF,
+        tts_voice="Thục Đoan",
+        tts_male_voice="Thanh Bình",
+        tts_female_voice="Thục Đoan",
+        vieneu_tts_mode="v3turbo",
+        vieneu_tts_model_name=str(INTERNAL_VIENEU_V3_PATH),
     )
 
     male = selector.VoiceGenderSelector(config).select_voice(male_reference, provider="vieneu", config=config)
     female = selector.VoiceGenderSelector(config).select_voice(female_reference, provider="vieneu", config=config)
 
     assert male.gender == "male"
-    assert male.voice == "Binh"
+    assert male.voice == "Thanh Bình"
     assert male.confidence >= 0.62
     assert male.profile is not None
     assert male.profile.duration_seconds >= 1.4
     assert female.gender == "female"
-    assert female.voice == "Doan"
+    assert female.voice == "Thục Đoan"
     assert female.confidence >= 0.62
     assert female.profile is not None
     assert female.profile.duration_seconds >= 1.4
@@ -283,17 +283,17 @@ def test_real_audio_selector_keeps_default_voice_for_ambiguous_pitch(monkeypatch
     config = AppConfig(
         dubbing_auto_voice_gender_mode="sensitive",
         tts_provider="vieneu",
-        tts_voice="Binh",
-        tts_male_voice="Binh",
-        tts_female_voice="Doan",
-        vieneu_tts_mode="standard",
-        vieneu_tts_model_name=INTERNAL_VIENEU_STANDARD_GGUF,
+        tts_voice="Thanh Bình",
+        tts_male_voice="Thanh Bình",
+        tts_female_voice="Thục Đoan",
+        vieneu_tts_mode="v3turbo",
+        vieneu_tts_model_name=str(INTERNAL_VIENEU_V3_PATH),
     )
 
     decision = selector.VoiceGenderSelector(config).select_voice(reference, provider="vieneu", config=config)
 
     assert decision.gender == "unknown"
-    assert decision.voice == "Binh"
+    assert decision.voice == "Thanh Bình"
     assert decision.reason == "pitch:unknown"
 
 
@@ -302,11 +302,11 @@ def test_selector_logs_voice_decision(monkeypatch, tmp_path, caplog) -> None:
     config = AppConfig(
         dubbing_auto_voice_gender_mode="balanced",
         tts_provider="vieneu",
-        tts_voice="Doan",
-        tts_male_voice="Binh",
-        tts_female_voice="Doan",
-        vieneu_tts_mode="standard",
-        vieneu_tts_model_name=INTERNAL_VIENEU_STANDARD_GGUF,
+        tts_voice="Thục Đoan",
+        tts_male_voice="Thanh Bình",
+        tts_female_voice="Thục Đoan",
+        vieneu_tts_mode="v3turbo",
+        vieneu_tts_model_name=str(INTERNAL_VIENEU_V3_PATH),
     )
 
     with caplog.at_level(logging.INFO, logger=selector.__name__):
@@ -314,7 +314,7 @@ def test_selector_logs_voice_decision(monkeypatch, tmp_path, caplog) -> None:
 
     assert "Auto voice decision" in caplog.text
     assert "gender=male" in caplog.text
-    assert "voice=Binh" in caplog.text
+    assert "voice=Thanh Bình" in caplog.text
     assert "reason=pitch:accepted" in caplog.text
 
 

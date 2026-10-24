@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ai_player.core.config import AppConfig
+from ai_player.configuration import AppConfig
 from ai_player.ui.readiness_controller import ReadinessController, ReadinessProfile, provider_preview_kind
 
 

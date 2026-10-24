@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ai_player.ui.features.context import WindowContext
+
 
 from ai_player.workers.player_window_workers import VideoSourceWorker
 
@@ -14,8 +18,8 @@ UNRECOVERABLE_VIDEO_URL_MARKERS = (
 
 
 class VideoUrlController:
-    def __init__(self, owner: Any) -> None:
-        self._owner = owner
+    def __init__(self, owner: WindowContext) -> None:
+        self.context = owner
         self._worker: VideoSourceWorker | None = None
 
     def start(
@@ -38,13 +42,13 @@ class VideoUrlController:
             cache_dir=cache_dir,
             play_after_cache_percent=play_after_cache_percent,
             language_id=language_id,
-            parent=self._owner,
+            parent=self.context,
         )
         self._worker = worker
-        worker.progress_changed.connect(self._owner._video_cache_progress_changed)
-        worker.stream_ready.connect(self._owner._video_url_stream_ready)
-        worker.resolved.connect(self._owner._video_url_resolved)
-        worker.failed.connect(self._owner._video_url_failed)
+        worker.progress_changed.connect(self.context.source_progress._video_cache_progress_changed)
+        worker.stream_ready.connect(self.context.sources._video_url_stream_ready)
+        worker.resolved.connect(self.context.sources._video_url_resolved)
+        worker.failed.connect(self.context.sources._video_url_failed)
         worker.finished.connect(self.finished)
         worker.start()
         return True
@@ -74,15 +78,15 @@ class VideoUrlController:
             self._worker.deleteLater()
             self._worker = None
         self.set_opening_controls(True)
-        callback = getattr(self._owner, "_video_url_finished", None)
+        callback = self.context.get("_video_url_finished", None)
         if callable(callback):
             callback()
 
     def set_opening_controls(self, enabled: bool) -> None:
-        button = getattr(self._owner, "_open_url_button", None)
+        button = self.context.get("_open_url_button", None)
         if button is not None:
             button.setEnabled(enabled)
-        sync_menu = getattr(self._owner, "_sync_open_source_menu_enabled", None)
+        sync_menu = self.context.get("_sync_open_source_menu_enabled", None)
         if callable(sync_menu):
             sync_menu()
 

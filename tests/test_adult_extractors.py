@@ -6,7 +6,7 @@ from pathlib import Path
 
 from yt_dlp import YoutubeDL
 
-from ai_player.services.adult_extractors import supported_adult_host_summary, supported_adult_hosts
+from ai_player.adapters.sources.adult_extractors import supported_adult_host_summary, supported_adult_hosts
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "plugins" / "ai-player-adult-extractors"
 if str(PLUGIN_ROOT) not in sys.path:

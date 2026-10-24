@@ -1,18 +1,34 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import json
+import sys
 from importlib.util import find_spec
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 project_root = Path(SPECPATH).resolve()
+# Resolve native dependencies from this Python installation and Windows. Other
+# desktop applications can prepend incompatible ICU/Qt DLLs to the inherited PATH.
+windows_root = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+build_paths = (
+    Path(sys.executable).parent,
+    Path(sys.base_prefix),
+    Path(sys.base_prefix) / "DLLs",
+    windows_root / "System32",
+    windows_root,
+)
+os.environ["PATH"] = os.pathsep.join(str(path) for path in build_paths if path.is_dir())
 datas = [
     (str(project_root / "ai_player" / "resources"), "ai_player\\resources"),
-    (
-        str(project_root / "ai_player" / "vieneu_tts" / "vieneu" / "assets"),
-        "ai_player\\vieneu_tts\\vieneu\\assets",
-    ),
 ]
+# The isolated Python process imports these small modules from the unpacked bundle.
+runtime_sources = json.loads((project_root / "scripts/vieneu_runtime_sources.json").read_text(encoding="utf-8"))
+for relative in runtime_sources:
+    source = project_root / "ai_player" / relative
+    if not source.is_file():
+        raise FileNotFoundError(f"Missing isolated runtime source: {source}")
+    datas.append((str(source), str(Path("ai_player") / Path(relative).parent)))
 binaries = []
 hiddenimports = []
 include_extra_ytdlp_plugins = os.getenv("AI_PLAYER_INCLUDE_EXTRA_YTDLP_PLUGINS", "").strip().lower() in {
@@ -60,6 +76,9 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
+        "ai_player.vieneu_tts",
+        "vieneu",
+        "neucodec",
         "PySide6.Qt3DAnimation",
         "PySide6.Qt3DCore",
         "PySide6.Qt3DExtras",

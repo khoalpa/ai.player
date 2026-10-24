@@ -4,7 +4,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from ai_player.core.config import RUNTIME_DIR
+from ai_player.configuration import RUNTIME_DIR
 from ai_player.core.redaction import redact_secrets
 
 _LOGGING_CONFIGURED = False

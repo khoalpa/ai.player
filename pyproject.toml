@@ -48,11 +48,7 @@ offline-ai = [
   "torch>=2.2",
   "transformers>=4.41",
   "huggingface_hub>=0.23",
-  "sea-g2p>=0.7.5",
-  "llama-cpp-python==0.3.16",
   "librosa>=0.11",
-  "perth>=0.2.0",
-  "neucodec>=0.0.5",
   "onnxruntime>=1.18; platform_system != 'Windows'",
 ]
 gpu = [
@@ -75,6 +71,9 @@ packaging = [
 audio-separation = [
   "demucs>=4.0",
 ]
+local-gguf = [
+  "llama-cpp-python==0.3.16",
+]
 
 [project.urls]
 Documentation = "https://github.com/khoalpa/ai.player#readme"
@@ -82,12 +81,14 @@ Source = "https://github.com/khoalpa/ai.player"
 
 [tool.setuptools.packages.find]
 include = ["ai_player*"]
+exclude = ["ai_player.vieneu_tts*"]
 
 [tool.setuptools.package-data]
 ai_player = [
+    "resources/themes/*.json",
+    "resources/themes/*.py",
   "resources/languages/*/*.json",
-  "vieneu_tts/vieneu/assets/*.json",
-  "vieneu_tts/vieneu/assets/samples/*",
+  "resources/tts/*.json",
 ]
 
 [tool.pytest.ini_options]
@@ -104,10 +105,12 @@ line-length = 120
 target-version = "py310"
 exclude = [
   ".venv",
+  ".venv-*",
   "build",
   "dist",
   "models",
   "data",
+  "output",
 ]
 
 [tool.ruff.lint]
@@ -120,3 +123,4 @@ select = ["E", "F", "I", "UP", "B"]
 "scripts/gpu_deep_benchmark.py" = ["E402"]
 "scripts/runtime_doctor.py" = ["E402"]
 "scripts/workflow_smoke_check.py" = ["E402"]
+"scripts/prepare_vieneu_runtime.py" = ["E402"]

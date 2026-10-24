@@ -1,15 +1,15 @@
 from pathlib import Path
 
-from ai_player.core.config import DEFAULT_PERFORMANCE_PRESET, AppConfig
-from ai_player.core.runtime_diagnostics import collect_runtime_diagnostics
-from ai_player.services.document_reader import create_text_document_transcript, is_supported_document_path
-from ai_player.services.translation import (
+from ai_player.adapters.ai.translation import (
     PassthroughTranslator,
     configured_translation_backend,
     normalize_translator_provider,
 )
-from ai_player.services.tts_base import available_tts_providers, normalize_tts_provider
-from ai_player.services.video_source import is_supported_video_url, resolve_video_source
+from ai_player.adapters.media.document_reader import create_text_document_transcript, is_supported_document_path
+from ai_player.adapters.sources.video_source import is_supported_video_url, resolve_video_source
+from ai_player.adapters.tts.tts_base import available_tts_providers, normalize_tts_provider
+from ai_player.configuration import DEFAULT_PERFORMANCE_PRESET, AppConfig
+from ai_player.runtime.runtime_diagnostics import collect_runtime_diagnostics
 
 
 def test_app_config_defaults_are_constructible(monkeypatch) -> None:
@@ -51,7 +51,7 @@ def test_runtime_diagnostics_collects_required_sections() -> None:
 
 
 def test_text_document_transcript_smoke(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("ai_player.services.document_reader.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("ai_player.adapters.media.document_reader.CONFIG_DIR", tmp_path)
 
     transcript = create_text_document_transcript("Hello AI Player recovery baseline.", seconds_per_segment=3)
 

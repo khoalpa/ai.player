@@ -9,20 +9,21 @@ from PySide6.QtCore import QMimeData, QPoint, Qt, QTimer, QUrl
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QFrame, QMessageBox, QScrollArea, QSizePolicy
 
-import ai_player.ui.player_window as player_window_module
-from ai_player.core.config import LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH, LOCAL_TRANSLATION_MODEL_PATH, AppConfig
-from ai_player.services import document_reader
-from ai_player.services.document_reader import DocumentPage
-from ai_player.services.ffmpeg import probe_duration_seconds, run_ffmpeg
-from ai_player.services.telegram_channel import TelegramChannelVideo
-from ai_player.services.video_source import VideoSource
-from ai_player.services.youtube_channel import YouTubeChannelItem
-from ai_player.ui import (
-    player_window_readiness,
-    player_window_settings,
-)
-from ai_player.ui.player_window import PlayerWindow
-from ai_player.ui.player_window_layout import (
+from ai_player import bootstrap
+from ai_player.adapters import workflow_bindings
+from ai_player.adapters.media import document_reader
+from ai_player.adapters.media.document_reader import DocumentPage
+from ai_player.adapters.media.ffmpeg import probe_duration_seconds, run_ffmpeg
+from ai_player.adapters.sources.telegram_channel import TelegramChannelVideo
+from ai_player.adapters.sources.video_source import VideoSource
+from ai_player.adapters.sources.youtube_channel import YouTubeChannelItem
+from ai_player.application.workflows.export import ExportRange
+from ai_player.application.workflows.sources import TelegramContentTranslationWorker
+from ai_player.configuration import LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH, LOCAL_TRANSLATION_MODEL_PATH, AppConfig
+from ai_player.ui.features import readiness as player_window_readiness
+from ai_player.ui.features import settings as player_window_settings
+from ai_player.ui.features.channel_flow import PlayerChannelFlowFeature
+from ai_player.ui.features.layout import (
     DEFAULT_MEDIA_ASPECT_RATIO,
     DEFAULT_MEDIA_HOME_URL,
     TELEGRAM_BLACKLIST_BUTTON_ROLE,
@@ -35,22 +36,27 @@ from ai_player.ui.player_window_layout import (
     _subtitle_qcolor,
     _telegram_in_player_url,
 )
-from ai_player.ui.player_window_media import (
+from ai_player.ui.features.media import (
     DEFAULT_SIDEBAR_PANEL_WIDTH,
-    PlayerMediaMixin,
+    PlayerMediaFeature,
     _document_ms_value,
     _document_seconds_value,
 )
-from ai_player.ui.player_window_sources import _TelegramVideoChoiceDialog, _video_subtitle_candidates, _VideoUrlDialog
-from ai_player.workers import export_worker
-from ai_player.workers.export_worker import ExportRange
-from ai_player.workers.player_window_workers import TelegramContentTranslationWorker
+from ai_player.ui.features.runtime import PlayerRuntimeFeature
+from ai_player.ui.features.settings import PlayerSettingsFeature
+from ai_player.ui.features.sources import (
+    PlayerSourceFeature,
+    _TelegramVideoChoiceDialog,
+    _video_subtitle_candidates,
+    _VideoUrlDialog,
+)
+from ai_player.ui.player_window import PlayerWindow
 
 
 @pytest.fixture(autouse=True)
 def disable_smoke_test_background_startups(monkeypatch) -> None:
-    monkeypatch.setattr(PlayerWindow, "_start_runtime_warmup", lambda self: None)
-    monkeypatch.setattr(PlayerWindow, "_start_telegram_worker", lambda self, *args, **kwargs: None)
+    monkeypatch.setattr(PlayerRuntimeFeature, "_start_runtime_warmup", lambda self: None)
+    monkeypatch.setattr(PlayerChannelFlowFeature, "_start_telegram_worker", lambda self, *args, **kwargs: None)
 
 
 class _SmokeTTSProvider:
@@ -89,62 +95,73 @@ def test_player_window_constructs_offscreen(qapp) -> None:
     window = PlayerWindow()
     try:
         assert window.windowTitle()
-        assert window._settings_tabs.tabText(0) == window._tr("first_run_tab")
-        assert window._settings_tabs.tabText(1) == window._tr("task_center_tab")
-        assert window._readiness_selected_profile == "auto"
-        assert window._source_filter_worker_mode == window._config.original_audio_voice_filter_mode
-        assert window._source_filter_worker_model == window._config.original_audio_voice_filter_model
-        assert window._source_filter_cache == {}
-        assert window._playback_compat_cache == {}
-        assert window._next_action_panel is None
-        assert window._start_dubbing_button.text() == window._tr("start_dubbing")
-        assert window._start_dubbing_button.toolTip() == window._tr("start_dubbing_tooltip")
-        assert window._meeting_button.text() == window._tr("meeting_start_label")
-        assert window._runtime_gpu_text == window._tr("status_checking_gpu")
-        assert window._runtime_media_info_text == window._tr("status_no_video")
-        assert window._dub_worker is None
-        assert window._export_worker is None
-        assert window._meeting_worker is None
-        assert window._telegram_worker is None
-        assert window._telegram_translation_worker is None
-        assert window._document_worker is None
-        assert window._pending_telegram_url == ""
-        assert window._subtitle_mode_combo.currentData() == "target"
-        assert window._subtitle_size_combo.currentData() == 24
-        assert window._subtitle_color_combo.currentData() == "#ffd54a"
-        assert window._subtitle_background_combo.currentData() == "rgba(0, 0, 0, 0)"
-        assert window._source_filter_check.isChecked() is False
-        assert window._video_url_full_cache_check.isChecked() is True
-        assert window._config.original_audio_voice_filter is False
-        assert window._config.video_url_full_cache is True
-        assert window._aspect_combo.currentData() == DEFAULT_MEDIA_ASPECT_RATIO
-        assert not window._panel_toggle_button.icon().isNull()
-        assert window._panel_toggle_button.icon().cacheKey() != window._panel_collapse_button.icon().cacheKey()
-        placeholder_url = getattr(window._video_placeholder, "url", None)
+        assert window.features.layout._settings_tabs.tabText(0) == window.features.settings._tr("first_run_tab")
+        assert window.features.layout._settings_tabs.tabText(1) == window.features.settings._tr("task_center_tab")
+        assert window.features.readiness._readiness_selected_profile == "auto"
+        assert (
+            window.features.media.processing.source_filter_worker_mode
+            == window.features.config.original_audio_voice_filter_mode
+        )
+        assert (
+            window.features.media.processing.source_filter_worker_model
+            == window.features.config.original_audio_voice_filter_model
+        )
+        assert window.features.media.processing.source_filter_cache == {}
+        assert window.features.media.processing.playback_compat_cache == {}
+        assert window.features.bindings._next_action_panel is None
+        assert window.features.layout._start_dubbing_button.text() == window.features.settings._tr("start_dubbing")
+        assert window.features.layout._start_dubbing_button.toolTip() == window.features.settings._tr(
+            "start_dubbing_tooltip"
+        )
+        assert window.features.layout._meeting_button.text() == window.features.settings._tr("meeting_start_label")
+        assert window.features.runtime.state.gpu_text == window.features.settings._tr("status_checking_gpu")
+        assert window.features.runtime.state.media_info_text == window.features.settings._tr("status_no_video")
+        assert window.features.lifecycle.workers.dubbing_worker is None
+        assert window.features.lifecycle.workers.export_worker is None
+        assert window.features.lifecycle.workers.meeting_worker is None
+        assert window.features.lifecycle.workers.telegram_worker is None
+        assert window.features.lifecycle.workers.telegram_translation_worker is None
+        assert window.features.lifecycle.workers.document_worker is None
+        assert window.features.lifecycle.workers.pending_telegram_url == ""
+        assert window.features.layout._subtitle_mode_combo.currentData() == "target"
+        assert window.features.layout._subtitle_size_combo.currentData() == 24
+        assert window.features.layout._subtitle_color_combo.currentData() == "#ffd54a"
+        assert window.features.layout._subtitle_background_combo.currentData() == "rgba(0, 0, 0, 0)"
+        assert window.features.layout._source_filter_check.isChecked() is False
+        assert window.features.layout._video_url_full_cache_check.isChecked() is True
+        assert window.features.config.original_audio_voice_filter is False
+        assert window.features.config.video_url_full_cache is True
+        assert window.features.layout._aspect_combo.currentData() == DEFAULT_MEDIA_ASPECT_RATIO
+        assert not window.features.layout._panel_toggle_button.icon().isNull()
+        assert (
+            window.features.layout._panel_toggle_button.icon().cacheKey()
+            != window.features.layout._panel_collapse_button.icon().cacheKey()
+        )
+        placeholder_url = getattr(window.features.layout._video_placeholder, "url", None)
         if callable(placeholder_url):
             assert placeholder_url().toString() == DEFAULT_MEDIA_HOME_URL
-            assert window._media_stack.currentWidget() is window._media_start_page
-            assert window._source_label.text() == window._tr("source_empty")
-            assert not window._media_home_button.isHidden()
+            assert window.features.layout._media_stack.currentWidget() is window.features.layout._media_start_page
+            assert window.features.layout._source_label.text() == window.features.settings._tr("source_empty")
+            assert not window.features.bindings._media_home_button.isHidden()
 
-        media_video_button = window._media_start_workflow_buttons["first_run_workflow_video"]
-        assert media_video_button.text() == window._tr("first_run_workflow_video")
-        assert window._tr("first_run_workflow_video_detail") in media_video_button.toolTip()
+        media_video_button = window.features.layout._media_start_workflow_buttons["first_run_workflow_video"]
+        assert media_video_button.text() == window.features.settings._tr("first_run_workflow_video")
+        assert window.features.settings._tr("first_run_workflow_video_detail") in media_video_button.toolTip()
 
-        readiness_video_button = window._readiness_workflow_buttons["first_run_workflow_video"]
-        assert readiness_video_button.text() == window._tr("first_run_workflow_video")
-        assert window._tr("first_run_workflow_video_detail") in readiness_video_button.toolTip()
+        readiness_video_button = window.features.readiness._readiness_workflow_buttons["first_run_workflow_video"]
+        assert readiness_video_button.text() == window.features.settings._tr("first_run_workflow_video")
+        assert window.features.settings._tr("first_run_workflow_video_detail") in readiness_video_button.toolTip()
 
-        media_quick_button = window._media_start_profile_buttons["quick"]
-        assert media_quick_button.text() == window._tr("first_run_profile_quick")
-        assert window._tr("first_run_profile_quick_detail") in media_quick_button.toolTip()
-        media_auto_button = window._media_start_profile_buttons["auto"]
-        assert media_auto_button.text() == window._tr("first_run_profile_auto")
-        assert window._tr("first_run_profile_auto_detail") in media_auto_button.toolTip()
+        media_quick_button = window.features.layout._media_start_profile_buttons["quick"]
+        assert media_quick_button.text() == window.features.settings._tr("first_run_profile_quick")
+        assert window.features.settings._tr("first_run_profile_quick_detail") in media_quick_button.toolTip()
+        media_auto_button = window.features.layout._media_start_profile_buttons["auto"]
+        assert media_auto_button.text() == window.features.settings._tr("first_run_profile_auto")
+        assert window.features.settings._tr("first_run_profile_auto_detail") in media_auto_button.toolTip()
 
-        readiness_quick_button = window._readiness_profile_buttons["quick"]
-        assert readiness_quick_button.text() == window._tr("first_run_profile_quick")
-        assert window._tr("first_run_profile_quick_detail") in readiness_quick_button.toolTip()
+        readiness_quick_button = window.features.readiness._readiness_profile_buttons["quick"]
+        assert readiness_quick_button.text() == window.features.settings._tr("first_run_profile_quick")
+        assert window.features.settings._tr("first_run_profile_quick_detail") in readiness_quick_button.toolTip()
     finally:
         window.close()
 
@@ -152,7 +169,7 @@ def test_player_window_constructs_offscreen(qapp) -> None:
 def test_export_workflow_options_track_available_outputs(qapp) -> None:
     window = PlayerWindow()
     try:
-        options = {str(option["action"]): option for option in window._export_workflow_options()}
+        options = {str(option["action"]): option for option in window.features.export._export_workflow_options()}
 
         assert options["transcript"]["available"] is False
         assert options["audio"]["available"] is False
@@ -160,30 +177,30 @@ def test_export_workflow_options_track_available_outputs(qapp) -> None:
         assert options["staged"]["available"] is False
         assert options["document"]["available"] is False
 
-        window._set_transcript_text("Hello\nXin chao", source_only=False)
-        options = {str(option["action"]): option for option in window._export_workflow_options()}
+        window.features.transcript._set_transcript_text("Hello\nXin chao", source_only=False)
+        options = {str(option["action"]): option for option in window.features.export._export_workflow_options()}
 
         assert options["transcript"]["available"] is True
         assert options["audio"]["available"] is False
 
-        window._video_path = "demo.mp4"
-        window._set_combo_data(window._audio_source_combo, "original")
-        options = {str(option["action"]): option for option in window._export_workflow_options()}
+        window.features.channel_browser._video_path = "demo.mp4"
+        window.features.settings._set_combo_data(window.features.layout._audio_source_combo, "original")
+        options = {str(option["action"]): option for option in window.features.export._export_workflow_options()}
 
         assert options["audio"]["available"] is True
         assert options["video"]["available"] is True
         assert options["staged"]["available"] is True
         assert options["document"]["available"] is False
 
-        window._set_combo_data(window._audio_source_combo, "system")
-        options = {str(option["action"]): option for option in window._export_workflow_options()}
+        window.features.settings._set_combo_data(window.features.layout._audio_source_combo, "system")
+        options = {str(option["action"]): option for option in window.features.export._export_workflow_options()}
 
         assert options["audio"]["available"] is False
         assert options["video"]["available"] is False
         assert options["staged"]["available"] is False
 
-        window._document_mode = True
-        window._document_pages = [
+        window.features.media.document.mode = True
+        window.features.media.document.pages = [
             DocumentPage(
                 number=1,
                 title="Document",
@@ -192,19 +209,19 @@ def test_export_workflow_options_track_available_outputs(qapp) -> None:
                 duration_seconds=1,
             )
         ]
-        window._transcript_path_edit.setText("document.srt")
-        options = {str(option["action"]): option for option in window._export_workflow_options()}
+        window.features.layout._transcript_path_edit.setText("document.srt")
+        options = {str(option["action"]): option for option in window.features.export._export_workflow_options()}
 
         assert options["video"]["available"] is True
         assert options["document"]["available"] is True
         assert options["audio"]["available"] is False
         assert options["staged"]["available"] is False
 
-        window._export_worker = object()
-        options = {str(option["action"]): option for option in window._export_workflow_options()}
+        window.features.lifecycle.workers.export_worker = object()
+        options = {str(option["action"]): option for option in window.features.export._export_workflow_options()}
 
         assert all(option["available"] is False for option in options.values())
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -212,34 +229,34 @@ def test_export_workflow_options_track_available_outputs(qapp) -> None:
 def test_simple_sidebar_tracks_workflow_context(qapp) -> None:
     window = PlayerWindow()
     try:
-        tabs = window._settings_tabs
+        tabs = window.features.layout._settings_tabs
 
         def visible_tabs() -> set[int]:
             return {index for index in range(tabs.count()) if tabs.isTabVisible(index)}
 
-        window._set_simple_sidebar_mode(True)
+        window.features.layout._set_simple_sidebar_mode(True)
         qapp.processEvents()
 
         assert tabs.tabBar().isHidden()
         assert visible_tabs() == {2, 3, 6}
-        assert not window._settings_group_buttons["settings_group_workflow"].isHidden()
-        assert window._settings_group_buttons["settings_group_start"].isHidden()
+        assert not window.features.bindings._settings_group_buttons["settings_group_workflow"].isHidden()
+        assert window.features.bindings._settings_group_buttons["settings_group_start"].isHidden()
 
-        window._start_workflow("meeting", lambda: None)
+        window.features.layout._start_workflow("meeting", lambda: None)
         qapp.processEvents()
 
         assert visible_tabs() == {2, 3, 6}
         assert tabs.currentIndex() == 2
-        assert window._current_workflow_context == "meeting"
-        assert window._tr("first_run_workflow_meeting") in window.statusBar().currentMessage()
+        assert window.features.layout._current_workflow_context == "meeting"
+        assert window.features.settings._tr("first_run_workflow_meeting") in window.statusBar().currentMessage()
 
-        window._set_simple_sidebar_mode(False)
+        window.features.layout._set_simple_sidebar_mode(False)
         qapp.processEvents()
 
         assert not tabs.tabBar().isHidden()
         assert visible_tabs() == {1, 2, 6, 7}
-        assert all(not button.isHidden() for button in window._settings_group_buttons.values())
-        window._settings_save_timer.stop()
+        assert all(not button.isHidden() for button in window.features.bindings._settings_group_buttons.values())
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -261,28 +278,28 @@ def test_telegram_video_dialog_keeps_duplicate_titles_distinct(qapp) -> None:
 def test_player_window_google_home_button_resets_placeholder_url(qapp) -> None:
     window = PlayerWindow()
     try:
-        set_url = getattr(window._video_placeholder, "setUrl", None)
-        get_url = getattr(window._video_placeholder, "url", None)
+        set_url = getattr(window.features.layout._video_placeholder, "setUrl", None)
+        get_url = getattr(window.features.layout._video_placeholder, "url", None)
         if not callable(set_url) or not callable(get_url):
-            assert window._media_home_button.isHidden()
+            assert window.features.bindings._media_home_button.isHidden()
             return
 
         set_url(QUrl("https://example.com/search"))
-        window._media_stack.setCurrentWidget(window._video_placeholder)
-        window._sync_media_browser_state()
-        assert window._source_label.text() == "https://example.com/search"
+        window.features.layout._media_stack.setCurrentWidget(window.features.layout._video_placeholder)
+        window.features.media_browser._sync_media_browser_state()
+        assert window.features.layout._source_label.text() == "https://example.com/search"
 
-        window._open_media_home()
+        window.features.media_browser._open_media_home()
 
-        assert window._media_stack.currentWidget() is window._video_placeholder
+        assert window.features.layout._media_stack.currentWidget() is window.features.layout._video_placeholder
         assert get_url().toString() == DEFAULT_MEDIA_HOME_URL
-        assert window._source_label.text() == DEFAULT_MEDIA_HOME_URL
-        assert not window._media_home_button.isHidden()
+        assert window.features.layout._source_label.text() == DEFAULT_MEDIA_HOME_URL
+        assert not window.features.bindings._media_home_button.isHidden()
 
-        window._media_stack.setCurrentWidget(window._video_widget)
+        window.features.layout._media_stack.setCurrentWidget(window.features.layout._video_widget)
         qapp.processEvents()
-        assert window._media_home_button.isHidden()
-        window._settings_save_timer.stop()
+        assert window.features.bindings._media_home_button.isHidden()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -290,13 +307,13 @@ def test_player_window_google_home_button_resets_placeholder_url(qapp) -> None:
 def test_video_surfaces_use_native_video_painting(qapp) -> None:
     window = PlayerWindow()
     try:
-        for widget in (window._video_widget, window._telegram_video_widget):
+        for widget in (window.features.layout._video_widget, window.features.layout._telegram_video_widget):
             assert widget.autoFillBackground()
             assert not widget.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
             assert not widget.testAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
             assert widget.palette().window().color().name() == "#ffffff"
             assert widget.styleSheet() == ""
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -304,23 +321,23 @@ def test_video_surfaces_use_native_video_painting(qapp) -> None:
 def test_player_window_media_home_button_click_resets_placeholder_url(qapp) -> None:
     window = PlayerWindow()
     try:
-        set_url = getattr(window._video_placeholder, "setUrl", None)
-        get_url = getattr(window._video_placeholder, "url", None)
+        set_url = getattr(window.features.layout._video_placeholder, "setUrl", None)
+        get_url = getattr(window.features.layout._video_placeholder, "url", None)
         if not callable(set_url) or not callable(get_url):
-            assert window._media_home_button.isHidden()
+            assert window.features.bindings._media_home_button.isHidden()
             return
 
         set_url(QUrl("https://example.com/search"))
-        window._media_stack.setCurrentWidget(window._video_placeholder)
-        window._sync_media_browser_state()
-        assert not window._media_home_button.isHidden()
+        window.features.layout._media_stack.setCurrentWidget(window.features.layout._video_placeholder)
+        window.features.media_browser._sync_media_browser_state()
+        assert not window.features.bindings._media_home_button.isHidden()
 
-        QTest.mouseClick(window._media_home_button, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(window.features.bindings._media_home_button, Qt.MouseButton.LeftButton)
 
-        assert window._media_stack.currentWidget() is window._video_placeholder
+        assert window.features.layout._media_stack.currentWidget() is window.features.layout._video_placeholder
         assert get_url().toString() == DEFAULT_MEDIA_HOME_URL
-        assert window._source_label.text() == DEFAULT_MEDIA_HOME_URL
-        window._settings_save_timer.stop()
+        assert window.features.layout._source_label.text() == DEFAULT_MEDIA_HOME_URL
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -328,19 +345,19 @@ def test_player_window_media_home_button_click_resets_placeholder_url(qapp) -> N
 def test_audio_source_transcript_selection_toggles_transcript_controls(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._set_combo_data(window._audio_source_combo, "original")
+        window.features.settings._set_combo_data(window.features.layout._audio_source_combo, "original")
         qapp.processEvents()
-        assert window._selected_audio_source() == "original"
-        assert not window._transcript_path_edit.isEnabled()
-        assert not window._transcript_file_button.isEnabled()
+        assert window.features.settings._selected_audio_source() == "original"
+        assert not window.features.layout._transcript_path_edit.isEnabled()
+        assert not window.features.layout._transcript_file_button.isEnabled()
 
-        window._set_combo_data(window._audio_source_combo, "transcript")
+        window.features.settings._set_combo_data(window.features.layout._audio_source_combo, "transcript")
         qapp.processEvents()
 
-        assert window._selected_audio_source() == "transcript"
-        assert window._transcript_path_edit.isEnabled()
-        assert window._transcript_file_button.isEnabled()
-        window._settings_save_timer.stop()
+        assert window.features.settings._selected_audio_source() == "transcript"
+        assert window.features.layout._transcript_path_edit.isEnabled()
+        assert window.features.layout._transcript_file_button.isEnabled()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -355,26 +372,26 @@ def test_source_buttons_click_through_document_and_transcript_paths(qapp, tmp_pa
         loaded_documents: list[str] = []
 
         monkeypatch.setattr(
-            "ai_player.ui.player_window_sources.QFileDialog.getOpenFileName",
+            "ai_player.ui.features.sources.QFileDialog.getOpenFileName",
             lambda *_args, **_kwargs: (str(document_path), ""),
         )
-        monkeypatch.setattr(window, "_load_document", lambda path: loaded_documents.append(path))
+        monkeypatch.setattr(window.features.sources, "_load_document", lambda path: loaded_documents.append(path))
 
-        QTest.mouseClick(window._open_document_button, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(window.features.layout._open_document_button, Qt.MouseButton.LeftButton)
 
         assert loaded_documents == [str(document_path)]
 
         monkeypatch.setattr(
-            "ai_player.ui.player_window_sources.QFileDialog.getOpenFileName",
+            "ai_player.ui.features.sources.QFileDialog.getOpenFileName",
             lambda *_args, **_kwargs: (str(transcript_path), ""),
         )
-        window._set_combo_data(window._audio_source_combo, "transcript")
+        window.features.settings._set_combo_data(window.features.layout._audio_source_combo, "transcript")
 
-        QTest.mouseClick(window._transcript_file_button, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(window.features.layout._transcript_file_button, Qt.MouseButton.LeftButton)
 
-        assert window._transcript_path_edit.text() == str(transcript_path)
-        assert window._selected_audio_source() == "transcript"
-        window._settings_save_timer.stop()
+        assert window.features.layout._transcript_path_edit.text() == str(transcript_path)
+        assert window.features.settings._selected_audio_source() == "transcript"
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -387,31 +404,37 @@ def test_source_button_click_through_local_video_path(qapp, monkeypatch) -> None
         shown = []
 
         monkeypatch.setattr(
-            "ai_player.ui.player_window_sources.QFileDialog.getOpenFileName",
+            "ai_player.ui.features.sources.QFileDialog.getOpenFileName",
             lambda *_args, **_kwargs: (str(video_path), ""),
         )
-        monkeypatch.setattr(window, "_auto_select_video_aspect_ratio", lambda *_args, **_kwargs: None)
-        monkeypatch.setattr(window, "_load_current_video_for_playback", lambda: loaded_paths.append(window._video_path))
-        monkeypatch.setattr(window, "_show_video_output", lambda: shown.append(True))
-        monkeypatch.setattr(window, "_save_settings", lambda: None)
-        monkeypatch.setattr(window, "_stop_dubbing", lambda: None)
+        monkeypatch.setattr(window.features.media, "_auto_select_video_aspect_ratio", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(
+            window.features.media,
+            "_load_current_video_for_playback",
+            lambda: loaded_paths.append(window.features.channel_browser._video_path),
+        )
+        monkeypatch.setattr(window.features.channel_browser, "_show_video_output", lambda: shown.append(True))
+        monkeypatch.setattr(window.features.settings, "_save_settings", lambda: None)
+        monkeypatch.setattr(window.features.dubbing, "_stop_dubbing", lambda: None)
 
-        action_texts = [action.text() for action in window._source_menu.actions() if not action.isSeparator()]
-        assert window._tr("smart_open_files") in action_texts
-        assert window._tr("smart_open_paste") in action_texts
-        assert window._tr("open_video") not in action_texts
-        assert window._tr("open_url") not in action_texts
-        assert window._tr("open_document") not in action_texts
-        assert "SRT" not in window._open_file_button.toolTip()
+        action_texts = [
+            action.text() for action in window.features.layout._source_menu.actions() if not action.isSeparator()
+        ]
+        assert window.features.settings._tr("smart_open_files") in action_texts
+        assert window.features.settings._tr("smart_open_paste") in action_texts
+        assert window.features.settings._tr("open_video") not in action_texts
+        assert window.features.settings._tr("open_url") not in action_texts
+        assert window.features.settings._tr("open_document") not in action_texts
+        assert "SRT" not in window.features.layout._open_file_button.toolTip()
 
-        QTest.mouseClick(window._open_file_button, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(window.features.layout._open_file_button, Qt.MouseButton.LeftButton)
 
         assert loaded_paths == [str(video_path)]
         assert shown == [True]
-        assert window._video_path == str(video_path)
-        assert window._source_label.text() == str(video_path)
-        assert window._selected_audio_source() == "original"
-        window._settings_save_timer.stop()
+        assert window.features.channel_browser._video_path == str(video_path)
+        assert window.features.layout._source_label.text() == str(video_path)
+        assert window.features.settings._selected_audio_source() == "original"
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -426,22 +449,26 @@ def test_smart_open_attaches_transcript_for_video_pair(qapp, tmp_path, monkeypat
         loaded_paths: list[str | None] = []
 
         monkeypatch.setattr(
-            "ai_player.ui.player_window_sources.QFileDialog.getOpenFileNames",
+            "ai_player.ui.features.sources.QFileDialog.getOpenFileNames",
             lambda *_args, **_kwargs: ([str(video_path), str(subtitle_path)], ""),
         )
-        monkeypatch.setattr(window, "_auto_select_video_aspect_ratio", lambda *_args, **_kwargs: None)
-        monkeypatch.setattr(window, "_load_current_video_for_playback", lambda: loaded_paths.append(window._video_path))
-        monkeypatch.setattr(window, "_show_video_output", lambda: None)
-        monkeypatch.setattr(window, "_save_settings", lambda: None)
-        monkeypatch.setattr(window, "_stop_dubbing", lambda: None)
+        monkeypatch.setattr(window.features.media, "_auto_select_video_aspect_ratio", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(
+            window.features.media,
+            "_load_current_video_for_playback",
+            lambda: loaded_paths.append(window.features.channel_browser._video_path),
+        )
+        monkeypatch.setattr(window.features.channel_browser, "_show_video_output", lambda: None)
+        monkeypatch.setattr(window.features.settings, "_save_settings", lambda: None)
+        monkeypatch.setattr(window.features.dubbing, "_stop_dubbing", lambda: None)
 
-        window._open_smart_action.trigger()
+        window.features.layout._open_smart_action.trigger()
 
         assert loaded_paths == [str(video_path)]
-        assert window._video_path == str(video_path)
-        assert window._transcript_path_edit.text() == str(subtitle_path)
-        assert window._selected_audio_source() == "transcript"
-        window._settings_save_timer.stop()
+        assert window.features.channel_browser._video_path == str(video_path)
+        assert window.features.layout._transcript_path_edit.text() == str(subtitle_path)
+        assert window.features.settings._selected_audio_source() == "transcript"
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -451,14 +478,14 @@ def test_smart_open_clipboard_url_action_uses_url_flow(qapp, monkeypatch) -> Non
     try:
         opened: list[str] = []
         qapp.clipboard().setText("https://www.youtube.com/watch?v=demo123")
-        monkeypatch.setattr(window, "_open_url_from_browser", lambda url: opened.append(url))
+        monkeypatch.setattr(window.features.sources, "_open_url_from_browser", lambda url: opened.append(url))
 
-        window._refresh_open_source_menu()
+        window.features.layout._refresh_open_source_menu()
 
-        assert window._open_clipboard_source_action.isVisible()
-        window._open_clipboard_source_action.trigger()
+        assert window.features.layout._open_clipboard_source_action.isVisible()
+        window.features.layout._open_clipboard_source_action.trigger()
         assert opened == ["https://www.youtube.com/watch?v=demo123"]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -476,8 +503,8 @@ def test_player_window_runs_transcript_audio_export_end_to_end(qapp, tmp_path, m
     output_path = tmp_path / "ui-export.wav"
     window = PlayerWindow()
     try:
-        window._video_path = str(sample_video)
-        window._config = AppConfig(
+        window.features.channel_browser._video_path = str(sample_video)
+        window.features.config = AppConfig(
             audio_source="transcript",
             transcript_path=str(transcript_path),
             translator_provider="none",
@@ -486,31 +513,31 @@ def test_player_window_runs_transcript_audio_export_end_to_end(qapp, tmp_path, m
             vieneu_tts_offline=False,
             export_video_quality="compact",
         )
-        window._set_combo_data(window._audio_source_combo, "transcript")
-        window._transcript_path_edit.setText(str(transcript_path))
+        window.features.settings._set_combo_data(window.features.layout._audio_source_combo, "transcript")
+        window.features.layout._transcript_path_edit.setText(str(transcript_path))
 
         monkeypatch.setattr(
-            "ai_player.ui.player_window_export.QFileDialog.getSaveFileName",
+            "ai_player.ui.features.export.QFileDialog.getSaveFileName",
             lambda *_args, **_kwargs: (str(output_path), ""),
         )
-        monkeypatch.setattr(window, "_choose_export_range", lambda: ExportRange(0.0, 1.3))
-        monkeypatch.setattr(window, "_pause_active_source", lambda: None)
-        monkeypatch.setattr(window, "_stop_dubbing", lambda: None)
-        monkeypatch.setattr(window, "_save_settings", lambda: None)
-        monkeypatch.setattr(export_worker, "create_tts_provider", lambda _config: _SmokeTTSProvider())
-        monkeypatch.setattr(export_worker, "_export_worker_count", lambda: 1)
+        monkeypatch.setattr(window.features.export, "_choose_export_range", lambda: ExportRange(0.0, 1.3))
+        monkeypatch.setattr(window.features.media, "_pause_active_source", lambda: None)
+        monkeypatch.setattr(window.features.dubbing, "_stop_dubbing", lambda: None)
+        monkeypatch.setattr(window.features.settings, "_save_settings", lambda: None)
+        monkeypatch.setattr("ai_player.adapters.tts.tts.create_tts_provider", lambda _config: _SmokeTTSProvider())
+        monkeypatch.setattr("ai_player.adapters.pipeline.export_utils._export_worker_count", lambda: 1)
 
-        window._export_dubbed_media("audio")
+        window.features.export._export_dubbed_media("audio")
 
-        _wait_until(lambda: window._export_worker is None and output_path.exists())
+        _wait_until(lambda: window.features.lifecycle.workers.export_worker is None and output_path.exists())
         assert output_path.exists()
         assert probe_duration_seconds(output_path) >= 0.5
-        assert window._export_button.isEnabled()
-        window._settings_save_timer.stop()
+        assert window.features.layout._export_button.isEnabled()
+        window.features.layout._settings_save_timer.stop()
     finally:
-        if window._export_worker is not None:
-            window._export_worker.stop()
-            window._export_worker.wait(5000)
+        if window.features.lifecycle.workers.export_worker is not None:
+            window.features.lifecycle.workers.export_worker.stop()
+            window.features.lifecycle.workers.export_worker.wait(5000)
         window.close()
 
 
@@ -565,8 +592,8 @@ def test_player_window_starts_video_export_worker_from_ui(qapp, tmp_path, monkey
 
     window = PlayerWindow()
     try:
-        window._video_path = str(sample_video)
-        window._config = AppConfig(
+        window.features.channel_browser._video_path = str(sample_video)
+        window.features.config = AppConfig(
             audio_source="transcript",
             transcript_path=str(transcript_path),
             translator_provider="none",
@@ -575,20 +602,20 @@ def test_player_window_starts_video_export_worker_from_ui(qapp, tmp_path, monkey
             vieneu_tts_offline=False,
             export_video_quality="compact",
         )
-        window._set_combo_data(window._audio_source_combo, "transcript")
-        window._transcript_path_edit.setText(str(transcript_path))
+        window.features.settings._set_combo_data(window.features.layout._audio_source_combo, "transcript")
+        window.features.layout._transcript_path_edit.setText(str(transcript_path))
 
         monkeypatch.setattr(
-            "ai_player.ui.player_window_export.QFileDialog.getSaveFileName",
+            "ai_player.ui.features.export.QFileDialog.getSaveFileName",
             lambda *_args, **_kwargs: (str(output_path), ""),
         )
-        monkeypatch.setattr("ai_player.ui.player_window_export.DubbingExportWorker", _FakeExportWorker)
-        monkeypatch.setattr(window, "_choose_export_range", lambda: ExportRange(0.0, 1.3))
-        monkeypatch.setattr(window, "_pause_active_source", lambda: None)
-        monkeypatch.setattr(window, "_stop_dubbing", lambda: None)
-        monkeypatch.setattr(window, "_save_settings", lambda: None)
+        monkeypatch.setattr("ai_player.ui.features.export.DubbingExportWorker", _FakeExportWorker)
+        monkeypatch.setattr(window.features.export, "_choose_export_range", lambda: ExportRange(0.0, 1.3))
+        monkeypatch.setattr(window.features.media, "_pause_active_source", lambda: None)
+        monkeypatch.setattr(window.features.dubbing, "_stop_dubbing", lambda: None)
+        monkeypatch.setattr(window.features.settings, "_save_settings", lambda: None)
 
-        window._export_dubbed_media("video")
+        window.features.export._export_dubbed_media("video")
 
         assert len(started) == 1
         assert started[0].video_path == str(sample_video)
@@ -597,10 +624,10 @@ def test_player_window_starts_video_export_worker_from_ui(qapp, tmp_path, monkey
         assert started[0].export_range.start_seconds == 0.0
         assert started[0].export_range.end_seconds == 1.3
         assert output_path.exists()
-        assert window._export_worker is None
+        assert window.features.lifecycle.workers.export_worker is None
         assert deleted == started
-        assert window._export_button.isEnabled()
-        window._settings_save_timer.stop()
+        assert window.features.layout._export_button.isEnabled()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -631,24 +658,30 @@ def test_source_button_attaches_matching_video_srt(qapp, tmp_path, monkeypatch) 
         loaded_paths: list[str | None] = []
 
         monkeypatch.setattr(
-            "ai_player.ui.player_window_sources.QFileDialog.getOpenFileName",
+            "ai_player.ui.features.sources.QFileDialog.getOpenFileName",
             lambda *_args, **_kwargs: (str(video_path), ""),
         )
-        monkeypatch.setattr(window, "_auto_select_video_aspect_ratio", lambda *_args, **_kwargs: None)
-        monkeypatch.setattr(window, "_load_current_video_for_playback", lambda: loaded_paths.append(window._video_path))
-        monkeypatch.setattr(window, "_show_video_output", lambda: None)
-        monkeypatch.setattr(window, "_save_settings", lambda: None)
-        monkeypatch.setattr(window, "_stop_dubbing", lambda: None)
-        monkeypatch.setattr(window, "_confirm_video_subtitle_path", lambda _video, candidates: candidates[0])
+        monkeypatch.setattr(window.features.media, "_auto_select_video_aspect_ratio", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(
+            window.features.media,
+            "_load_current_video_for_playback",
+            lambda: loaded_paths.append(window.features.channel_browser._video_path),
+        )
+        monkeypatch.setattr(window.features.channel_browser, "_show_video_output", lambda: None)
+        monkeypatch.setattr(window.features.settings, "_save_settings", lambda: None)
+        monkeypatch.setattr(window.features.dubbing, "_stop_dubbing", lambda: None)
+        monkeypatch.setattr(
+            window.features.sources, "_confirm_video_subtitle_path", lambda _video, candidates: candidates[0]
+        )
 
-        QTest.mouseClick(window._open_file_button, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(window.features.layout._open_file_button, Qt.MouseButton.LeftButton)
 
         assert loaded_paths == [str(video_path)]
-        assert window._video_path == str(video_path)
-        assert window._transcript_path_edit.text() == str(subtitle_path)
-        assert window._selected_audio_source() == "transcript"
-        assert window._transcript_path_edit.isEnabled()
-        window._settings_save_timer.stop()
+        assert window.features.channel_browser._video_path == str(video_path)
+        assert window.features.layout._transcript_path_edit.text() == str(subtitle_path)
+        assert window.features.settings._selected_audio_source() == "transcript"
+        assert window.features.layout._transcript_path_edit.isEnabled()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -657,20 +690,22 @@ def test_document_editor_source_creates_transcript_timeline(qapp, tmp_path, monk
     monkeypatch.setattr(document_reader, "CONFIG_DIR", tmp_path)
     window = PlayerWindow()
     try:
-        window._set_combo_data(window._audio_source_combo, "document_editor")
+        window.features.settings._set_combo_data(window.features.layout._audio_source_combo, "document_editor")
         qapp.processEvents()
-        window._document_view.setPlainText("First paragraph for playback.\n\nSecond paragraph for export.")
+        window.features.layout._document_view.setPlainText(
+            "First paragraph for playback.\n\nSecond paragraph for export."
+        )
 
-        assert window._prepare_document_editor_source() is True
+        assert window.features.sources._prepare_document_editor_source() is True
 
-        transcript_path = Path(window._transcript_path_edit.text())
-        assert window._selected_audio_source() == "document_editor"
-        assert window._document_mode is True
-        assert window._document_pages
+        transcript_path = Path(window.features.layout._transcript_path_edit.text())
+        assert window.features.settings._selected_audio_source() == "document_editor"
+        assert window.features.media.document.mode is True
+        assert window.features.media.document.pages
         assert transcript_path.exists()
         assert "-->" in transcript_path.read_text(encoding="utf-8")
-        assert window._video_path == str(transcript_path)
-        window._settings_save_timer.stop()
+        assert window.features.channel_browser._video_path == str(transcript_path)
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -680,9 +715,9 @@ def test_player_window_uses_in_player_web_view(qapp) -> None:
     try:
         if _InPlayerWebEngineView is None:
             return
-        assert isinstance(window._video_placeholder, _InPlayerWebEngineView)
-        assert hasattr(window._video_placeholder, "_open_telegram_link_at")
-        window._settings_save_timer.stop()
+        assert isinstance(window.features.layout._video_placeholder, _InPlayerWebEngineView)
+        assert hasattr(window.features.layout._video_placeholder, "_open_telegram_link_at")
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -691,12 +726,14 @@ def test_browser_telegram_link_uses_player_open_url_flow(qapp, monkeypatch) -> N
     window = PlayerWindow()
     opened: list[str] = []
     try:
-        monkeypatch.setattr(window, "_start_telegram_channel_flow", lambda url: opened.append(url))
+        monkeypatch.setattr(
+            window.features.channel_flow, "_start_telegram_channel_flow", lambda url: opened.append(url)
+        )
 
-        window._open_url_from_browser("https://t.me/rewudingzh")
+        window.features.sources._open_url_from_browser("https://t.me/rewudingzh")
 
         assert opened == ["https://t.me/rewudingzh"]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -705,12 +742,14 @@ def test_browser_telegram_invite_uses_player_open_url_flow(qapp, monkeypatch) ->
     window = PlayerWindow()
     opened: list[str] = []
     try:
-        monkeypatch.setattr(window, "_start_telegram_channel_flow", lambda url: opened.append(url))
+        monkeypatch.setattr(
+            window.features.channel_flow, "_start_telegram_channel_flow", lambda url: opened.append(url)
+        )
 
-        window._open_url_from_browser("https://t.me/+s91pFSI1prtmZjMx")
+        window.features.sources._open_url_from_browser("https://t.me/+s91pFSI1prtmZjMx")
 
         assert opened == ["https://t.me/+s91pFSI1prtmZjMx"]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -719,12 +758,12 @@ def test_browser_youtube_channel_uses_channel_browser_flow(qapp, monkeypatch) ->
     window = PlayerWindow()
     opened: list[str] = []
     try:
-        monkeypatch.setattr(window, "_start_youtube_channel_flow", lambda url: opened.append(url))
+        monkeypatch.setattr(window.features.channel_flow, "_start_youtube_channel_flow", lambda url: opened.append(url))
 
-        window._open_url_from_browser("https://www.youtube.com/@stapleai")
+        window.features.sources._open_url_from_browser("https://www.youtube.com/@stapleai")
 
         assert opened == ["https://www.youtube.com/@stapleai"]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -732,13 +771,13 @@ def test_browser_youtube_channel_uses_channel_browser_flow(qapp, monkeypatch) ->
 def test_browser_video_open_records_browser_fallback(qapp, monkeypatch) -> None:
     window = PlayerWindow()
     try:
-        monkeypatch.setattr(window._video_url, "start", lambda *_args, **_kwargs: True)
+        monkeypatch.setattr(window.features.sources.url_controller, "start", lambda *_args, **_kwargs: True)
 
-        window._open_url_from_browser("https://www.youtube.com/watch?v=HaptpffiOjE")
+        window.features.sources._open_url_from_browser("https://www.youtube.com/watch?v=HaptpffiOjE")
 
-        assert window._last_video_url_request["url"] == "https://www.youtube.com/watch?v=HaptpffiOjE"
-        assert window._last_video_url_request["browser_fallback_on_unavailable"] is True
-        window._settings_save_timer.stop()
+        assert window.features.sources._last_video_url_request["url"] == "https://www.youtube.com/watch?v=HaptpffiOjE"
+        assert window.features.sources._last_video_url_request["browser_fallback_on_unavailable"] is True
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -782,21 +821,28 @@ def test_supported_browser_link_uses_player_open_url_flow() -> None:
     assert _player_supported_browser_url(QUrl("https://www.youtube.com/watch?v=abc123")).toString() == (
         "https://www.youtube.com/watch?v=abc123"
     )
-    assert _player_supported_browser_url(
-        QUrl("https://www.google.com/url?q=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dabc123")
-    ).toString() == "https://www.youtube.com/watch?v=abc123"
-    assert _player_supported_browser_url(
-        QUrl("https://www.google.com/url?q=https%3A%2F%2Fwww.youtube.com%2F%40stapleai")
-    ).toString() == "https://www.youtube.com/@stapleai"
+    assert (
+        _player_supported_browser_url(
+            QUrl("https://www.google.com/url?q=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dabc123")
+        ).toString()
+        == "https://www.youtube.com/watch?v=abc123"
+    )
+    assert (
+        _player_supported_browser_url(
+            QUrl("https://www.google.com/url?q=https%3A%2F%2Fwww.youtube.com%2F%40stapleai")
+        ).toString()
+        == "https://www.youtube.com/@stapleai"
+    )
     assert _player_supported_browser_url(QUrl("https://cdn.example.test/video.mp4")).toString() == (
         "https://cdn.example.test/video.mp4"
     )
-    assert _player_supported_browser_url(
-        QUrl("https://support.google.com/websearch/answer/510?hl=vi")
-    ) is None
-    assert _player_supported_browser_url(
-        QUrl("https://www.google.com/url?q=https%3A%2F%2Fsupport.google.com%2Fwebsearch%2Fanswer%2F510")
-    ) is None
+    assert _player_supported_browser_url(QUrl("https://support.google.com/websearch/answer/510?hl=vi")) is None
+    assert (
+        _player_supported_browser_url(
+            QUrl("https://www.google.com/url?q=https%3A%2F%2Fsupport.google.com%2Fwebsearch%2Fanswer%2F510")
+        )
+        is None
+    )
     assert _player_supported_browser_url(QUrl("mailto:demo@example.test")) is None
 
 
@@ -913,7 +959,7 @@ def test_player_window_help_button_click_opens_user_guide(qapp) -> None:
         dialogs = [
             widget
             for widget in qapp.topLevelWidgets()
-            if isinstance(widget, QDialog) and widget.windowTitle() == window._guide_text("title")
+            if isinstance(widget, QDialog) and widget.windowTitle() == window.features.user_guide._guide_text("title")
         ]
         assert dialogs
         opened.append(dialogs[0])
@@ -922,10 +968,10 @@ def test_player_window_help_button_click_opens_user_guide(qapp) -> None:
     try:
         QTimer.singleShot(0, close_user_guide)
 
-        QTest.mouseClick(window._help_button, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(window.features.layout._help_button, Qt.MouseButton.LeftButton)
 
         assert opened
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -939,22 +985,22 @@ def test_player_window_telegram_previous_next_skips_non_video_posts(qapp, monkey
             TelegramChannelVideo("Video 103", "https://t.me/demo/103", "103"),
         ]
         opened: list[str] = []
-        window._telegram_channel_all_items = items
-        window._telegram_channel_items = items
-        window._pending_telegram_url = "https://t.me/demo"
-        window._set_active_telegram_channel_video(items[2])
+        window.features.sources.channel.channel_all_items = items
+        window.features.sources.channel.channel_items = items
+        window.features.lifecycle.workers.pending_telegram_url = "https://t.me/demo"
+        window.features.sources._set_active_telegram_channel_video(items[2])
         monkeypatch.setattr(
-            window,
+            window.features.sources,
             "_open_telegram_channel_item",
-            lambda item: opened.append((item.post_id, window._pending_telegram_autoplay)),
+            lambda item: opened.append((item.post_id, window.features.sources.channel.pending_autoplay)),
         )
 
-        window._previous_media_item()
-        window._set_active_telegram_channel_video(items[0])
-        window._next_media_item()
+        window.features.media._previous_media_item()
+        window.features.sources._set_active_telegram_channel_video(items[0])
+        window.features.media._next_media_item()
 
         assert opened == [("101", True), ("103", True)]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -967,46 +1013,57 @@ def test_player_window_telegram_browser_up_down_selects_visible_videos(qapp) -> 
             TelegramChannelVideo("Post 102", "https://t.me/demo/102", "102", has_video=False, media_kind="text"),
             TelegramChannelVideo("Video 103", "https://t.me/demo/103", "103"),
         ]
-        window._telegram_channel_all_items = items
-        window._populate_telegram_channel_browser(items)
+        window.features.sources.channel.channel_all_items = items
+        window.features.sources._populate_telegram_channel_browser(items)
 
-        assert window._telegram_channel_splitter.count() == 2
-        assert window._telegram_channel_splitter.widget(0) is window._telegram_channel_media_panel
-        assert window._telegram_channel_splitter.widget(1) is window._telegram_channel_side_panel
-        assert window._telegram_channel_thumbnail.minimumHeight() >= 320
-        assert not window._telegram_channel_thumbnail.isHidden()
-        assert window._telegram_channel_side_panel.maximumWidth() > 10000
-        assert window._telegram_channel_search.height() == 36
-        assert window._telegram_channel_remote_search_button.height() == 36
-        assert window._telegram_channel_filter_combo.height() == 36
-        assert window._telegram_channel_load_more_button.height() == 36
-        assert window._telegram_channel_load_more_button.isCheckable()
-        assert not window._telegram_channel_load_more_button.isChecked()
-        assert window._telegram_channel_translate_button.isCheckable()
-        assert not window._telegram_channel_translate_button.isChecked()
-        assert window._telegram_channel_auto_open_check.isChecked() is window._config.telegram_auto_open_videos
-        assert window._telegram_channel_side_toggle_button.isCheckable()
-        assert window._telegram_channel_side_toggle_button.isChecked()
-        assert window._telegram_channel_side_toggle_button.height() == 36
-        assert window._telegram_channel_media_panel.layout().count() == 2
-        assert window._telegram_channel_side_panel.layout().count() == 3
-        assert window._telegram_channel_open_button.isHidden()
-        assert window._telegram_channel_login_button.isHidden()
-        assert window._telegram_channel_refresh_button.isHidden()
-        assert window._telegram_channel_title.isHidden()
-        assert window._telegram_channel_status.isHidden()
-        assert window._telegram_channel_list.iconSize().width() == 96
-        assert window._telegram_channel_list.wordWrap() is True
-        assert window._telegram_channel_list.textElideMode() == Qt.TextElideMode.ElideNone
-        assert window._telegram_channel_list.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
-        assert not window._telegram_channel_preview.isHidden()
-        assert window._telegram_channel_preview.maximumHeight() <= 240
+        assert window.features.layout._telegram_channel_splitter.count() == 2
+        assert (
+            window.features.layout._telegram_channel_splitter.widget(0)
+            is window.features.layout._telegram_channel_media_panel
+        )
+        assert (
+            window.features.layout._telegram_channel_splitter.widget(1)
+            is window.features.layout._telegram_channel_side_panel
+        )
+        assert window.features.layout._telegram_channel_thumbnail.minimumHeight() >= 320
+        assert not window.features.layout._telegram_channel_thumbnail.isHidden()
+        assert window.features.layout._telegram_channel_side_panel.maximumWidth() > 10000
+        assert window.features.layout._telegram_channel_search.height() == 36
+        assert window.features.layout._telegram_channel_remote_search_button.height() == 36
+        assert window.features.layout._telegram_channel_filter_combo.height() == 36
+        assert window.features.layout._telegram_channel_load_more_button.height() == 36
+        assert window.features.layout._telegram_channel_load_more_button.isCheckable()
+        assert not window.features.layout._telegram_channel_load_more_button.isChecked()
+        assert window.features.layout._telegram_channel_translate_button.isCheckable()
+        assert not window.features.layout._telegram_channel_translate_button.isChecked()
+        assert (
+            window.features.layout._telegram_channel_auto_open_check.isChecked()
+            is window.features.config.telegram_auto_open_videos
+        )
+        assert window.features.layout._telegram_channel_side_toggle_button.isCheckable()
+        assert window.features.layout._telegram_channel_side_toggle_button.isChecked()
+        assert window.features.layout._telegram_channel_side_toggle_button.height() == 36
+        assert window.features.layout._telegram_channel_media_panel.layout().count() == 2
+        assert window.features.layout._telegram_channel_side_panel.layout().count() == 3
+        assert window.features.layout._telegram_channel_open_button.isHidden()
+        assert window.features.layout._telegram_channel_login_button.isHidden()
+        assert window.features.layout._telegram_channel_refresh_button.isHidden()
+        assert window.features.layout._telegram_channel_title.isHidden()
+        assert window.features.layout._telegram_channel_status.isHidden()
+        assert window.features.layout._telegram_channel_list.iconSize().width() == 96
+        assert window.features.layout._telegram_channel_list.wordWrap() is True
+        assert window.features.layout._telegram_channel_list.textElideMode() == Qt.TextElideMode.ElideNone
+        assert (
+            window.features.layout._telegram_channel_list.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+        )
+        assert not window.features.layout._telegram_channel_preview.isHidden()
+        assert window.features.layout._telegram_channel_preview.maximumHeight() <= 240
 
-        assert window._select_adjacent_telegram_channel_video(1) is True
-        assert window._telegram_channel_list.currentRow() == 2
-        assert window._select_adjacent_telegram_channel_video(-1) is True
-        assert window._telegram_channel_list.currentRow() == 0
-        window._settings_save_timer.stop()
+        assert window.features.sources._select_adjacent_telegram_channel_video(1) is True
+        assert window.features.layout._telegram_channel_list.currentRow() == 2
+        assert window.features.sources._select_adjacent_telegram_channel_video(-1) is True
+        assert window.features.layout._telegram_channel_list.currentRow() == 0
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1019,22 +1076,24 @@ def test_player_window_youtube_status_refresh_does_not_auto_open_during_rebuild(
             YouTubeChannelItem("Video 1", "https://www.youtube.com/watch?v=one", "one"),
             YouTubeChannelItem("Video 2", "https://www.youtube.com/watch?v=two", "two"),
         ]
-        monkeypatch.setattr(window, "_open_telegram_channel_item", lambda item: opened.append(item.post_id))
-        window._telegram_channel_provider = "youtube"
-        window._pending_telegram_url = "https://www.youtube.com/@demo"
-        window._telegram_channel_all_items = items
-        window._populate_telegram_channel_browser(items)
-        window._telegram_suppress_auto_open_selection = True
-        window._set_active_telegram_channel_video(items[1])
-        window._telegram_suppress_auto_open_selection = False
+        monkeypatch.setattr(
+            window.features.sources, "_open_telegram_channel_item", lambda item: opened.append(item.post_id)
+        )
+        window.features.channel_flow._telegram_channel_provider = "youtube"
+        window.features.lifecycle.workers.pending_telegram_url = "https://www.youtube.com/@demo"
+        window.features.sources.channel.channel_all_items = items
+        window.features.sources._populate_telegram_channel_browser(items)
+        window.features.channel_browser._telegram_suppress_auto_open_selection = True
+        window.features.sources._set_active_telegram_channel_video(items[1])
+        window.features.channel_browser._telegram_suppress_auto_open_selection = False
 
-        window._telegram_channel_state.mark_failed(items[0])
-        window._refresh_telegram_channel_item_statuses()
+        window.features.sources.channel.mark_failed(items[0])
+        window.features.sources._refresh_telegram_channel_item_statuses()
 
         assert opened == []
-        assert window._telegram_channel_list.count() == 2
-        assert window._telegram_channel_list.currentRow() == 1
-        window._settings_save_timer.stop()
+        assert window.features.layout._telegram_channel_list.count() == 2
+        assert window.features.layout._telegram_channel_list.currentRow() == 1
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1044,27 +1103,31 @@ def test_player_window_youtube_channel_item_failure_stays_in_browser(qapp, monke
     handled: list[str] = []
     try:
         item = YouTubeChannelItem("Unavailable", "https://www.youtube.com/watch?v=gone", "gone")
-        monkeypatch.setattr(window, "_handle_video_url_failure_action", lambda detail: handled.append(detail))
-        window._telegram_channel_provider = "youtube"
-        window._pending_telegram_url = "https://www.youtube.com/@demo"
-        window._telegram_channel_all_items = [item]
-        window._populate_telegram_channel_browser([item])
-        window._current_telegram_channel_item = item
-        window._last_video_url_request = {
+        monkeypatch.setattr(
+            window.features.sources, "_handle_video_url_failure_action", lambda detail: handled.append(detail)
+        )
+        window.features.channel_flow._telegram_channel_provider = "youtube"
+        window.features.lifecycle.workers.pending_telegram_url = "https://www.youtube.com/@demo"
+        window.features.sources.channel.channel_all_items = [item]
+        window.features.sources._populate_telegram_channel_browser([item])
+        window.features.sources.channel.current_channel_item = item
+        window.features.sources._last_video_url_request = {
             "url": item.url,
             "full_cache": False,
             "quality": "best",
             "keep_telegram_context": True,
         }
 
-        window._video_url_failed("Could not download video from youtube: unavailable")
+        window.features.sources._video_url_failed("Could not download video from youtube: unavailable")
 
         assert handled == []
-        assert window._media_stack.currentWidget() is window._telegram_channel_view
-        assert window._telegram_channel_state.item_status(item) == "failed"
-        assert "unavailable" in window._telegram_channel_status.text()
-        assert window.statusBar().currentMessage() == window._tr("youtube_channel_browser_ready").format(count=1)
-        window._settings_save_timer.stop()
+        assert window.features.layout._media_stack.currentWidget() is window.features.layout._telegram_channel_view
+        assert window.features.sources.channel.item_status(item) == "failed"
+        assert "unavailable" in window.features.layout._telegram_channel_status.text()
+        assert window.statusBar().currentMessage() == window.features.settings._tr(
+            "youtube_channel_browser_ready"
+        ).format(count=1)
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1074,9 +1137,13 @@ def test_player_window_browser_video_unavailable_falls_back_to_browser(qapp, mon
     handled: list[str] = []
     opened: list[str] = []
     try:
-        monkeypatch.setattr(window, "_handle_video_url_failure_action", lambda detail: handled.append(detail))
-        monkeypatch.setattr(window, "_open_video_url_in_browser", lambda url: opened.append(url) or True)
-        window._last_video_url_request = {
+        monkeypatch.setattr(
+            window.features.sources, "_handle_video_url_failure_action", lambda detail: handled.append(detail)
+        )
+        monkeypatch.setattr(
+            window.features.sources, "_open_video_url_in_browser", lambda url: opened.append(url) or True
+        )
+        window.features.sources._last_video_url_request = {
             "url": "https://www.youtube.com/watch?v=HaptpffiOjE",
             "full_cache": False,
             "quality": "best",
@@ -1084,13 +1151,13 @@ def test_player_window_browser_video_unavailable_falls_back_to_browser(qapp, mon
             "browser_fallback_on_unavailable": True,
         }
 
-        window._video_url_failed(
+        window.features.sources._video_url_failed(
             "Could not download video from youtube: [youtube] HaptpffiOjE: This video is not available"
         )
 
         assert handled == []
         assert opened == ["https://www.youtube.com/watch?v=HaptpffiOjE"]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1100,21 +1167,23 @@ def test_player_window_youtube_failed_item_is_not_auto_reopened(qapp, monkeypatc
     opened: list[str] = []
     try:
         item = YouTubeChannelItem("Unavailable", "https://www.youtube.com/watch?v=gone", "gone")
-        monkeypatch.setattr(window, "_open_telegram_channel_item", lambda item: opened.append(item.post_id))
-        window._telegram_channel_provider = "youtube"
-        window._pending_telegram_url = "https://www.youtube.com/@demo"
-        window._telegram_channel_all_items = [item]
-        window._populate_telegram_channel_browser([item])
-        window._telegram_channel_state.mark_failed(item)
+        monkeypatch.setattr(
+            window.features.sources, "_open_telegram_channel_item", lambda item: opened.append(item.post_id)
+        )
+        window.features.channel_flow._telegram_channel_provider = "youtube"
+        window.features.lifecycle.workers.pending_telegram_url = "https://www.youtube.com/@demo"
+        window.features.sources.channel.channel_all_items = [item]
+        window.features.sources._populate_telegram_channel_browser([item])
+        window.features.sources.channel.mark_failed(item)
 
-        window._maybe_auto_open_telegram_video(item)
-        window._queue_pending_telegram_channel_item(item)
-        window._telegram_channel_state.pending_open_item_key = window._telegram_channel_item_key(item)
-        window._open_pending_telegram_channel_item()
+        window.features.sources._maybe_auto_open_telegram_video(item)
+        window.features.sources._queue_pending_telegram_channel_item(item)
+        window.features.sources.channel.pending_open_item_key = window.features.sources._telegram_channel_item_key(item)
+        window.features.sources._open_pending_telegram_channel_item()
 
         assert opened == []
-        assert window._telegram_channel_state.pending_open_item_key == ""
-        window._settings_save_timer.stop()
+        assert window.features.sources.channel.pending_open_item_key == ""
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1122,23 +1191,29 @@ def test_player_window_youtube_failed_item_is_not_auto_reopened(qapp, monkeypatc
 def test_player_window_telegram_side_panel_toggle_hides_and_restores_right_panel(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._show_telegram_channel_browser("https://t.me/demo")
-        window._telegram_channel_splitter.setSizes([640, 360])
+        window.features.channel_browser._show_telegram_channel_browser("https://t.me/demo")
+        window.features.layout._telegram_channel_splitter.setSizes([640, 360])
 
-        window._telegram_channel_side_toggle_button.click()
+        window.features.layout._telegram_channel_side_toggle_button.click()
 
-        assert window._telegram_channel_side_panel.isHidden()
-        assert not window._telegram_channel_side_toggle_button.isChecked()
-        assert window._telegram_channel_splitter.widget(0) is window._telegram_channel_media_panel
-        assert window._telegram_channel_splitter.widget(1) is window._telegram_channel_side_panel
-        assert window._telegram_channel_splitter.sizes()[1] == 0
+        assert window.features.layout._telegram_channel_side_panel.isHidden()
+        assert not window.features.layout._telegram_channel_side_toggle_button.isChecked()
+        assert (
+            window.features.layout._telegram_channel_splitter.widget(0)
+            is window.features.layout._telegram_channel_media_panel
+        )
+        assert (
+            window.features.layout._telegram_channel_splitter.widget(1)
+            is window.features.layout._telegram_channel_side_panel
+        )
+        assert window.features.layout._telegram_channel_splitter.sizes()[1] == 0
 
-        window._telegram_channel_side_toggle_button.click()
+        window.features.layout._telegram_channel_side_toggle_button.click()
 
-        assert not window._telegram_channel_side_panel.isHidden()
-        assert window._telegram_channel_side_toggle_button.isChecked()
-        assert window._telegram_channel_splitter.sizes()[1] > 0
-        window._settings_save_timer.stop()
+        assert not window.features.layout._telegram_channel_side_panel.isHidden()
+        assert window.features.layout._telegram_channel_side_toggle_button.isChecked()
+        assert window.features.layout._telegram_channel_splitter.sizes()[1] > 0
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1146,22 +1221,22 @@ def test_player_window_telegram_side_panel_toggle_hides_and_restores_right_panel
 def test_player_window_telegram_side_panel_splitter_collapse_keeps_toggle_recoverable(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._show_telegram_channel_browser("https://t.me/demo")
-        window._telegram_channel_splitter.setSizes([640, 360])
-        window._telegram_channel_splitter.setCollapsible(1, True)
-        window._telegram_channel_splitter.setSizes([1000, 0])
+        window.features.channel_browser._show_telegram_channel_browser("https://t.me/demo")
+        window.features.layout._telegram_channel_splitter.setSizes([640, 360])
+        window.features.layout._telegram_channel_splitter.setCollapsible(1, True)
+        window.features.layout._telegram_channel_splitter.setSizes([1000, 0])
 
-        window._telegram_side_panel_splitter_moved(0, 0)
+        window.features.channel_browser._telegram_side_panel_splitter_moved(0, 0)
 
-        assert not window._telegram_channel_side_panel.isHidden()
-        assert not window._telegram_channel_side_toggle_button.isChecked()
+        assert not window.features.layout._telegram_channel_side_panel.isHidden()
+        assert not window.features.layout._telegram_channel_side_toggle_button.isChecked()
 
-        window._telegram_channel_side_toggle_button.click()
+        window.features.layout._telegram_channel_side_toggle_button.click()
 
-        assert not window._telegram_channel_side_panel.isHidden()
-        assert window._telegram_channel_side_toggle_button.isChecked()
-        assert window._telegram_channel_splitter.sizes()[1] > 0
-        window._settings_save_timer.stop()
+        assert not window.features.layout._telegram_channel_side_panel.isHidden()
+        assert window.features.layout._telegram_channel_side_toggle_button.isChecked()
+        assert window.features.layout._telegram_channel_splitter.sizes()[1] > 0
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1181,10 +1256,10 @@ def test_player_window_telegram_browser_item_height_grows_for_wrapped_text(qapp)
             file_size=8 * 1024 * 1024,
             media_url="https://cdn.example.test/video.mp4",
         )
-        window._telegram_channel_all_items = [item]
-        window._populate_telegram_channel_browser([item])
+        window.features.sources.channel.channel_all_items = [item]
+        window.features.sources._populate_telegram_channel_browser([item])
 
-        list_item = window._telegram_channel_list.item(0)
+        list_item = window.features.layout._telegram_channel_list.item(0)
         assert "[Video] #101" in list_item.text()
         assert "Very Long Caption" in list_item.text()
         assert "2026-05-29 12:55" in list_item.text()
@@ -1195,11 +1270,11 @@ def test_player_window_telegram_browser_item_height_grows_for_wrapped_text(qapp)
         assert "https://cdn.example.test/video.mp4" not in list_item.text()
         assert list_item.toolTip() == "https://t.me/demo/101"
         assert list_item.sizeHint().height() <= 112
-        window._telegram_channel_selection_changed(list_item)
-        preview_text = window._telegram_channel_preview.toPlainText()
+        window.features.sources._telegram_channel_selection_changed(list_item)
+        preview_text = window.features.layout._telegram_channel_preview.toPlainText()
         assert "https://t.me/demo/101" in preview_text
         assert "https://cdn.example.test/video.mp4" in preview_text
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1214,25 +1289,31 @@ def test_player_window_telegram_browser_renders_item_status_badges(qapp) -> None
             TelegramChannelVideo("Video 104", "https://t.me/demo/104", "104"),
             TelegramChannelVideo("Video 105", "https://t.me/demo/105", "105"),
         ]
-        window._telegram_channel_all_items = items
-        window._telegram_channel_state.loading_item_key = window._telegram_channel_item_key(items[0])
-        window._telegram_channel_state.pending_open_item_key = window._telegram_channel_item_key(items[1])
-        window._telegram_channel_state.current_channel_item = items[2]
-        window._telegram_channel_state.failed_item_keys.add(window._telegram_channel_item_key(items[3]))
-        window._telegram_channel_state.opened_item_keys.add(window._telegram_channel_item_key(items[4]))
+        window.features.sources.channel.channel_all_items = items
+        window.features.sources.channel.loading_item_key = window.features.sources._telegram_channel_item_key(items[0])
+        window.features.sources.channel.pending_open_item_key = window.features.sources._telegram_channel_item_key(
+            items[1]
+        )
+        window.features.sources.channel.current_channel_item = items[2]
+        window.features.sources.channel.failed_item_keys.add(
+            window.features.sources._telegram_channel_item_key(items[3])
+        )
+        window.features.sources.channel.opened_item_keys.add(
+            window.features.sources._telegram_channel_item_key(items[4])
+        )
 
-        window._populate_telegram_channel_browser(items)
+        window.features.sources._populate_telegram_channel_browser(items)
         labels = [
-            window._telegram_channel_list.item(row).text()
-            for row in range(window._telegram_channel_list.count())
+            window.features.layout._telegram_channel_list.item(row).text()
+            for row in range(window.features.layout._telegram_channel_list.count())
         ]
 
-        assert window._tr("telegram_channel_status_loading") in labels[0]
-        assert window._tr("telegram_channel_status_queued") in labels[1]
-        assert window._tr("telegram_channel_status_current") in labels[2]
-        assert window._tr("telegram_channel_status_failed") in labels[3]
-        assert window._tr("telegram_channel_status_opened") in labels[4]
-        window._settings_save_timer.stop()
+        assert window.features.settings._tr("telegram_channel_status_loading") in labels[0]
+        assert window.features.settings._tr("telegram_channel_status_queued") in labels[1]
+        assert window.features.settings._tr("telegram_channel_status_current") in labels[2]
+        assert window.features.settings._tr("telegram_channel_status_failed") in labels[3]
+        assert window.features.settings._tr("telegram_channel_status_opened") in labels[4]
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1244,43 +1325,55 @@ def test_player_window_telegram_browser_blacklist_hides_and_restores_items(qapp)
             TelegramChannelVideo("Video 101", "https://t.me/demo/101", "101"),
             TelegramChannelVideo("Video 102", "https://t.me/demo/102", "102"),
         ]
-        window._telegram_channel_state.blacklisted_item_keys.clear()
-        window._telegram_channel_state.blacklisted_content_keys.clear()
-        window._telegram_channel_all_items = items
-        window._filter_telegram_channel_items()
+        window.features.sources.channel.blacklisted_item_keys.clear()
+        window.features.sources.channel.blacklisted_content_keys.clear()
+        window.features.sources.channel.channel_all_items = items
+        window.features.sources._filter_telegram_channel_items()
 
-        assert window._telegram_channel_list.count() == 2
-        assert window._telegram_channel_list.item(0).data(TELEGRAM_BLACKLIST_BUTTON_ROLE) == window._tr(
-            "telegram_blacklist_button"
+        assert window.features.layout._telegram_channel_list.count() == 2
+        assert window.features.layout._telegram_channel_list.item(0).data(
+            TELEGRAM_BLACKLIST_BUTTON_ROLE
+        ) == window.features.settings._tr("telegram_blacklist_button")
+
+        window.features.sources._toggle_telegram_blacklist_item(items[0])
+
+        assert window.features.layout._telegram_channel_list.count() == 1
+        assert (
+            window.features.sources._telegram_channel_item_from_list_item(
+                window.features.layout._telegram_channel_list.item(0)
+            )
+            is items[1]
         )
 
-        window._toggle_telegram_blacklist_item(items[0])
-
-        assert window._telegram_channel_list.count() == 1
-        assert window._telegram_channel_item_from_list_item(window._telegram_channel_list.item(0)) is items[1]
-
-        blacklist_index = window._telegram_channel_filter_combo.findData("blacklist")
+        blacklist_index = window.features.layout._telegram_channel_filter_combo.findData("blacklist")
         assert blacklist_index >= 0
-        was_blocked = window._telegram_channel_filter_combo.blockSignals(True)
-        window._telegram_channel_filter_combo.setCurrentIndex(blacklist_index)
-        window._telegram_channel_filter_combo.blockSignals(was_blocked)
-        window._filter_telegram_channel_items()
+        was_blocked = window.features.layout._telegram_channel_filter_combo.blockSignals(True)
+        window.features.layout._telegram_channel_filter_combo.setCurrentIndex(blacklist_index)
+        window.features.layout._telegram_channel_filter_combo.blockSignals(was_blocked)
+        window.features.sources._filter_telegram_channel_items()
 
-        assert window._telegram_channel_list.count() == 1
-        assert window._telegram_channel_item_from_list_item(window._telegram_channel_list.item(0)) is items[0]
-        assert window._telegram_channel_list.item(0).data(TELEGRAM_BLACKLIST_BUTTON_ROLE) == window._tr(
-            "telegram_unblacklist_button"
+        assert window.features.layout._telegram_channel_list.count() == 1
+        assert (
+            window.features.sources._telegram_channel_item_from_list_item(
+                window.features.layout._telegram_channel_list.item(0)
+            )
+            is items[0]
         )
+        assert window.features.layout._telegram_channel_list.item(0).data(
+            TELEGRAM_BLACKLIST_BUTTON_ROLE
+        ) == window.features.settings._tr("telegram_unblacklist_button")
 
-        window._toggle_telegram_blacklist_item(items[0])
+        window.features.sources._toggle_telegram_blacklist_item(items[0])
 
-        assert window._telegram_channel_list.count() == 0
-        was_blocked = window._telegram_channel_filter_combo.blockSignals(True)
-        window._telegram_channel_filter_combo.setCurrentIndex(window._telegram_channel_filter_combo.findData("all"))
-        window._telegram_channel_filter_combo.blockSignals(was_blocked)
-        window._filter_telegram_channel_items()
-        assert window._telegram_channel_list.count() == 2
-        window._settings_save_timer.stop()
+        assert window.features.layout._telegram_channel_list.count() == 0
+        was_blocked = window.features.layout._telegram_channel_filter_combo.blockSignals(True)
+        window.features.layout._telegram_channel_filter_combo.setCurrentIndex(
+            window.features.layout._telegram_channel_filter_combo.findData("all")
+        )
+        window.features.layout._telegram_channel_filter_combo.blockSignals(was_blocked)
+        window.features.sources._filter_telegram_channel_items()
+        assert window.features.layout._telegram_channel_list.count() == 2
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1293,40 +1386,50 @@ def test_player_window_telegram_browser_blacklist_hides_same_content_items(qapp)
             TelegramChannelVideo("Copy", "https://t.me/demo/102", "102", text="same content"),
             TelegramChannelVideo("Other", "https://t.me/demo/103", "103", text="different"),
         ]
-        window._telegram_channel_state.blacklisted_item_keys.clear()
-        window._telegram_channel_state.blacklisted_content_keys.clear()
-        window._telegram_channel_all_items = items
-        window._filter_telegram_channel_items()
+        window.features.sources.channel.blacklisted_item_keys.clear()
+        window.features.sources.channel.blacklisted_content_keys.clear()
+        window.features.sources.channel.channel_all_items = items
+        window.features.sources._filter_telegram_channel_items()
 
-        assert window._telegram_channel_list.count() == 3
+        assert window.features.layout._telegram_channel_list.count() == 3
 
-        window._toggle_telegram_blacklist_item(items[0])
+        window.features.sources._toggle_telegram_blacklist_item(items[0])
 
-        assert window._telegram_channel_list.count() == 1
-        assert window._telegram_channel_item_from_list_item(window._telegram_channel_list.item(0)) is items[2]
+        assert window.features.layout._telegram_channel_list.count() == 1
+        assert (
+            window.features.sources._telegram_channel_item_from_list_item(
+                window.features.layout._telegram_channel_list.item(0)
+            )
+            is items[2]
+        )
 
-        blacklist_index = window._telegram_channel_filter_combo.findData("blacklist")
-        was_blocked = window._telegram_channel_filter_combo.blockSignals(True)
-        window._telegram_channel_filter_combo.setCurrentIndex(blacklist_index)
-        window._telegram_channel_filter_combo.blockSignals(was_blocked)
-        window._filter_telegram_channel_items()
+        blacklist_index = window.features.layout._telegram_channel_filter_combo.findData("blacklist")
+        was_blocked = window.features.layout._telegram_channel_filter_combo.blockSignals(True)
+        window.features.layout._telegram_channel_filter_combo.setCurrentIndex(blacklist_index)
+        window.features.layout._telegram_channel_filter_combo.blockSignals(was_blocked)
+        window.features.sources._filter_telegram_channel_items()
 
-        assert window._telegram_channel_list.count() == 2
+        assert window.features.layout._telegram_channel_list.count() == 2
         visible_items = [
-            window._telegram_channel_item_from_list_item(window._telegram_channel_list.item(row)) for row in range(2)
+            window.features.sources._telegram_channel_item_from_list_item(
+                window.features.layout._telegram_channel_list.item(row)
+            )
+            for row in range(2)
         ]
         assert visible_items == [items[0], items[1]]
 
-        window._toggle_telegram_blacklist_item(items[1])
+        window.features.sources._toggle_telegram_blacklist_item(items[1])
 
-        assert window._telegram_channel_list.count() == 0
-        was_blocked = window._telegram_channel_filter_combo.blockSignals(True)
-        window._telegram_channel_filter_combo.setCurrentIndex(window._telegram_channel_filter_combo.findData("all"))
-        window._telegram_channel_filter_combo.blockSignals(was_blocked)
-        window._filter_telegram_channel_items()
+        assert window.features.layout._telegram_channel_list.count() == 0
+        was_blocked = window.features.layout._telegram_channel_filter_combo.blockSignals(True)
+        window.features.layout._telegram_channel_filter_combo.setCurrentIndex(
+            window.features.layout._telegram_channel_filter_combo.findData("all")
+        )
+        window.features.layout._telegram_channel_filter_combo.blockSignals(was_blocked)
+        window.features.sources._filter_telegram_channel_items()
 
-        assert window._telegram_channel_list.count() == 3
-        window._settings_save_timer.stop()
+        assert window.features.layout._telegram_channel_list.count() == 3
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1336,18 +1439,22 @@ def test_player_window_telegram_video_selection_auto_opens_after_population(qapp
     opened = []
     try:
         item = TelegramChannelVideo("Video 101", "https://t.me/demo/101", "101")
-        window._telegram_channel_all_items = [item]
-        window._populate_telegram_channel_browser([item])
-        window._telegram_channel_auto_open_check.setChecked(True)
-        monkeypatch.setattr(window, "_open_telegram_channel_item", lambda channel_item: opened.append(channel_item))
+        window.features.sources.channel.channel_all_items = [item]
+        window.features.sources._populate_telegram_channel_browser([item])
+        window.features.layout._telegram_channel_auto_open_check.setChecked(True)
+        monkeypatch.setattr(
+            window.features.sources, "_open_telegram_channel_item", lambda channel_item: opened.append(channel_item)
+        )
 
-        window._telegram_channel_selection_changed(window._telegram_channel_list.item(0))
+        window.features.sources._telegram_channel_selection_changed(
+            window.features.layout._telegram_channel_list.item(0)
+        )
 
         assert opened == [item]
-        assert window._pending_telegram_autoplay is True
+        assert window.features.sources.channel.pending_autoplay is True
     finally:
-        window._telegram_channel_auto_open_check.setChecked(True)
-        window._settings_save_timer.stop()
+        window.features.layout._telegram_channel_auto_open_check.setChecked(True)
+        window.features.layout._settings_save_timer.stop()
         window.close()
 
 
@@ -1356,18 +1463,22 @@ def test_player_window_telegram_video_selection_respects_auto_open_toggle(qapp, 
     opened = []
     try:
         item = TelegramChannelVideo("Video 101", "https://t.me/demo/101", "101")
-        window._telegram_channel_all_items = [item]
-        window._populate_telegram_channel_browser([item])
-        window._telegram_channel_auto_open_check.setChecked(False)
-        monkeypatch.setattr(window, "_open_telegram_channel_item", lambda channel_item: opened.append(channel_item))
+        window.features.sources.channel.channel_all_items = [item]
+        window.features.sources._populate_telegram_channel_browser([item])
+        window.features.layout._telegram_channel_auto_open_check.setChecked(False)
+        monkeypatch.setattr(
+            window.features.sources, "_open_telegram_channel_item", lambda channel_item: opened.append(channel_item)
+        )
 
-        window._telegram_channel_selection_changed(window._telegram_channel_list.item(0))
+        window.features.sources._telegram_channel_selection_changed(
+            window.features.layout._telegram_channel_list.item(0)
+        )
 
         assert opened == []
-        assert window._pending_telegram_autoplay is False
+        assert window.features.sources.channel.pending_autoplay is False
     finally:
-        window._telegram_channel_auto_open_check.setChecked(True)
-        window._settings_save_timer.stop()
+        window.features.layout._telegram_channel_auto_open_check.setChecked(True)
+        window.features.layout._settings_save_timer.stop()
         window.close()
 
 
@@ -1377,26 +1488,32 @@ def test_player_window_telegram_video_selection_autoplays_downloaded_video(qapp,
         item = TelegramChannelVideo("Video 101", "https://t.me/demo/101", "101")
         video_path = str(tmp_path / "telegram-video.mp4")
         played: list[str] = []
-        window._dubbing_auto_enabled = False
-        window._telegram_channel_all_items = [item]
-        window._populate_telegram_channel_browser([item])
-        window._telegram_channel_auto_open_check.setChecked(True)
-        monkeypatch.setattr(window, "_download_telegram_channel_item", lambda _item: True)
+        window.features.media.playback.dubbing_auto_enabled = False
+        window.features.sources.channel.channel_all_items = [item]
+        window.features.sources._populate_telegram_channel_browser([item])
+        window.features.layout._telegram_channel_auto_open_check.setChecked(True)
+        monkeypatch.setattr(window.features.sources, "_download_telegram_channel_item", lambda _item: True)
         monkeypatch.setattr(
-            window,
+            window.features.media,
             "_load_current_video_for_playback",
-            lambda: setattr(window, "_runtime_media_path", window._video_path),
+            lambda: window.features.set("_runtime_media_path", window.features.channel_browser._video_path),
         )
-        monkeypatch.setattr(window, "_play_active_source", lambda: played.append(str(window._video_path)))
+        monkeypatch.setattr(
+            window.features.media,
+            "_play_active_source",
+            lambda: played.append(str(window.features.channel_browser._video_path)),
+        )
 
-        window._telegram_channel_selection_changed(window._telegram_channel_list.item(0))
-        window._telegram_video_ready(video_path)
+        window.features.sources._telegram_channel_selection_changed(
+            window.features.layout._telegram_channel_list.item(0)
+        )
+        window.features.sources._telegram_video_ready(video_path)
 
         assert played == [video_path]
-        assert window._pending_telegram_autoplay is False
+        assert window.features.sources.channel.pending_autoplay is False
     finally:
-        window._telegram_channel_auto_open_check.setChecked(True)
-        window._settings_save_timer.stop()
+        window.features.layout._telegram_channel_auto_open_check.setChecked(True)
+        window.features.layout._settings_save_timer.stop()
         window.close()
 
 
@@ -1404,31 +1521,48 @@ def test_player_window_telegram_video_output_stays_in_channel_splitter(qapp) -> 
     window = PlayerWindow()
     try:
         item = TelegramChannelVideo("Video 101", "https://t.me/demo/101", "101")
-        window._show_telegram_channel_browser("https://t.me/demo")
-        window._telegram_channel_all_items = [item]
-        window._populate_telegram_channel_browser([item])
-        window._set_active_telegram_channel_video(item)
-        window._telegram_browser_return_available = True
+        window.features.channel_browser._show_telegram_channel_browser("https://t.me/demo")
+        window.features.sources.channel.channel_all_items = [item]
+        window.features.sources._populate_telegram_channel_browser([item])
+        window.features.sources._set_active_telegram_channel_video(item)
+        window.features.sources.channel.browser_return_available = True
 
-        window._show_video_output()
+        window.features.channel_browser._show_video_output()
 
-        assert window._media_stack.currentWidget() is window._telegram_channel_view
-        assert window._telegram_channel_media_stack.currentWidget() is window._telegram_video_widget
-        assert window._telegram_channel_media_stack.indexOf(window._telegram_video_widget) >= 0
-        assert window._media_stack.indexOf(window._video_widget) >= 0
-        assert window._telegram_channel_media_stack.indexOf(window._video_widget) < 0
-        assert window._telegram_video_widget.aspectRatioMode() == Qt.AspectRatioMode.KeepAspectRatio
-        assert window._telegram_channel_splitter.widget(0) is window._telegram_channel_media_panel
-        assert window._telegram_channel_splitter.widget(1) is window._telegram_channel_side_panel
-        window._telegram_channel_selection_changed(window._telegram_channel_list.item(0))
-        assert window._telegram_channel_media_stack.currentWidget() is window._telegram_video_widget
+        assert window.features.layout._media_stack.currentWidget() is window.features.layout._telegram_channel_view
+        assert (
+            window.features.layout._telegram_channel_media_stack.currentWidget()
+            is window.features.layout._telegram_video_widget
+        )
+        assert (
+            window.features.layout._telegram_channel_media_stack.indexOf(window.features.layout._telegram_video_widget)
+            >= 0
+        )
+        assert window.features.layout._media_stack.indexOf(window.features.layout._video_widget) >= 0
+        assert window.features.layout._telegram_channel_media_stack.indexOf(window.features.layout._video_widget) < 0
+        assert window.features.layout._telegram_video_widget.aspectRatioMode() == Qt.AspectRatioMode.KeepAspectRatio
+        assert (
+            window.features.layout._telegram_channel_splitter.widget(0)
+            is window.features.layout._telegram_channel_media_panel
+        )
+        assert (
+            window.features.layout._telegram_channel_splitter.widget(1)
+            is window.features.layout._telegram_channel_side_panel
+        )
+        window.features.sources._telegram_channel_selection_changed(
+            window.features.layout._telegram_channel_list.item(0)
+        )
+        assert (
+            window.features.layout._telegram_channel_media_stack.currentWidget()
+            is window.features.layout._telegram_video_widget
+        )
 
-        window._clear_active_telegram_channel_video()
-        window._show_video_output()
+        window.features.sources._clear_active_telegram_channel_video()
+        window.features.channel_browser._show_video_output()
 
-        assert window._media_stack.currentWidget() is window._video_widget
-        assert window._media_stack.indexOf(window._video_widget) >= 0
-        window._settings_save_timer.stop()
+        assert window.features.layout._media_stack.currentWidget() is window.features.layout._video_widget
+        assert window.features.layout._media_stack.indexOf(window.features.layout._video_widget) >= 0
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1437,22 +1571,24 @@ def test_player_window_telegram_auto_load_more_toggle_loads_near_list_end(qapp, 
     window = PlayerWindow()
     loaded = []
     try:
-        window._pending_telegram_url = "https://t.me/demo"
-        window._telegram_channel_all_items = [TelegramChannelVideo("Video 101", "https://t.me/demo/101", "101")]
-        monkeypatch.setattr(window, "_load_more_current_telegram_channel", lambda: loaded.append(True))
-        scroll_bar = window._telegram_channel_list.verticalScrollBar()
+        window.features.lifecycle.workers.pending_telegram_url = "https://t.me/demo"
+        window.features.sources.channel.channel_all_items = [
+            TelegramChannelVideo("Video 101", "https://t.me/demo/101", "101")
+        ]
+        monkeypatch.setattr(window.features.sources, "_load_more_current_telegram_channel", lambda: loaded.append(True))
+        scroll_bar = window.features.layout._telegram_channel_list.verticalScrollBar()
         scroll_bar.setRange(0, 100)
         scroll_bar.setPageStep(20)
         scroll_bar.setValue(90)
-        was_blocked = window._telegram_channel_load_more_button.blockSignals(True)
-        window._telegram_channel_load_more_button.setChecked(True)
-        window._telegram_channel_load_more_button.blockSignals(was_blocked)
+        was_blocked = window.features.layout._telegram_channel_load_more_button.blockSignals(True)
+        window.features.layout._telegram_channel_load_more_button.setChecked(True)
+        window.features.layout._telegram_channel_load_more_button.blockSignals(was_blocked)
 
-        window._maybe_auto_load_more_telegram_channel()
-        window._maybe_auto_load_more_telegram_channel()
+        window.features.sources._maybe_auto_load_more_telegram_channel()
+        window.features.sources._maybe_auto_load_more_telegram_channel()
 
         assert loaded == [True]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1460,20 +1596,20 @@ def test_player_window_telegram_auto_load_more_toggle_loads_near_list_end(qapp, 
 def test_player_window_telegram_video_download_keeps_browser_tools_clickable(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._telegram_channel_load_more_button.setEnabled(True)
-        window._telegram_channel_translate_button.setEnabled(True)
+        window.features.layout._telegram_channel_load_more_button.setEnabled(True)
+        window.features.layout._telegram_channel_translate_button.setEnabled(True)
 
-        window._set_telegram_opening_controls(False, keep_browser_tools=True)
+        window.features.sources._set_telegram_opening_controls(False, keep_browser_tools=True)
 
-        assert not window._open_url_button.isEnabled()
-        assert window._telegram_channel_load_more_button.isEnabled()
-        assert window._telegram_channel_translate_button.isEnabled()
+        assert not window.features.layout._open_url_button.isEnabled()
+        assert window.features.layout._telegram_channel_load_more_button.isEnabled()
+        assert window.features.layout._telegram_channel_translate_button.isEnabled()
 
-        window._set_telegram_opening_controls(False)
+        window.features.sources._set_telegram_opening_controls(False)
 
-        assert not window._telegram_channel_load_more_button.isEnabled()
-        assert not window._telegram_channel_translate_button.isEnabled()
-        window._settings_save_timer.stop()
+        assert not window.features.layout._telegram_channel_load_more_button.isEnabled()
+        assert not window.features.layout._telegram_channel_translate_button.isEnabled()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1483,31 +1619,33 @@ def test_player_window_telegram_auto_load_more_can_retry_after_failure(qapp, mon
     loaded = []
     warnings = []
     try:
-        window._pending_telegram_url = "https://t.me/demo"
-        window._telegram_channel_all_items = [TelegramChannelVideo("Video 101", "https://t.me/demo/101", "101")]
-        monkeypatch.setattr(window, "_load_more_current_telegram_channel", lambda: loaded.append(True))
-        monkeypatch.setattr("ai_player.ui.player_window_sources.telegram_private_available", lambda: False)
+        window.features.lifecycle.workers.pending_telegram_url = "https://t.me/demo"
+        window.features.sources.channel.channel_all_items = [
+            TelegramChannelVideo("Video 101", "https://t.me/demo/101", "101")
+        ]
+        monkeypatch.setattr(window.features.sources, "_load_more_current_telegram_channel", lambda: loaded.append(True))
+        monkeypatch.setattr("ai_player.ui.features.sources.telegram_private_available", lambda: False)
         monkeypatch.setattr(
-            "ai_player.ui.player_window_sources.QMessageBox.warning",
+            "ai_player.ui.features.sources.QMessageBox.warning",
             lambda _parent, _title, message, *_args, **_kwargs: warnings.append(message),
         )
-        scroll_bar = window._telegram_channel_list.verticalScrollBar()
+        scroll_bar = window.features.layout._telegram_channel_list.verticalScrollBar()
         scroll_bar.setRange(0, 100)
         scroll_bar.setPageStep(20)
         scroll_bar.setValue(90)
-        was_blocked = window._telegram_channel_load_more_button.blockSignals(True)
-        window._telegram_channel_load_more_button.setChecked(True)
-        window._telegram_channel_load_more_button.blockSignals(was_blocked)
+        was_blocked = window.features.layout._telegram_channel_load_more_button.blockSignals(True)
+        window.features.layout._telegram_channel_load_more_button.setChecked(True)
+        window.features.layout._telegram_channel_load_more_button.blockSignals(was_blocked)
 
-        window._maybe_auto_load_more_telegram_channel()
-        window._telegram_worker_failed("list_public_more", "network")
-        window._maybe_auto_load_more_telegram_channel()
+        window.features.sources._maybe_auto_load_more_telegram_channel()
+        window.features.sources._telegram_worker_failed("list_public_more", "network")
+        window.features.sources._maybe_auto_load_more_telegram_channel()
 
         assert loaded == [True, True]
         assert len(warnings) == 1
         assert "network" in warnings[0]
-        assert window._tr("telegram_channel_public_login_unavailable") in warnings[0]
-        window._settings_save_timer.stop()
+        assert window.features.settings._tr("telegram_channel_public_login_unavailable") in warnings[0]
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1516,17 +1654,17 @@ def test_player_window_telegram_remote_search_uses_query_but_refresh_does_not(qa
     window = PlayerWindow()
     calls = []
     try:
-        window._pending_telegram_url = "https://t.me/demo"
-        window._telegram_channel_search.setText("needle")
-        monkeypatch.setattr("ai_player.ui.player_window_sources.telegram_private_available", lambda: False)
+        window.features.lifecycle.workers.pending_telegram_url = "https://t.me/demo"
+        window.features.layout._telegram_channel_search.setText("needle")
+        monkeypatch.setattr("ai_player.ui.features.sources.telegram_private_available", lambda: False)
         monkeypatch.setattr(
-            window,
+            window.features.channel_flow,
             "_start_telegram_worker",
             lambda operation, **kwargs: calls.append((operation, kwargs)),
         )
 
-        window._search_current_telegram_channel_remote()
-        window._refresh_current_telegram_channel()
+        window.features.sources._search_current_telegram_channel_remote()
+        window.features.sources._refresh_current_telegram_channel()
 
         assert calls[0][0] == "list_public"
         assert calls[0][1]["search"] == "needle"
@@ -1534,7 +1672,7 @@ def test_player_window_telegram_remote_search_uses_query_but_refresh_does_not(qa
         assert calls[1][0] == "list_public"
         assert calls[1][1]["search"] == ""
         assert calls[1][1]["status_key"] == "status_telegram_channel_loading"
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1544,18 +1682,18 @@ def test_player_window_telegram_authenticated_search_keeps_authenticated_worker(
     calls = []
     config = SimpleNamespace(api_id=12345, api_hash="hash", phone="+84000000000")
     try:
-        window._pending_telegram_url = "https://t.me/demo"
-        window._telegram_channel_authenticated = True
-        window._telegram_channel_search.setText("needle")
-        monkeypatch.setattr("ai_player.ui.player_window_sources.telegram_private_available", lambda: True)
-        monkeypatch.setattr("ai_player.ui.player_window_sources.load_telegram_login_config", lambda: config)
+        window.features.lifecycle.workers.pending_telegram_url = "https://t.me/demo"
+        window.features.sources.channel.channel_authenticated = True
+        window.features.layout._telegram_channel_search.setText("needle")
+        monkeypatch.setattr("ai_player.ui.features.sources.telegram_private_available", lambda: True)
+        monkeypatch.setattr("ai_player.ui.features.sources.load_telegram_login_config", lambda: config)
         monkeypatch.setattr(
-            window,
+            window.features.channel_flow,
             "_start_telegram_worker",
             lambda operation, **kwargs: calls.append((operation, kwargs)),
         )
 
-        window._search_current_telegram_channel_remote()
+        window.features.sources._search_current_telegram_channel_remote()
 
         assert calls == [
             (
@@ -1568,7 +1706,7 @@ def test_player_window_telegram_authenticated_search_keeps_authenticated_worker(
                 },
             )
         ]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1576,7 +1714,7 @@ def test_player_window_telegram_authenticated_search_keeps_authenticated_worker(
 def test_player_window_telegram_browser_restores_last_channel_preferences(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._config = AppConfig(
+        window.features.config = AppConfig(
             telegram_last_url="https://t.me/demo",
             telegram_last_post_id="102",
             telegram_last_search="needle",
@@ -1584,23 +1722,23 @@ def test_player_window_telegram_browser_restores_last_channel_preferences(qapp) 
             telegram_side_panel_visible=False,
             telegram_side_panel_sizes=(640, 360),
         )
-        window._pending_telegram_post_id = ""
-        window._telegram_side_panel_visible = window._config.telegram_side_panel_visible
-        window._telegram_side_panel_sizes = list(window._config.telegram_side_panel_sizes)
+        window.features.sources.channel.pending_post_id = ""
+        window.features.sources.channel.side_panel_visible = window.features.config.telegram_side_panel_visible
+        window.features.sources.channel.side_panel_sizes = list(window.features.config.telegram_side_panel_sizes)
 
-        window._show_telegram_channel_browser("https://t.me/demo")
+        window.features.channel_browser._show_telegram_channel_browser("https://t.me/demo")
 
-        assert window._pending_telegram_post_id == "102"
-        assert window._telegram_channel_search.text() == "needle"
-        assert window._telegram_channel_filter_combo.currentData() == "video"
-        assert window._telegram_side_panel_visible is False
-        assert window._telegram_channel_side_panel.isHidden()
+        assert window.features.sources.channel.pending_post_id == "102"
+        assert window.features.layout._telegram_channel_search.text() == "needle"
+        assert window.features.layout._telegram_channel_filter_combo.currentData() == "video"
+        assert window.features.sources.channel.side_panel_visible is False
+        assert window.features.layout._telegram_channel_side_panel.isHidden()
 
-        window._show_telegram_channel_browser("https://t.me/other")
+        window.features.channel_browser._show_telegram_channel_browser("https://t.me/other")
 
-        assert window._telegram_channel_search.text() == ""
-        assert window._telegram_channel_filter_combo.currentData() == "all"
-        window._settings_save_timer.stop()
+        assert window.features.layout._telegram_channel_search.text() == ""
+        assert window.features.layout._telegram_channel_filter_combo.currentData() == "all"
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1608,14 +1746,14 @@ def test_player_window_telegram_browser_restores_last_channel_preferences(qapp) 
 def test_player_window_telegram_runtime_config_persists_browser_context(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._pending_telegram_url = "https://t.me/demo"
-        window._pending_telegram_post_id = "101"
-        window._telegram_channel_search.setText("needle")
-        window._set_combo_data(window._telegram_channel_filter_combo, "video")
-        window._telegram_side_panel_visible = False
-        window._telegram_side_panel_sizes = [700, 300]
+        window.features.lifecycle.workers.pending_telegram_url = "https://t.me/demo"
+        window.features.sources.channel.pending_post_id = "101"
+        window.features.layout._telegram_channel_search.setText("needle")
+        window.features.settings._set_combo_data(window.features.layout._telegram_channel_filter_combo, "video")
+        window.features.sources.channel.side_panel_visible = False
+        window.features.sources.channel.side_panel_sizes = [700, 300]
 
-        config = window._current_runtime_config()
+        config = window.features.settings._current_runtime_config()
 
         assert config.telegram_last_url == "https://t.me/demo"
         assert config.telegram_last_post_id == "101"
@@ -1623,7 +1761,7 @@ def test_player_window_telegram_runtime_config_persists_browser_context(qapp) ->
         assert config.telegram_last_filter == "video"
         assert config.telegram_side_panel_visible is False
         assert config.telegram_side_panel_sizes == (700, 300)
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1639,23 +1777,25 @@ def test_player_window_telegram_translation_renders_in_list_preview_and_search(q
             has_video=False,
             media_kind="text",
         )
-        window._telegram_channel_state.blacklisted_item_keys.clear()
-        window._telegram_channel_state.blacklisted_content_keys.clear()
-        window._telegram_channel_all_items = [item]
-        window._telegram_channel_translations[window._telegram_channel_item_key(item)] = "xin chao the gioi"
-        window._populate_telegram_channel_browser([item])
+        window.features.sources.channel.blacklisted_item_keys.clear()
+        window.features.sources.channel.blacklisted_content_keys.clear()
+        window.features.sources.channel.channel_all_items = [item]
+        window.features.sources.channel.channel_translations[
+            window.features.sources._telegram_channel_item_key(item)
+        ] = "xin chao the gioi"
+        window.features.sources._populate_telegram_channel_browser([item])
 
-        list_item = window._telegram_channel_list.item(0)
+        list_item = window.features.layout._telegram_channel_list.item(0)
         assert "xin chao the gioi" in list_item.text()
         assert "Dịch:" not in list_item.text()
         assert f"color:{TELEGRAM_TRANSLATION_COLOR}" in list_item.data(TELEGRAM_ITEM_HTML_ROLE)
-        window._telegram_channel_selection_changed(list_item)
-        assert "xin chao the gioi" in window._telegram_channel_preview.toPlainText()
-        assert "Dịch:" not in window._telegram_channel_preview.toPlainText()
+        window.features.sources._telegram_channel_selection_changed(list_item)
+        assert "xin chao the gioi" in window.features.layout._telegram_channel_preview.toPlainText()
+        assert "Dịch:" not in window.features.layout._telegram_channel_preview.toPlainText()
 
-        window._telegram_channel_search.setText("the gioi")
-        assert window._telegram_channel_list.count() == 1
-        window._settings_save_timer.stop()
+        window.features.layout._telegram_channel_search.setText("the gioi")
+        assert window.features.layout._telegram_channel_list.count() == 1
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1665,21 +1805,19 @@ def test_player_window_telegram_translation_toggle_auto_translates_loaded_items(
     calls = []
     try:
         monkeypatch.setattr(
-            window,
-            "_translate_current_telegram_channel",
-            lambda *args, auto=False: calls.append(auto),
+            window.features.sources, "_translate_current_telegram_channel", lambda *args, auto=False: calls.append(auto)
         )
-        was_blocked = window._telegram_channel_translate_button.blockSignals(True)
-        window._telegram_channel_translate_button.setChecked(True)
-        window._telegram_channel_translate_button.blockSignals(was_blocked)
+        was_blocked = window.features.layout._telegram_channel_translate_button.blockSignals(True)
+        window.features.layout._telegram_channel_translate_button.setChecked(True)
+        window.features.layout._telegram_channel_translate_button.blockSignals(was_blocked)
 
-        window._telegram_items_ready(
+        window.features.channel_flow._telegram_items_ready(
             [TelegramChannelVideo("你好", "https://t.me/demo/101", "101", text="你好")],
             "list_public",
         )
 
         assert calls == [True]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1690,11 +1828,13 @@ def test_player_window_telegram_translation_only_sends_missing_text_items(qapp) 
         translated = TelegramChannelVideo("old", "https://t.me/demo/100", "100", text="old")
         pending = TelegramChannelVideo("你好", "https://t.me/demo/101", "101", text="你好")
         empty = TelegramChannelVideo("", "https://t.me/demo/102", "102", text="")
-        window._telegram_channel_translations[window._telegram_channel_item_key(translated)] = "cu"
-        window._telegram_channel_all_items = [translated, pending, empty]
+        window.features.sources.channel.channel_translations[
+            window.features.sources._telegram_channel_item_key(translated)
+        ] = "cu"
+        window.features.sources.channel.channel_all_items = [translated, pending, empty]
 
-        assert window._telegram_channel_items_to_translate() == [pending]
-        window._settings_save_timer.stop()
+        assert window.features.sources._telegram_channel_items_to_translate() == [pending]
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1709,12 +1849,13 @@ def test_telegram_content_translation_worker_uses_detected_source_language(qapp,
             return ["xin chao"]
 
     monkeypatch.setattr(
-        "ai_player.workers.player_window_workers.get_shared_vietnamese_translator",
+        "ai_player.runtime.translation_runtime.get_shared_vietnamese_translator",
         lambda _config: Translator(),
     )
     worker = TelegramContentTranslationWorker(
         AppConfig(source_language="auto"),
         [TelegramChannelVideo("你好", "https://t.me/demo/101", "101", text="你好")],
+        dependencies=workflow_bindings.sources(),
     )
     worker.ready.connect(lambda results: translated_results.extend(results))
 
@@ -1730,17 +1871,19 @@ def test_player_window_telegram_public_item_uses_saved_private_downloader(qapp, 
         item = TelegramChannelVideo("Video 101", "https://t.me/demo/101", "101")
         config = SimpleNamespace(api_id=12345, api_hash="hash", phone="+84000000000")
         started: list[dict[str, object]] = []
-        monkeypatch.setattr("ai_player.ui.player_window_sources.telegram_private_available", lambda: True)
-        monkeypatch.setattr("ai_player.ui.player_window_sources.load_telegram_login_config", lambda: config)
+        monkeypatch.setattr("ai_player.ui.features.sources.telegram_private_available", lambda: True)
+        monkeypatch.setattr("ai_player.ui.features.sources.load_telegram_login_config", lambda: config)
         monkeypatch.setattr(
-            window,
+            window.features.channel_flow,
             "_start_telegram_worker",
             lambda operation, **kwargs: started.append({"operation": operation, **kwargs}),
         )
-        monkeypatch.setattr(window, "_open_resolved_video_url", lambda _url: started.append({"operation": "url"}))
-        window._pending_telegram_url = "https://t.me/demo"
+        monkeypatch.setattr(
+            window.features.sources, "_open_resolved_video_url", lambda _url: started.append({"operation": "url"})
+        )
+        window.features.lifecycle.workers.pending_telegram_url = "https://t.me/demo"
 
-        window._open_telegram_channel_item(item)
+        window.features.sources._open_telegram_channel_item(item)
 
         assert started == [
             {
@@ -1748,10 +1891,12 @@ def test_player_window_telegram_public_item_uses_saved_private_downloader(qapp, 
                 "url": "https://t.me/demo",
                 "config": config,
                 "post_id": "101",
-                "status_text": window._tr("status_telegram_video_downloading").format(label="Video 101"),
+                "status_text": window.features.settings._tr("status_telegram_video_downloading").format(
+                    label="Video 101"
+                ),
             }
         ]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1766,13 +1911,15 @@ def test_player_window_telegram_public_item_uses_direct_media_url_before_ytdlp(q
             media_url="https://cdn.example.test/video.mp4",
         )
         opened: list[str] = []
-        monkeypatch.setattr("ai_player.ui.player_window_sources.telegram_private_available", lambda: False)
-        monkeypatch.setattr(window, "_open_resolved_video_url", lambda url, **_kwargs: opened.append(url))
+        monkeypatch.setattr("ai_player.ui.features.sources.telegram_private_available", lambda: False)
+        monkeypatch.setattr(
+            window.features.sources, "_open_resolved_video_url", lambda url, **_kwargs: opened.append(url)
+        )
 
-        window._open_telegram_channel_item(item)
+        window.features.sources._open_telegram_channel_item(item)
 
         assert opened == ["https://cdn.example.test/video.mp4"]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1780,6 +1927,7 @@ def test_player_window_telegram_public_item_uses_direct_media_url_before_ytdlp(q
 def test_player_window_telegram_download_progress_cancel_stops_worker(qapp) -> None:
     window = PlayerWindow()
     try:
+
         class Worker:
             operation = "download"
             _stop_requested = False
@@ -1788,8 +1936,8 @@ def test_player_window_telegram_download_progress_cancel_stops_worker(qapp) -> N
                 self._stop_requested = True
 
         worker = Worker()
-        window._telegram_worker = worker
-        window._telegram_download_progress_changed(
+        window.features.lifecycle.workers.telegram_worker = worker
+        window.features.source_progress._telegram_download_progress_changed(
             {
                 "status": "downloading",
                 "filename": "telegram-video.mp4",
@@ -1798,35 +1946,35 @@ def test_player_window_telegram_download_progress_cancel_stops_worker(qapp) -> N
             }
         )
 
-        assert window._cache_dialog is not None
-        window._cache_dialog.reject()
+        assert window.features.media.playback.cache_dialog is not None
+        window.features.media.playback.cache_dialog.reject()
 
         assert worker._stop_requested is True
-        assert window._cache_dialog is None
-        assert window._telegram_channel_state.loading_item_key == ""
-        window._settings_save_timer.stop()
+        assert window.features.media.playback.cache_dialog is None
+        assert window.features.sources.channel.loading_item_key == ""
+        window.features.layout._settings_save_timer.stop()
     finally:
-        window._telegram_worker = None
+        window.features.lifecycle.workers.telegram_worker = None
         window.close()
 
 
 def test_player_window_cache_dialog_closing_after_failure_clears_stale_dialog(qapp, monkeypatch) -> None:
     window = PlayerWindow()
     try:
-        monkeypatch.setattr(window, "_handle_video_url_failure_action", lambda _detail: None)
-        window._video_cache_progress_changed({"status": "downloading", "provider": "demo"})
-        dialog = window._cache_dialog
+        monkeypatch.setattr(window.features.sources, "_handle_video_url_failure_action", lambda _detail: None)
+        window.features.source_progress._video_cache_progress_changed({"status": "downloading", "provider": "demo"})
+        dialog = window.features.media.playback.cache_dialog
 
-        window._video_url_failed("network failed")
-        assert window._cache_dialog is dialog
+        window.features.sources._video_url_failed("network failed")
+        assert window.features.media.playback.cache_dialog is dialog
 
-        window._cache_dialog_finished(dialog)
+        window.features.source_progress._cache_dialog_finished(dialog)
 
-        assert window._cache_dialog is None
-        window._video_cache_progress_changed({"status": "downloading", "provider": "demo"})
-        assert window._cache_dialog is not None
-        assert window._cache_dialog is not dialog
-        window._settings_save_timer.stop()
+        assert window.features.media.playback.cache_dialog is None
+        window.features.source_progress._video_cache_progress_changed({"status": "downloading", "provider": "demo"})
+        assert window.features.media.playback.cache_dialog is not None
+        assert window.features.media.playback.cache_dialog is not dialog
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1851,31 +1999,36 @@ def test_player_window_telegram_selection_queues_current_item_while_download_is_
         worker = BusyWorker()
         opened = []
         local_opened = []
-        window._telegram_channel_all_items = items
-        window._populate_telegram_channel_browser(items)
-        window._telegram_channel_auto_open_check.setChecked(True)
-        window._telegram_channel_state.loading_item_key = window._telegram_channel_item_key(items[0])
-        window._telegram_worker = worker
-        monkeypatch.setattr(window, "_open_telegram_channel_item", lambda item: opened.append(item))
-        monkeypatch.setattr(window, "_open_local_video_path", lambda path: local_opened.append(path))
+        window.features.sources.channel.channel_all_items = items
+        window.features.sources._populate_telegram_channel_browser(items)
+        window.features.layout._telegram_channel_auto_open_check.setChecked(True)
+        window.features.sources.channel.loading_item_key = window.features.sources._telegram_channel_item_key(items[0])
+        window.features.lifecycle.workers.telegram_worker = worker
+        monkeypatch.setattr(window.features.sources, "_open_telegram_channel_item", lambda item: opened.append(item))
+        monkeypatch.setattr(window.features.sources, "_open_local_video_path", lambda path: local_opened.append(path))
 
-        window._telegram_channel_selection_changed(window._telegram_channel_list.item(1))
+        window.features.sources._telegram_channel_selection_changed(
+            window.features.layout._telegram_channel_list.item(1)
+        )
 
-        assert window._telegram_channel_state.pending_open_item_key == window._telegram_channel_item_key(items[1])
+        assert (
+            window.features.sources.channel.pending_open_item_key
+            == window.features.sources._telegram_channel_item_key(items[1])
+        )
         assert opened == []
 
-        window._telegram_video_ready("old-download.mp4")
+        window.features.sources._telegram_video_ready("old-download.mp4")
 
         assert local_opened == []
 
         worker.running = False
-        window._telegram_worker = None
-        window._open_pending_telegram_channel_item()
+        window.features.lifecycle.workers.telegram_worker = None
+        window.features.sources._open_pending_telegram_channel_item()
 
         assert opened == [items[1]]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
-        window._telegram_worker = None
+        window.features.lifecycle.workers.telegram_worker = None
         window.close()
 
 
@@ -1892,19 +2045,21 @@ def test_player_window_telegram_stale_url_result_does_not_replace_selected_item(
             is_resolved=True,
         )
         opened = []
-        window._telegram_channel_all_items = [old, selected]
-        window._telegram_channel_state.loading_item_key = window._telegram_channel_item_key(old)
-        window._telegram_channel_state.pending_open_item_key = window._telegram_channel_item_key(selected)
-        monkeypatch.setattr(window, "_open_telegram_channel_item", lambda item: opened.append(item))
+        window.features.sources.channel.channel_all_items = [old, selected]
+        window.features.sources.channel.loading_item_key = window.features.sources._telegram_channel_item_key(old)
+        window.features.sources.channel.pending_open_item_key = window.features.sources._telegram_channel_item_key(
+            selected
+        )
+        monkeypatch.setattr(window.features.sources, "_open_telegram_channel_item", lambda item: opened.append(item))
 
-        window._video_url_resolved(source)
+        window.features.sources._video_url_resolved(source)
         qapp.processEvents()
 
-        assert window._video_path is None
+        assert window.features.channel_browser._video_path is None
         assert opened == [selected]
     finally:
-        window._telegram_channel_auto_open_check.setChecked(True)
-        window._settings_save_timer.stop()
+        window.features.layout._telegram_channel_auto_open_check.setChecked(True)
+        window.features.layout._settings_save_timer.stop()
         window.close()
 
 
@@ -1917,20 +2072,20 @@ def test_player_window_telegram_media_url_keeps_video_in_channel_splitter(qapp, 
             "101",
             media_url="https://cdn.example.test/video.mp4",
         )
-        window._dubbing_auto_enabled = False
-        window._show_telegram_channel_browser("https://t.me/demo")
-        window._telegram_channel_all_items = [item]
-        window._populate_telegram_channel_browser([item])
-        monkeypatch.setattr("ai_player.ui.player_window_sources.telegram_private_available", lambda: False)
+        window.features.media.playback.dubbing_auto_enabled = False
+        window.features.channel_browser._show_telegram_channel_browser("https://t.me/demo")
+        window.features.sources.channel.channel_all_items = [item]
+        window.features.sources._populate_telegram_channel_browser([item])
+        monkeypatch.setattr("ai_player.ui.features.sources.telegram_private_available", lambda: False)
         monkeypatch.setattr(
-            window,
+            window.features.media,
             "_load_current_video_for_playback",
-            lambda: setattr(window, "_runtime_media_path", window._video_path),
+            lambda: window.features.set("_runtime_media_path", window.features.channel_browser._video_path),
         )
         monkeypatch.setattr(
-            window._video_url,
+            window.features.sources.url_controller,
             "start",
-            lambda url, *_args, **_kwargs: window._video_url_resolved(
+            lambda url, *_args, **_kwargs: window.features.sources._video_url_resolved(
                 SimpleNamespace(
                     playback_url=url,
                     title="Telegram direct media",
@@ -1941,14 +2096,17 @@ def test_player_window_telegram_media_url_keeps_video_in_channel_splitter(qapp, 
             ),
         )
 
-        window._open_telegram_channel_item(item)
+        window.features.sources._open_telegram_channel_item(item)
 
-        assert window._current_telegram_channel_item is item
-        assert window._media_stack.currentWidget() is window._telegram_channel_view
-        assert window._telegram_channel_media_stack.currentWidget() is window._telegram_video_widget
-        assert window._media_stack.indexOf(window._video_widget) >= 0
-        assert window._telegram_channel_media_stack.indexOf(window._video_widget) < 0
-        window._settings_save_timer.stop()
+        assert window.features.sources.channel.current_channel_item is item
+        assert window.features.layout._media_stack.currentWidget() is window.features.layout._telegram_channel_view
+        assert (
+            window.features.layout._telegram_channel_media_stack.currentWidget()
+            is window.features.layout._telegram_video_widget
+        )
+        assert window.features.layout._media_stack.indexOf(window.features.layout._video_widget) >= 0
+        assert window.features.layout._telegram_channel_media_stack.indexOf(window.features.layout._video_widget) < 0
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1960,24 +2118,30 @@ def test_player_window_telegram_back_button_returns_to_browser(qapp) -> None:
             TelegramChannelVideo("Video 101", "https://t.me/demo/101", "101"),
             TelegramChannelVideo("Video 102", "https://t.me/demo/102", "102"),
         ]
-        window._pending_telegram_url = "https://t.me/demo"
-        window._telegram_channel_all_items = items
-        window._populate_telegram_channel_browser(items)
-        window._set_active_telegram_channel_video(items[1])
-        window._telegram_browser_return_available = True
-        window._show_video_output()
+        window.features.lifecycle.workers.pending_telegram_url = "https://t.me/demo"
+        window.features.sources.channel.channel_all_items = items
+        window.features.sources._populate_telegram_channel_browser(items)
+        window.features.sources._set_active_telegram_channel_video(items[1])
+        window.features.sources.channel.browser_return_available = True
+        window.features.channel_browser._show_video_output()
 
-        assert window._media_stack.currentWidget() is window._telegram_channel_view
-        assert window._telegram_channel_media_stack.currentWidget() is window._telegram_video_widget
+        assert window.features.layout._media_stack.currentWidget() is window.features.layout._telegram_channel_view
+        assert (
+            window.features.layout._telegram_channel_media_stack.currentWidget()
+            is window.features.layout._telegram_video_widget
+        )
 
-        window._return_to_telegram_channel_browser()
+        window.features.channel_browser._return_to_telegram_channel_browser()
 
-        assert window._media_stack.currentWidget() is window._telegram_channel_view
-        assert window._telegram_channel_media_stack.currentWidget() is window._telegram_channel_thumbnail
-        assert window._telegram_browser_button.isHidden()
-        assert window._telegram_channel_list.currentRow() == 1
-        assert window._source_label.text() == "https://t.me/demo"
-        window._settings_save_timer.stop()
+        assert window.features.layout._media_stack.currentWidget() is window.features.layout._telegram_channel_view
+        assert (
+            window.features.layout._telegram_channel_media_stack.currentWidget()
+            is window.features.layout._telegram_channel_thumbnail
+        )
+        assert window.features.bindings._telegram_browser_button.isHidden()
+        assert window.features.layout._telegram_channel_list.currentRow() == 1
+        assert window.features.layout._source_label.text() == "https://t.me/demo"
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -1993,20 +2157,24 @@ def test_player_window_telegram_navigation_autoplays_after_url_resolves(qapp, mo
             provider="telegram",
             is_resolved=True,
         )
-        window._dubbing_auto_enabled = False
-        window._pending_telegram_autoplay = True
+        window.features.media.playback.dubbing_auto_enabled = False
+        window.features.sources.channel.pending_autoplay = True
         monkeypatch.setattr(
-            window,
+            window.features.media,
             "_load_current_video_for_playback",
-            lambda: setattr(window, "_runtime_media_path", window._video_path),
+            lambda: window.features.set("_runtime_media_path", window.features.channel_browser._video_path),
         )
-        monkeypatch.setattr(window, "_play_active_source", lambda: played.append(str(window._video_path)))
+        monkeypatch.setattr(
+            window.features.media,
+            "_play_active_source",
+            lambda: played.append(str(window.features.channel_browser._video_path)),
+        )
 
-        window._video_url_resolved(source)
+        window.features.sources._video_url_resolved(source)
 
         assert played == ["https://cdn.example.test/video.mp4"]
-        assert window._pending_telegram_autoplay is False
-        window._settings_save_timer.stop()
+        assert window.features.sources.channel.pending_autoplay is False
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2049,20 +2217,20 @@ def test_video_url_dialog_forces_cache_when_source_filter_requires_it(qapp) -> N
 def test_player_window_remembers_recent_video_urls(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._config = AppConfig(video_url_recent_urls=("https://example.test/old.mp4",))
+        window.features.config = AppConfig(video_url_recent_urls=("https://example.test/old.mp4",))
 
-        window._remember_video_url("https://example.test/new.mp4")
-        window._remember_video_url("https://example.test/old.mp4")
+        window.features.sources._remember_video_url("https://example.test/new.mp4")
+        window.features.sources._remember_video_url("https://example.test/old.mp4")
 
-        assert window._video_url_recent_urls_for_settings() == (
+        assert window.features.sources._video_url_recent_urls_for_settings() == (
             "https://example.test/old.mp4",
             "https://example.test/new.mp4",
         )
-        assert window._current_runtime_config().video_url_recent_urls == (
+        assert window.features.settings._current_runtime_config().video_url_recent_urls == (
             "https://example.test/old.mp4",
             "https://example.test/new.mp4",
         )
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2071,23 +2239,21 @@ def test_player_window_video_url_failure_action_retries_with_lower_quality(qapp,
     window = PlayerWindow()
     opened = []
     try:
-        window._last_video_url_request = {
+        window.features.sources._last_video_url_request = {
             "url": "https://example.test/watch/demo",
             "full_cache": True,
             "quality": "720p",
             "keep_telegram_context": False,
         }
-        monkeypatch.setattr(window, "_url_is_opening", lambda: False)
-        monkeypatch.setattr(window, "_save_settings", lambda: None)
+        monkeypatch.setattr(window.features.sources, "_url_is_opening", lambda: False)
+        monkeypatch.setattr(window.features.settings, "_save_settings", lambda: None)
         monkeypatch.setattr(
-            window,
-            "_open_resolved_video_url",
-            lambda url, **kwargs: opened.append((url, kwargs)),
+            window.features.sources, "_open_resolved_video_url", lambda url, **kwargs: opened.append((url, kwargs))
         )
 
-        window._retry_last_video_url_request(lower_quality=True)
+        window.features.sources._retry_last_video_url_request(lower_quality=True)
 
-        assert window._playback_quality_combo.currentData() == "480p"
+        assert window.features.layout._playback_quality_combo.currentData() == "480p"
         assert opened == [
             (
                 "https://example.test/watch/demo",
@@ -2095,7 +2261,7 @@ def test_player_window_video_url_failure_action_retries_with_lower_quality(qapp,
             )
         ]
     finally:
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
         window.close()
 
 
@@ -2103,29 +2269,27 @@ def test_player_window_video_url_retry_waits_until_worker_finishes(qapp, monkeyp
     window = PlayerWindow()
     opened = []
     try:
-        window._last_video_url_request = {
+        window.features.sources._last_video_url_request = {
             "url": "https://example.test/video.mp4",
             "full_cache": False,
             "quality": "720p",
             "keep_telegram_context": True,
         }
-        monkeypatch.setattr(window, "_url_is_opening", lambda: True)
+        monkeypatch.setattr(window.features.sources, "_url_is_opening", lambda: True)
         monkeypatch.setattr(
-            window,
-            "_open_resolved_video_url",
-            lambda url, **kwargs: opened.append((url, kwargs)),
+            window.features.sources, "_open_resolved_video_url", lambda url, **kwargs: opened.append((url, kwargs))
         )
 
-        window._retry_last_video_url_request(toggle_cache=True)
+        window.features.sources._retry_last_video_url_request(toggle_cache=True)
 
         assert opened == []
-        assert window._pending_video_url_retry == {
+        assert window.features.sources._pending_video_url_retry == {
             "url": "https://example.test/video.mp4",
             "keep_telegram_context": True,
             "full_cache": True,
         }
 
-        window._video_url_finished()
+        window.features.sources._video_url_finished()
 
         assert opened == [
             (
@@ -2133,9 +2297,9 @@ def test_player_window_video_url_retry_waits_until_worker_finishes(qapp, monkeyp
                 {"keep_telegram_context": True, "full_cache_override": True},
             )
         ]
-        assert window._pending_video_url_retry is None
+        assert window.features.sources._pending_video_url_retry is None
     finally:
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
         window.close()
 
 
@@ -2143,39 +2307,39 @@ def test_player_window_video_url_failure_action_can_open_browser(qapp) -> None:
     window = PlayerWindow()
     url = "https://example.test/watch/demo"
     try:
-        if not window._can_open_video_url_in_browser(url):
+        if not window.features.sources._can_open_video_url_in_browser(url):
             return
 
-        assert window._open_video_url_in_browser(url)
-        assert window._media_stack.currentWidget() is window._video_placeholder
-        assert window._video_placeholder.url().toString() == url
-        assert window._source_label.text() == url
+        assert window.features.sources._open_video_url_in_browser(url)
+        assert window.features.layout._media_stack.currentWidget() is window.features.layout._video_placeholder
+        assert window.features.layout._video_placeholder.url().toString() == url
+        assert window.features.layout._source_label.text() == url
     finally:
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
         window.close()
 
 
 def test_player_window_video_url_failure_marks_unrecoverable_youtube_errors(qapp) -> None:
     window = PlayerWindow()
     try:
-        assert window._video_url_failure_is_unrecoverable(
+        assert window.features.sources._video_url_failure_is_unrecoverable(
             "Không tải được video từ youtube: [youtube] E92hAOEVDCY: This video is not available"
         )
-        assert window._video_url_failure_is_unrecoverable("ERROR: [youtube] abc: Private video")
-        assert not window._video_url_failure_is_unrecoverable("HTTP Error 429: Too Many Requests")
+        assert window.features.sources._video_url_failure_is_unrecoverable("ERROR: [youtube] abc: Private video")
+        assert not window.features.sources._video_url_failure_is_unrecoverable("HTTP Error 429: Too Many Requests")
     finally:
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
         window.close()
 
 
 def test_player_window_runtime_format_helpers(qapp) -> None:
     window = PlayerWindow()
     try:
-        assert window._format_seconds(65) == "01:05"
-        assert window._format_bytes(1024) == "1.0 KB"
-        assert window._format_seconds(float("inf")) == window._tr("runtime_unknown")
-        assert window._format_seconds(float("nan")) == window._tr("runtime_unknown")
-        assert window._format_bytes(float("inf")) == window._tr("runtime_unknown")
+        assert window.features.runtime._format_seconds(65) == "01:05"
+        assert window.features.runtime._format_bytes(1024) == "1.0 KB"
+        assert window.features.runtime._format_seconds(float("inf")) == window.features.settings._tr("runtime_unknown")
+        assert window.features.runtime._format_seconds(float("nan")) == window.features.settings._tr("runtime_unknown")
+        assert window.features.runtime._format_bytes(float("inf")) == window.features.settings._tr("runtime_unknown")
     finally:
         window.close()
 
@@ -2183,7 +2347,7 @@ def test_player_window_runtime_format_helpers(qapp) -> None:
 def test_player_window_media_probe_ignores_non_dict_streams(qapp) -> None:
     window = PlayerWindow()
     try:
-        text = window._format_media_probe(
+        text = window.features.runtime._format_media_probe(
             Path("demo.mp4"),
             {"streams": ["bad", {"codec_type": "video", "codec_name": "h264"}], "format": {}},
         )
@@ -2207,19 +2371,19 @@ def test_subtitle_qcolor_ignores_non_finite_rgba_parts() -> None:
 
 
 def test_player_window_scaled_preset_value_ignores_bad_numbers() -> None:
-    assert PlayerWindow._scaled_preset_value(float("nan"), fallback=0.55, scale=100) == 55
-    assert PlayerWindow._scaled_preset_value(float("inf"), fallback=0.55, scale=100) == 55
-    assert PlayerWindow._scaled_preset_value("bad", fallback=0.55, scale=100) == 55
+    assert PlayerSettingsFeature._scaled_preset_value(float("nan"), fallback=0.55, scale=100) == 55
+    assert PlayerSettingsFeature._scaled_preset_value(float("inf"), fallback=0.55, scale=100) == 55
+    assert PlayerSettingsFeature._scaled_preset_value("bad", fallback=0.55, scale=100) == 55
 
 
 def test_auto_video_aspect_uses_source_metadata(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._set_combo_data(window._aspect_combo, "16:9")
-        window._auto_select_video_aspect_ratio(SimpleNamespace(width=720, height=1280))
+        window.features.settings._set_combo_data(window.features.layout._aspect_combo, "16:9")
+        window.features.media._auto_select_video_aspect_ratio(SimpleNamespace(width=720, height=1280))
 
-        assert window._aspect_combo.currentData() == "9:16"
-        window._settings_save_timer.stop()
+        assert window.features.layout._aspect_combo.currentData() == "9:16"
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2228,44 +2392,39 @@ def test_probe_video_dimensions_honors_rotation(monkeypatch, tmp_path) -> None:
     video = tmp_path / "demo.mp4"
     video.write_bytes(b"demo")
 
-    monkeypatch.setattr("ai_player.ui.player_window_media.ffprobe_executable", lambda: "ffprobe")
+    monkeypatch.setattr("ai_player.ui.features.media.ffprobe_executable", lambda: "ffprobe")
     monkeypatch.setattr(
-        "ai_player.ui.player_window_media.subprocess.run",
+        "ai_player.ui.features.media.subprocess.run",
         lambda *_args, **_kwargs: SimpleNamespace(
             returncode=0,
             stdout='{"streams":[{"width":1920,"height":1080,"tags":{"rotate":"90"}}]}',
         ),
     )
 
-    assert PlayerMediaMixin._probe_video_dimensions(str(video)) == (1080, 1920)
-    assert PlayerMediaMixin._video_aspect_for_dimensions(1080, 1920) == "9:16"
+    assert PlayerMediaFeature._probe_video_dimensions(str(video)) == (1080, 1920)
+    assert PlayerMediaFeature._video_aspect_for_dimensions(1080, 1920) == "9:16"
 
 
 def test_player_window_exposes_advanced_config_controls(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._runtime_warmup_enabled_check.setChecked(False)
-        window._runtime_warmup_whisper_check.setChecked(False)
-        window._runtime_warmup_translation_check.setChecked(False)
-        window._runtime_warmup_tts_check.setChecked(True)
-        window._cleanup_timeout_slider.setValue(45)
-        window._ocr_fps_slider.setValue(35)
-        window._ocr_crop_top_slider.setValue(42)
-        window._ocr_crop_height_slider.setValue(33)
-        window._ocr_scale_slider.setValue(175)
-        window._ocr_psm_slider.setValue(7)
-        window._ocr_threshold_check.setChecked(False)
-        window._ocr_min_confidence_slider.setValue(55)
-        window._ocr_merge_similarity_slider.setValue(91)
-        window._set_combo_data(window._vieneu_core_combo, "remote")
-        window._vieneu_path_edit.setText("D:/vieneu")
-        window._vieneu_python_edit.setText("D:/Python/python.exe")
-        window._vieneu_api_base_edit.setText("http://localhost:23333/v1")
-        window._vieneu_decoder_path_edit.setText("D:/models/decoder.onnx")
-        window._vieneu_encoder_path_edit.setText("D:/models/encoder.onnx")
-        window._vieneu_standard_codec_path_edit.setText("D:/models/codec")
+        window.features.layout._runtime_warmup_enabled_check.setChecked(False)
+        window.features.layout._runtime_warmup_whisper_check.setChecked(False)
+        window.features.layout._runtime_warmup_translation_check.setChecked(False)
+        window.features.layout._runtime_warmup_tts_check.setChecked(True)
+        window.features.layout._cleanup_timeout_slider.setValue(45)
+        window.features.layout._ocr_fps_slider.setValue(35)
+        window.features.layout._ocr_crop_top_slider.setValue(42)
+        window.features.layout._ocr_crop_height_slider.setValue(33)
+        window.features.layout._ocr_scale_slider.setValue(175)
+        window.features.layout._ocr_psm_slider.setValue(7)
+        window.features.layout._ocr_threshold_check.setChecked(False)
+        window.features.layout._ocr_min_confidence_slider.setValue(55)
+        window.features.layout._ocr_merge_similarity_slider.setValue(91)
+        window.features.settings._set_combo_data(window.features.layout._vieneu_core_combo, "remote")
+        window.features.layout._vieneu_python_edit.setText("D:/Python/python.exe")
 
-        config = window._current_runtime_config()
+        config = window.features.settings._current_runtime_config()
 
         assert config.runtime_warmup_enabled is False
         assert config.runtime_warmup_whisper is False
@@ -2283,16 +2442,10 @@ def test_player_window_exposes_advanced_config_controls(qapp) -> None:
         assert config.vieneu_tts_core == "local"
         assert config.vieneu_tts_model_name != "pnnbao-ump/VieNeu-TTS"
         assert config.vieneu_tts_offline is True
-        assert config.vieneu_tts_path == "D:/vieneu"
         assert config.vieneu_tts_python == "D:/Python/python.exe"
-        assert config.vieneu_tts_api_base == ""
-        assert config.vieneu_tts_decoder_path == "D:/models/decoder.onnx"
-        assert config.vieneu_tts_encoder_path == "D:/models/encoder.onnx"
-        assert config.vieneu_tts_standard_codec_path == "D:/models/codec"
-        assert window._vieneu_core_combo.findData("remote") == -1
-        assert not window._vieneu_api_base_edit.isEnabled()
-        assert window._vieneu_offline_check.isEnabled()
-        window._settings_save_timer.stop()
+        assert window.features.layout._vieneu_core_combo.findData("remote") == -1
+        assert window.features.layout._vieneu_offline_check.isEnabled()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2300,79 +2453,89 @@ def test_player_window_exposes_advanced_config_controls(qapp) -> None:
 def test_player_window_applies_online_lite_preset_controls(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._transcript_cleanup_api_base_edit.setText("https://api.groq.com/openai/v1")
-        window._translator_api_base_edit.setText("https://old.example/v1")
-        window._asr_api_base_edit.setText("https://old-asr.example")
+        window.features.layout._transcript_cleanup_api_base_edit.setText("https://api.groq.com/openai/v1")
+        window.features.layout._translator_api_base_edit.setText("https://old.example/v1")
+        window.features.layout._asr_api_base_edit.setText("https://old-asr.example")
 
-        window._set_combo_data(window._performance_preset_combo, "online_lite")
-        window._apply_selected_performance_preset()
-        config = window._current_runtime_config()
+        window.features.settings._set_combo_data(window.features.layout._performance_preset_combo, "online_lite")
+        window.features.settings._apply_selected_performance_preset()
+        config = window.features.settings._current_runtime_config()
 
         assert config.asr_provider == "faster_whisper"
-        assert config.translator_provider == "nllb_ct2"
+        assert config.translator_provider == "nllb"
         assert config.ocr_provider == "ocr_space"
         assert config.transcript_cleanup_mode == "light"
         assert config.transcript_cleanup_provider == "groq"
-        assert config.transcript_cleanup_model == "llama-3.1-8b-instant"
+        assert config.transcript_cleanup_model == "openai/gpt-oss-20b"
         assert config.asr_api_base == ""
         assert config.translator_api_base == ""
         assert config.transcript_cleanup_api_base == ""
 
-        assert window._asr_provider_combo.findData("auto") >= 0
-        assert window._asr_provider_combo.findData("faster_whisper") >= 0
-        assert window._asr_provider_combo.findData("assemblyai") == -1
-        assert window._asr_provider_combo.findData("speechmatics") == -1
-        window._sync_api_key_statuses()
-        assert not window._asr_api_key_edit.isEnabled()
-        assert window._asr_api_key_status.property("api_status_key") == "api_key_status_not_needed"
+        assert window.features.layout._asr_provider_combo.findData("auto") >= 0
+        assert window.features.layout._asr_provider_combo.findData("faster_whisper") >= 0
+        assert window.features.layout._asr_provider_combo.findData("assemblyai") == -1
+        assert window.features.layout._asr_provider_combo.findData("speechmatics") == -1
+        window.features.settings._sync_api_key_statuses()
+        assert not window.features.layout._asr_api_key_edit.isEnabled()
+        assert window.features.layout._asr_api_key_status.property("api_status_key") == "api_key_status_not_needed"
 
-        window._set_combo_data(window._ocr_provider_combo, "ocr_space")
-        window._ocr_api_key_edit.clear()
-        window._sync_api_key_statuses()
-        assert window._ocr_api_key_status.property("api_status_key") == "api_key_status_demo"
-        window._ocr_api_key_edit.setText("ocr-key")
-        window._sync_api_key_statuses()
-        assert window._ocr_api_key_status.property("api_status_key") == "api_key_status_saved"
+        window.features.settings._set_combo_data(window.features.layout._ocr_provider_combo, "ocr_space")
+        window.features.layout._ocr_api_key_edit.clear()
+        window.features.settings._sync_api_key_statuses()
+        assert window.features.layout._ocr_api_key_status.property("api_status_key") == "api_key_status_demo"
+        window.features.layout._ocr_api_key_edit.setText("ocr-key")
+        window.features.settings._sync_api_key_statuses()
+        assert window.features.layout._ocr_api_key_status.property("api_status_key") == "api_key_status_saved"
 
-        assert window._translator_combo.findData("nllb_ct2") >= 0
-        assert window._translator_combo.findData("nllb") >= 0
-        assert window._translator_combo.findData("none") >= 0
-        assert window._translator_combo.findData("azure_translator") == -1
-        assert window._translator_combo.findData("google_translate") == -1
-        assert window._translator_combo.findData("deepl") == -1
-        window._sync_api_key_statuses()
-        assert not window._translator_api_key_edit.isEnabled()
-        assert window._translator_api_key_status.property("api_status_key") == "api_key_status_not_needed"
+        assert window.features.layout._translator_combo.findData("nllb_ct2") == -1
+        assert window.features.layout._translator_combo.findData("nllb") >= 0
+        assert window.features.layout._translator_combo.findData("none") >= 0
+        assert window.features.layout._translator_combo.findData("azure_translator") == -1
+        assert window.features.layout._translator_combo.findData("google_translate") == -1
+        assert window.features.layout._translator_combo.findData("deepl") == -1
+        window.features.settings._sync_api_key_statuses()
+        assert not window.features.layout._translator_api_key_edit.isEnabled()
+        assert (
+            window.features.layout._translator_api_key_status.property("api_status_key") == "api_key_status_not_needed"
+        )
 
-        assert window._tts_provider_combo.findData("none") >= 0
-        assert window._tts_provider_combo.findData("vieneu") >= 0
-        assert window._tts_provider_combo.findData("edge") >= 0
-        assert window._tts_provider_combo.findData("azure_tts") == -1
-        assert window._tts_provider_combo.findData("google_tts") == -1
-        assert window._tts_provider_combo.findData("amazon_polly") == -1
-        window._set_combo_data(window._tts_provider_combo, "edge")
-        window._sync_api_key_statuses()
-        assert window._tts_api_key_status.property("api_status_key") == "api_key_status_not_needed"
-        assert window._tts_api_secret_status.property("api_status_key") == "api_secret_status_not_needed"
+        assert window.features.layout._tts_provider_combo.findData("none") >= 0
+        assert window.features.layout._tts_provider_combo.findData("vieneu") >= 0
+        assert window.features.layout._tts_provider_combo.findData("edge") >= 0
+        assert window.features.layout._tts_provider_combo.findData("azure_tts") == -1
+        assert window.features.layout._tts_provider_combo.findData("google_tts") == -1
+        assert window.features.layout._tts_provider_combo.findData("amazon_polly") == -1
+        window.features.settings._set_combo_data(window.features.layout._tts_provider_combo, "edge")
+        window.features.settings._sync_api_key_statuses()
+        assert window.features.layout._tts_api_key_status.property("api_status_key") == "api_key_status_not_needed"
+        assert (
+            window.features.layout._tts_api_secret_status.property("api_status_key") == "api_secret_status_not_needed"
+        )
 
-        window._auto_voice_gender_check.setChecked(True)
-        assert window._auto_voice_gender_mode_combo.findData("balanced") >= 0
-        assert window._auto_voice_gender_mode_combo.findData("ai") >= 0
-        assert window._auto_voice_gender_mode_combo.findData("stable") == -1
-        assert window._auto_voice_gender_mode_combo.findData("sensitive") == -1
-        window._set_combo_data(window._auto_voice_gender_mode_combo, "ai")
-        window._sync_api_key_statuses()
-        assert window._speaker_gender_provider_combo.findData("huggingface_gender") == -1
-        assert window._speaker_gender_provider_combo.currentData() == "local"
-        assert not window._speaker_gender_api_key_edit.isEnabled()
-        assert window._speaker_gender_api_key_status.property("api_status_key") == "api_key_status_not_needed"
+        window.features.layout._auto_voice_gender_check.setChecked(True)
+        assert window.features.layout._auto_voice_gender_mode_combo.findData("balanced") == -1
+        assert window.features.layout._auto_voice_gender_mode_combo.findData("ai") >= 0
+        assert window.features.layout._auto_voice_gender_mode_combo.findData("stable") == -1
+        assert window.features.layout._auto_voice_gender_mode_combo.findData("sensitive") == -1
+        window.features.settings._set_combo_data(window.features.layout._auto_voice_gender_mode_combo, "ai")
+        window.features.settings._sync_api_key_statuses()
+        assert window.features.layout._speaker_gender_provider_combo.findData("huggingface_gender") == -1
+        assert window.features.layout._speaker_gender_provider_combo.currentData() == "local"
+        assert not window.features.layout._speaker_gender_api_key_edit.isEnabled()
+        assert (
+            window.features.layout._speaker_gender_api_key_status.property("api_status_key")
+            == "api_key_status_not_needed"
+        )
 
-        window._set_combo_data(window._transcript_cleanup_mode_combo, "light")
-        window._set_combo_data(window._transcript_cleanup_provider_combo, "groq")
-        window._transcript_cleanup_api_key_edit.clear()
-        window._sync_api_key_statuses()
-        assert window._transcript_cleanup_api_key_status.property("api_status_key") == "api_key_status_missing"
-        window._settings_save_timer.stop()
+        window.features.settings._set_combo_data(window.features.layout._transcript_cleanup_mode_combo, "light")
+        window.features.settings._set_combo_data(window.features.layout._transcript_cleanup_provider_combo, "groq")
+        window.features.layout._transcript_cleanup_api_key_edit.clear()
+        window.features.settings._sync_api_key_statuses()
+        assert (
+            window.features.layout._transcript_cleanup_api_key_status.property("api_status_key")
+            == "api_key_status_missing"
+        )
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2380,47 +2543,47 @@ def test_player_window_applies_online_lite_preset_controls(qapp) -> None:
 def test_player_window_advanced_provider_checkbox_toggles_provider_options(qapp) -> None:
     window = PlayerWindow()
     try:
-        assert not window._advanced_provider_options_check.isChecked()
-        assert window._asr_provider_combo.findData("assemblyai") == -1
-        assert window._translator_combo.findData("deepl") == -1
-        assert window._tts_provider_combo.findData("azure_tts") == -1
+        assert not window.features.layout._advanced_provider_options_check.isChecked()
+        assert window.features.layout._asr_provider_combo.findData("assemblyai") == -1
+        assert window.features.layout._translator_combo.findData("deepl") == -1
+        assert window.features.layout._tts_provider_combo.findData("azure_tts") == -1
 
-        window._advanced_provider_options_check.setChecked(True)
+        window.features.layout._advanced_provider_options_check.setChecked(True)
         qapp.processEvents()
 
-        assert window._asr_provider_combo.findData("assemblyai") >= 0
-        assert window._asr_provider_combo.findData("speechmatics") >= 0
-        assert window._translator_combo.findData("azure_translator") >= 0
-        assert window._translator_combo.findData("google_translate") >= 0
-        assert window._translator_combo.findData("deepl") >= 0
-        assert window._tts_provider_combo.findData("azure_tts") >= 0
-        assert window._tts_provider_combo.findData("google_tts") >= 0
-        assert window._tts_provider_combo.findData("amazon_polly") >= 0
+        assert window.features.layout._asr_provider_combo.findData("assemblyai") >= 0
+        assert window.features.layout._asr_provider_combo.findData("speechmatics") >= 0
+        assert window.features.layout._translator_combo.findData("azure_translator") >= 0
+        assert window.features.layout._translator_combo.findData("google_translate") >= 0
+        assert window.features.layout._translator_combo.findData("deepl") >= 0
+        assert window.features.layout._tts_provider_combo.findData("azure_tts") >= 0
+        assert window.features.layout._tts_provider_combo.findData("google_tts") >= 0
+        assert window.features.layout._tts_provider_combo.findData("amazon_polly") >= 0
 
-        window._set_combo_data(window._asr_provider_combo, "assemblyai")
-        window._set_combo_data(window._translator_combo, "deepl")
-        window._set_combo_data(window._tts_provider_combo, "azure_tts")
+        window.features.settings._set_combo_data(window.features.layout._asr_provider_combo, "assemblyai")
+        window.features.settings._set_combo_data(window.features.layout._translator_combo, "deepl")
+        window.features.settings._set_combo_data(window.features.layout._tts_provider_combo, "azure_tts")
         qapp.processEvents()
 
-        window._advanced_provider_options_check.setChecked(False)
+        window.features.layout._advanced_provider_options_check.setChecked(False)
         qapp.processEvents()
 
-        assert window._asr_provider_combo.currentData() == "assemblyai"
-        assert window._asr_provider_combo.findData("assemblyai") >= 0
-        assert window._asr_provider_combo.findData("speechmatics") == -1
-        assert window._translator_combo.currentData() == "deepl"
-        assert window._translator_combo.findData("deepl") >= 0
-        assert window._translator_combo.findData("google_translate") == -1
-        assert window._tts_provider_combo.currentData() == "azure_tts"
-        assert window._tts_provider_combo.findData("azure_tts") >= 0
-        assert window._tts_provider_combo.findData("amazon_polly") == -1
+        assert window.features.layout._asr_provider_combo.currentData() == "assemblyai"
+        assert window.features.layout._asr_provider_combo.findData("assemblyai") >= 0
+        assert window.features.layout._asr_provider_combo.findData("speechmatics") == -1
+        assert window.features.layout._translator_combo.currentData() == "deepl"
+        assert window.features.layout._translator_combo.findData("deepl") >= 0
+        assert window.features.layout._translator_combo.findData("google_translate") == -1
+        assert window.features.layout._tts_provider_combo.currentData() == "azure_tts"
+        assert window.features.layout._tts_provider_combo.findData("azure_tts") >= 0
+        assert window.features.layout._tts_provider_combo.findData("amazon_polly") == -1
 
-        config = window._current_runtime_config()
+        config = window.features.settings._current_runtime_config()
         assert config.show_advanced_provider_options is False
         assert config.asr_provider == "assemblyai"
         assert config.translator_provider == "deepl"
         assert config.tts_provider == "azure_tts"
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2428,39 +2591,27 @@ def test_player_window_advanced_provider_checkbox_toggles_provider_options(qapp)
 def test_player_window_cleanup_ui_uses_primary_provider_profiles(qapp) -> None:
     window = PlayerWindow()
     try:
-        assert window._transcript_cleanup_provider_combo.findData("local") >= 0
-        assert window._transcript_cleanup_provider_combo.findData("ollama") >= 0
-        assert window._transcript_cleanup_provider_combo.findData("groq") >= 0
-        assert window._transcript_cleanup_provider_combo.findData("gemini") >= 0
-        assert window._transcript_cleanup_provider_combo.findData("openai") == -1
-        assert window._transcript_cleanup_provider_combo.findData("openrouter") == -1
-        assert window._transcript_cleanup_provider_combo.findData("huggingface") == -1
+        assert window.features.layout._transcript_cleanup_provider_combo.findData("local") == -1
+        assert window.features.layout._transcript_cleanup_provider_combo.findData("ollama") == -1
+        assert window.features.layout._transcript_cleanup_provider_combo.findData("groq") >= 0
+        assert window.features.layout._transcript_cleanup_provider_combo.findData("gemini") == -1
+        assert window.features.layout._transcript_cleanup_provider_combo.findData("openai") == -1
+        assert window.features.layout._transcript_cleanup_provider_combo.findData("openrouter") == -1
+        assert window.features.layout._transcript_cleanup_provider_combo.findData("huggingface") == -1
 
-        window._set_combo_data(window._transcript_cleanup_mode_combo, "light")
-        window._set_combo_data(window._transcript_cleanup_provider_combo, "local")
-        window._transcript_cleanup_api_base_edit.setText("https://old.example/v1")
-        window._transcript_cleanup_api_key_edit.setText("old-key")
-        window._sync_transcript_cleanup_controls()
-        assert not window._transcript_cleanup_api_base_edit.isEnabled()
-        assert not window._transcript_cleanup_api_key_edit.isEnabled()
-        assert window._transcript_cleanup_api_base_edit.text() == ""
-        assert window._transcript_cleanup_api_key_edit.text() == ""
-        assert window._transcript_cleanup_api_key_status.property("api_status_key") == "api_key_status_not_needed"
-
-        window._set_combo_data(window._transcript_cleanup_provider_combo, "ollama")
-        window._transcript_cleanup_api_key_edit.setText("old-key")
-        window._sync_transcript_cleanup_controls()
-        assert window._transcript_cleanup_api_base_edit.isEnabled()
-        assert not window._transcript_cleanup_api_key_edit.isEnabled()
-        assert window._cleanup_timeout_slider.isEnabled()
-        assert window._transcript_cleanup_api_key_edit.text() == ""
+        window.features.settings._set_combo_data(window.features.layout._transcript_cleanup_mode_combo, "light")
+        window.features.settings._set_combo_data(window.features.layout._transcript_cleanup_provider_combo, "groq")
+        window.features.settings._sync_transcript_cleanup_controls()
+        assert window.features.layout._transcript_cleanup_api_base_edit.isEnabled()
+        assert window.features.layout._transcript_cleanup_api_key_edit.isEnabled()
+        assert window.features.layout._cleanup_timeout_slider.isEnabled()
     finally:
         window.close()
 
 
 def test_player_window_keeps_asr_api_keys_per_provider(qapp, monkeypatch) -> None:
     monkeypatch.setattr(
-        player_window_module,
+        bootstrap,
         "load_app_config",
         lambda _default: AppConfig(asr_provider="speechmatics"),
     )
@@ -2477,19 +2628,19 @@ def test_player_window_keeps_asr_api_keys_per_provider(qapp, monkeypatch) -> Non
     )
     window = PlayerWindow()
     try:
-        assert window._asr_provider_combo.currentData() == "speechmatics"
-        assert window._asr_provider_combo.findData("speechmatics") >= 0
-        assert window._asr_provider_combo.findData("assemblyai") == -1
-        assert window._asr_api_key_edit.text() == "speech-key"
-        window._set_combo_data(window._asr_provider_combo, "speechmatics")
+        assert window.features.layout._asr_provider_combo.currentData() == "speechmatics"
+        assert window.features.layout._asr_provider_combo.findData("speechmatics") >= 0
+        assert window.features.layout._asr_provider_combo.findData("assemblyai") == -1
+        assert window.features.layout._asr_api_key_edit.text() == "speech-key"
+        window.features.settings._set_combo_data(window.features.layout._asr_provider_combo, "speechmatics")
         qapp.processEvents()
 
-        assert window._asr_api_key_edit.text() == "speech-key"
+        assert window.features.layout._asr_api_key_edit.text() == "speech-key"
 
-        window._save_settings()
+        window.features.settings._save_settings()
         assert saved_keys[-1]["assemblyai"] == "assembly-key"
         assert saved_keys[-1]["speechmatics"] == "speech-key"
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2500,7 +2651,7 @@ def test_player_window_keeps_api_keys_per_provider_for_online_groups(qapp, monke
         "translator_api_key": {"deepl": "deepl-key"},
         "tts_api_key": {"amazon_polly": "aws-access"},
         "tts_api_secret": {"amazon_polly": "aws-secret"},
-        "transcript_cleanup_api_key": {"gemini": "gemini-key"},
+        "transcript_cleanup_api_key": {"groq": "saved-groq-key"},
         "speaker_gender_api_key": {"huggingface_gender": "hf-key"},
     }
     saved = {}
@@ -2516,49 +2667,47 @@ def test_player_window_keeps_api_keys_per_provider_for_online_groups(qapp, monke
 
     window = PlayerWindow()
     try:
-        assert window._translator_combo.findData("google_translate") == -1
-        assert window._translator_combo.findData("deepl") == -1
-        assert window._translator_combo.currentData() in {"nllb_ct2", "nllb", "none"}
-        assert not window._translator_api_key_edit.isEnabled()
+        assert window.features.layout._translator_combo.findData("google_translate") == -1
+        assert window.features.layout._translator_combo.findData("deepl") == -1
+        assert window.features.layout._translator_combo.currentData() in {"nllb_ct2", "nllb", "none"}
+        assert not window.features.layout._translator_api_key_edit.isEnabled()
 
-        assert window._tts_provider_combo.findData("azure_tts") == -1
-        assert window._tts_provider_combo.findData("amazon_polly") == -1
-        assert window._tts_provider_combo.currentData() in {"vieneu", "edge", "none"}
-        assert not window._tts_api_key_edit.isEnabled()
-        assert not window._tts_api_secret_edit.isEnabled()
+        assert window.features.layout._tts_provider_combo.findData("azure_tts") == -1
+        assert window.features.layout._tts_provider_combo.findData("amazon_polly") == -1
+        assert window.features.layout._tts_provider_combo.currentData() in {"vieneu", "edge", "none"}
+        assert not window.features.layout._tts_api_key_edit.isEnabled()
+        assert not window.features.layout._tts_api_secret_edit.isEnabled()
 
-        window._set_combo_data(window._ocr_provider_combo, "azure_vision")
+        window.features.settings._set_combo_data(window.features.layout._ocr_provider_combo, "azure_vision")
         qapp.processEvents()
-        window._ocr_api_key_edit.setText("azure-ocr-key")
-        window._set_combo_data(window._ocr_provider_combo, "google_vision")
+        window.features.layout._ocr_api_key_edit.setText("azure-ocr-key")
+        window.features.settings._set_combo_data(window.features.layout._ocr_provider_combo, "google_vision")
         qapp.processEvents()
-        assert window._ocr_api_key_edit.text() == "google-ocr-key"
-        window._set_combo_data(window._ocr_provider_combo, "azure_vision")
+        assert window.features.layout._ocr_api_key_edit.text() == "google-ocr-key"
+        window.features.settings._set_combo_data(window.features.layout._ocr_provider_combo, "azure_vision")
         qapp.processEvents()
-        assert window._ocr_api_key_edit.text() == "azure-ocr-key"
+        assert window.features.layout._ocr_api_key_edit.text() == "azure-ocr-key"
 
-        window._set_combo_data(window._transcript_cleanup_mode_combo, "light")
-        window._set_combo_data(window._transcript_cleanup_provider_combo, "groq")
+        window.features.settings._set_combo_data(window.features.layout._transcript_cleanup_mode_combo, "light")
+        window.features.settings._set_combo_data(window.features.layout._transcript_cleanup_provider_combo, "groq")
+        window.features.settings._restore_provider_secrets_for_kind("cleanup", "groq")
         qapp.processEvents()
-        window._transcript_cleanup_api_key_edit.setText("groq-key")
-        window._set_combo_data(window._transcript_cleanup_provider_combo, "gemini")
-        qapp.processEvents()
-        assert window._transcript_cleanup_api_key_edit.text() == "gemini-key"
+        assert window.features.layout._transcript_cleanup_api_key_edit.text() == "saved-groq-key"
+        window.features.layout._transcript_cleanup_api_key_edit.setText("groq-key")
 
-        assert window._speaker_gender_provider_combo.findData("huggingface_gender") == -1
-        assert window._speaker_gender_provider_combo.currentData() == "local"
-        assert not window._speaker_gender_api_key_edit.isEnabled()
+        assert window.features.layout._speaker_gender_provider_combo.findData("huggingface_gender") == -1
+        assert window.features.layout._speaker_gender_provider_combo.currentData() == "local"
+        assert not window.features.layout._speaker_gender_api_key_edit.isEnabled()
 
-        window._save_settings()
+        window.features.settings._save_settings()
         assert saved["translator_api_key"]["deepl"] == "deepl-key"
         assert saved["tts_api_key"]["amazon_polly"] == "aws-access"
         assert saved["tts_api_secret"]["amazon_polly"] == "aws-secret"
         assert saved["ocr_api_key"]["azure_vision"] == "azure-ocr-key"
         assert saved["ocr_api_key"]["google_vision"] == "google-ocr-key"
         assert saved["transcript_cleanup_api_key"]["groq"] == "groq-key"
-        assert saved["transcript_cleanup_api_key"]["gemini"] == "gemini-key"
         assert saved["speaker_gender_api_key"]["huggingface_gender"] == "hf-key"
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2575,16 +2724,16 @@ def test_player_window_online_provider_consent_rejects_and_reverts(qapp, monkeyp
     try:
         window.show()
         qapp.processEvents()
-        previous = window._ocr_provider_combo.currentData()
+        previous = window.features.layout._ocr_provider_combo.currentData()
 
-        window._set_combo_data(window._ocr_provider_combo, "google_vision")
+        window.features.settings._set_combo_data(window.features.layout._ocr_provider_combo, "google_vision")
         qapp.processEvents()
 
-        assert window._ocr_provider_combo.currentData() == previous
+        assert window.features.layout._ocr_provider_combo.currentData() == previous
         assert messages
         assert "google_vision" in messages[0][1]
-        assert window.statusBar().currentMessage() == window._tr("online_provider_consent_rejected")
-        window._settings_save_timer.stop()
+        assert window.statusBar().currentMessage() == window.features.settings._tr("online_provider_consent_rejected")
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2602,17 +2751,17 @@ def test_player_window_online_provider_consent_accepts_once_per_provider(qapp, m
         window.show()
         qapp.processEvents()
 
-        window._set_combo_data(window._ocr_provider_combo, "google_vision")
+        window.features.settings._set_combo_data(window.features.layout._ocr_provider_combo, "google_vision")
         qapp.processEvents()
-        assert window._ocr_provider_combo.currentData() == "google_vision"
+        assert window.features.layout._ocr_provider_combo.currentData() == "google_vision"
 
-        window._set_combo_data(window._ocr_provider_combo, "tesseract")
-        window._set_combo_data(window._ocr_provider_combo, "google_vision")
+        window.features.settings._set_combo_data(window.features.layout._ocr_provider_combo, "tesseract")
+        window.features.settings._set_combo_data(window.features.layout._ocr_provider_combo, "google_vision")
         qapp.processEvents()
 
         assert len(calls) == 1
         assert "google_vision" in calls[0]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2630,18 +2779,18 @@ def test_player_window_cleanup_online_consent_waits_until_cleanup_is_enabled(qap
         window.show()
         qapp.processEvents()
 
-        window._set_combo_data(window._transcript_cleanup_mode_combo, "off")
-        window._set_combo_data(window._transcript_cleanup_provider_combo, "groq")
+        window.features.settings._set_combo_data(window.features.layout._transcript_cleanup_mode_combo, "off")
+        window.features.settings._set_combo_data(window.features.layout._transcript_cleanup_provider_combo, "groq")
         qapp.processEvents()
         assert calls == []
 
-        window._set_combo_data(window._transcript_cleanup_mode_combo, "light")
+        window.features.settings._set_combo_data(window.features.layout._transcript_cleanup_mode_combo, "light")
         qapp.processEvents()
 
         assert len(calls) == 1
         assert "groq" in calls[0]
-        assert window._transcript_cleanup_mode_combo.currentData() == "off"
-        window._settings_save_timer.stop()
+        assert window.features.layout._transcript_cleanup_mode_combo.currentData() == "off"
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2652,60 +2801,60 @@ def test_player_window_provider_preview_status_is_not_duplicated(qapp) -> None:
         assert window._speaker_gender_preview_status.parent() is not None
         assert window._cleanup_preview_status.parent() is not None
         assert window._provider_preview_status.parent() is None
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
 
 def test_player_window_preserves_selected_advanced_tts_provider(qapp, monkeypatch) -> None:
     monkeypatch.setattr(
-        player_window_module,
+        bootstrap,
         "load_app_config",
         lambda _default: AppConfig(tts_provider="azure_tts", tts_api_key="azure-key"),
     )
 
     window = PlayerWindow()
     try:
-        assert window._tts_provider_combo.currentData() == "azure_tts"
-        assert window._tts_provider_combo.findData("azure_tts") >= 0
-        assert window._tts_provider_combo.findData("google_tts") == -1
-        assert window._tts_provider_combo.findData("amazon_polly") == -1
-        window._settings_save_timer.stop()
+        assert window.features.layout._tts_provider_combo.currentData() == "azure_tts"
+        assert window.features.layout._tts_provider_combo.findData("azure_tts") >= 0
+        assert window.features.layout._tts_provider_combo.findData("google_tts") == -1
+        assert window.features.layout._tts_provider_combo.findData("amazon_polly") == -1
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
 
 def test_player_window_preserves_selected_advanced_asr_provider(qapp, monkeypatch) -> None:
     monkeypatch.setattr(
-        player_window_module,
+        bootstrap,
         "load_app_config",
         lambda _default: AppConfig(asr_provider="assemblyai", asr_api_key="assembly-key"),
     )
 
     window = PlayerWindow()
     try:
-        assert window._asr_provider_combo.currentData() == "assemblyai"
-        assert window._asr_provider_combo.findData("assemblyai") >= 0
-        assert window._asr_provider_combo.findData("speechmatics") == -1
-        window._settings_save_timer.stop()
+        assert window.features.layout._asr_provider_combo.currentData() == "assemblyai"
+        assert window.features.layout._asr_provider_combo.findData("assemblyai") >= 0
+        assert window.features.layout._asr_provider_combo.findData("speechmatics") == -1
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
 
 def test_player_window_preserves_selected_advanced_translation_provider(qapp, monkeypatch) -> None:
     monkeypatch.setattr(
-        player_window_module,
+        bootstrap,
         "load_app_config",
         lambda _default: AppConfig(translator_provider="deepl", translator_api_key="deepl-key"),
     )
 
     window = PlayerWindow()
     try:
-        assert window._translator_combo.currentData() == "deepl"
-        assert window._translator_combo.findData("deepl") >= 0
-        assert window._translator_combo.findData("google_translate") == -1
-        assert window._translator_combo.findData("azure_translator") == -1
-        window._settings_save_timer.stop()
+        assert window.features.layout._translator_combo.currentData() == "deepl"
+        assert window.features.layout._translator_combo.findData("deepl") >= 0
+        assert window.features.layout._translator_combo.findData("google_translate") == -1
+        assert window.features.layout._translator_combo.findData("azure_translator") == -1
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2713,16 +2862,16 @@ def test_player_window_preserves_selected_advanced_translation_provider(qapp, mo
 def test_player_window_readiness_wizard_applies_meeting_document_profile(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._readiness_select_profile("meeting_document")
-        window._apply_readiness_profile()
-        config = window._current_runtime_config()
+        window.features.readiness._readiness_select_profile("meeting_document")
+        window.features.readiness._apply_readiness_profile()
+        config = window.features.settings._current_runtime_config()
 
-        assert window._performance_preset_combo.currentData() == "balanced"
-        assert window._audio_source_combo.currentData() == "document_editor"
+        assert window.features.layout._performance_preset_combo.currentData() == "balanced"
+        assert window.features.layout._audio_source_combo.currentData() == "document_editor"
         assert config.performance_preset == "balanced"
         assert config.audio_source == "document_editor"
-        assert window._readiness_status.text()
-        window._settings_save_timer.stop()
+        assert window.features.readiness._readiness_status.text()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2730,11 +2879,13 @@ def test_player_window_readiness_wizard_applies_meeting_document_profile(qapp) -
 def test_player_window_readiness_wizard_opens_runtime_tab(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._select_settings_tab_for_widget(window._runtime_tab_widget)
+        window.features.readiness._select_settings_tab_for_widget(window.features.runtime._runtime_tab_widget)
         qapp.processEvents()
 
-        assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._runtime_tab_widget)
-        window._settings_save_timer.stop()
+        assert window.features.runtime._settings_tab_contains(
+            window.features.layout._settings_tabs.currentWidget(), window.features.runtime._runtime_tab_widget
+        )
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2746,44 +2897,55 @@ def test_player_window_readiness_actions_are_direct(qapp, monkeypatch) -> None:
 
     window = PlayerWindow()
     try:
-        monkeypatch.setattr(window, "_missing_offline_model_keys", lambda: ("whisper",))
-        monkeypatch.setattr(window, "_preview_missing_offline_model_scripts", lambda: previewed_missing.append(True))
-        monkeypatch.setattr(window, "_start_provider_preview", lambda kind: started_previews.append(kind))
+        monkeypatch.setattr(window.features.offline_models, "_missing_offline_model_keys", lambda: ("whisper",))
+        monkeypatch.setattr(
+            window.features.offline_models,
+            "_preview_missing_offline_model_scripts",
+            lambda: previewed_missing.append(True),
+        )
+        monkeypatch.setattr(
+            window.features.provider_preview, "_start_provider_preview", lambda kind: started_previews.append(kind)
+        )
         monkeypatch.setattr(
             player_window_readiness.QDesktopServices,
             "openUrl",
             lambda url: opened_urls.append(url) or True,
         )
 
-        window._refresh_readiness_status()
+        window.features.readiness._refresh_readiness_status()
 
-        assert window._readiness_download_button.isEnabled()
-        assert window._readiness_preview_missing_button.isEnabled()
-        assert window._readiness_test_provider_button.property("provider_preview_kind") in {
+        assert window.features.readiness._readiness_download_button.isEnabled()
+        assert window.features.readiness._readiness_preview_missing_button.isEnabled()
+        assert window.features.readiness._readiness_test_provider_button.property("provider_preview_kind") in {
             "asr",
             "translation",
             "tts",
             "ocr",
         }
 
-        window._readiness_preview_missing()
+        window.features.readiness._readiness_preview_missing()
         assert previewed_missing == [True]
-        assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._offline_models_tab_widget)
+        assert window.features.runtime._settings_tab_contains(
+            window.features.layout._settings_tabs.currentWidget(),
+            window.features.offline_models._offline_models_tab_widget,
+        )
 
-        window._readiness_open_model_folder()
+        window.features.readiness._readiness_open_model_folder()
         assert opened_urls
         assert opened_urls[0].isLocalFile()
 
         monkeypatch.setattr(
-            window._readiness_controller,
+            window.features.readiness._readiness_controller,
             "status",
             lambda: SimpleNamespace(provider_preview_kind="translation"),
         )
-        window._readiness_test_provider()
+        window.features.readiness._readiness_test_provider()
         assert started_previews == ["translation"]
-        assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._models_tab_widget)
+        assert window.features.runtime._settings_tab_contains(
+            window.features.layout._settings_tabs.currentWidget(), window.features.bindings._models_tab_widget
+        )
 
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2791,14 +2953,16 @@ def test_player_window_readiness_actions_are_direct(qapp, monkeypatch) -> None:
 def test_player_window_readiness_optimize_speed_applies_quick_profile(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._readiness_select_profile("quality")
-        window._readiness_optimize_speed()
+        window.features.readiness._readiness_select_profile("quality")
+        window.features.readiness._readiness_optimize_speed()
 
-        assert window._readiness_selected_profile == "quick"
-        assert window._performance_preset_combo.currentData() == "low_latency"
-        assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._basic_tab_widget)
-        assert window.statusBar().currentMessage() == window._tr("first_run_speed_optimized")
-        window._settings_save_timer.stop()
+        assert window.features.readiness._readiness_selected_profile == "quick"
+        assert window.features.layout._performance_preset_combo.currentData() == "low_latency"
+        assert window.features.runtime._settings_tab_contains(
+            window.features.layout._settings_tabs.currentWidget(), window.features.bindings._basic_tab_widget
+        )
+        assert window.statusBar().currentMessage() == window.features.settings._tr("first_run_speed_optimized")
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2807,14 +2971,14 @@ def test_player_window_readiness_tab_does_not_overflow_sidebar(qapp) -> None:
     window = PlayerWindow()
     try:
         window.resize(1366, 768)
-        window._settings_tabs.setCurrentIndex(0)
+        window.features.layout._settings_tabs.setCurrentIndex(0)
         qapp.processEvents()
 
-        scroll = window._settings_tabs.widget(0)
+        scroll = window.features.layout._settings_tabs.widget(0)
         assert isinstance(scroll, QScrollArea)
         assert scroll.horizontalScrollBar().maximum() == 0
-        assert window._readiness_tab_widget.width() <= scroll.viewport().width() + 8
-        window._settings_save_timer.stop()
+        assert window.features.readiness._readiness_tab_widget.width() <= scroll.viewport().width() + 8
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2854,30 +3018,28 @@ def test_seek_requests_dubbing_resync_without_blocking_stop(qapp, monkeypatch) -
             def wait(self, _timeout_ms: int) -> bool:
                 raise AssertionError("seek must not wait for dubbing synchronously")
 
-        monkeypatch.setattr(window, "_player", FakePlayer())
+        monkeypatch.setattr(window.features.layout, "_player", FakePlayer())
         monkeypatch.setattr(
-            window,
-            "_set_dubbing_ready",
-            lambda ready, message="": calls.append(("ready", ready, message)),
+            window.features.ui, "_set_dubbing_ready", lambda ready, message="": calls.append(("ready", ready, message))
         )
-        window._document_mode = False
-        window._video_path = "demo.mp4"
-        window._dub_worker = FakeDubbingWorker()
-        window._dub_button.blockSignals(True)
-        window._dub_button.setChecked(True)
-        window._dub_button.blockSignals(False)
-        window._position_slider.setValue(500)
+        window.features.media.document.mode = False
+        window.features.channel_browser._video_path = "demo.mp4"
+        window.features.lifecycle.workers.dubbing_worker = FakeDubbingWorker()
+        window.features.layout._dub_button.blockSignals(True)
+        window.features.layout._dub_button.setChecked(True)
+        window.features.layout._dub_button.blockSignals(False)
+        window.features.layout._position_slider.setValue(500)
 
-        window._end_seek()
+        window.features.media._end_seek()
 
         assert ("set_position", 0.5) in calls
         assert "request_resync" in calls
         assert any(call[0:2] == ("ready", False) for call in calls if isinstance(call, tuple))
     finally:
-        window._dub_worker = None
-        window._dub_button.blockSignals(True)
-        window._dub_button.setChecked(False)
-        window._dub_button.blockSignals(False)
+        window.features.lifecycle.workers.dubbing_worker = None
+        window.features.layout._dub_button.blockSignals(True)
+        window.features.layout._dub_button.setChecked(False)
+        window.features.layout._dub_button.blockSignals(False)
         window.close()
 
 
@@ -2885,18 +3047,18 @@ def test_next_action_start_dubbing_starts_on_first_click(qapp, monkeypatch) -> N
     window = PlayerWindow()
     try:
         starts: list[str] = []
-        monkeypatch.setattr(window, "_start_dubbing", lambda: starts.append("start"))
+        monkeypatch.setattr(window.features.dubbing, "_start_dubbing", lambda: starts.append("start"))
 
-        window._transcript_empty_panel._next_action_keys = ["start_dubbing"]
-        window._dubbing_auto_enabled = False
-        window._dub_button.setChecked(False)
+        window.features.bindings._transcript_empty_panel._next_action_keys = ["start_dubbing"]
+        window.features.media.playback.dubbing_auto_enabled = False
+        window.features.layout._dub_button.setChecked(False)
 
-        window._run_next_action(0, panel_name="transcriptEmptyPanel")
+        window.features.transcript._run_next_action(0, panel_name="transcriptEmptyPanel")
 
-        assert window._dub_button.isChecked()
-        assert window._dubbing_auto_enabled is True
+        assert window.features.layout._dub_button.isChecked()
+        assert window.features.media.playback.dubbing_auto_enabled is True
         assert starts == ["start"]
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2904,11 +3066,11 @@ def test_next_action_start_dubbing_starts_on_first_click(qapp, monkeypatch) -> N
 def test_runtime_warmup_status_does_not_leave_last_progress_message(qapp) -> None:
     window = PlayerWindow()
     try:
-        window.statusBar().showMessage(window._tr("warmup_loading_tts"))
-        window._runtime_warmup_finished_successfully({"tts_seconds": 0.1})
+        window.statusBar().showMessage(window.features.settings._tr("warmup_loading_tts"))
+        window.features.runtime._runtime_warmup_finished_successfully({"tts_seconds": 0.1})
 
-        assert window.statusBar().currentMessage() == window._tr("status_runtime_warmup_ready")
-        window._settings_save_timer.stop()
+        assert window.statusBar().currentMessage() == window.features.settings._tr("status_runtime_warmup_ready")
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2916,13 +3078,13 @@ def test_runtime_warmup_status_does_not_leave_last_progress_message(qapp) -> Non
 def test_runtime_warmup_status_ignores_empty_success(qapp) -> None:
     window = PlayerWindow()
     try:
-        startup_message = window._runtime_startup_status_message()
+        startup_message = window.features.runtime._runtime_startup_status_message()
         window.statusBar().showMessage(startup_message)
 
-        window._runtime_warmup_finished_successfully({})
+        window.features.runtime._runtime_warmup_finished_successfully({})
 
         assert window.statusBar().currentMessage() == startup_message
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2930,12 +3092,14 @@ def test_runtime_warmup_status_ignores_empty_success(qapp) -> None:
 def test_runtime_warmup_status_can_replace_startup_status(qapp) -> None:
     window = PlayerWindow()
     try:
-        window.statusBar().showMessage(window._runtime_startup_status_message())
+        window.statusBar().showMessage(window.features.runtime._runtime_startup_status_message())
 
-        window._runtime_warmup_status_changed(window._tr("warmup_loading_translation"))
+        window.features.runtime._runtime_warmup_status_changed(
+            window.features.settings._tr("warmup_loading_translation")
+        )
 
-        assert window.statusBar().currentMessage() == window._tr("warmup_loading_translation")
-        window._settings_save_timer.stop()
+        assert window.statusBar().currentMessage() == window.features.settings._tr("warmup_loading_translation")
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2944,14 +3108,14 @@ def test_runtime_warmup_status_survives_language_change(qapp) -> None:
     window = PlayerWindow()
     try:
         english_message = "Preloading translator..."
-        window._show_runtime_warmup_status(english_message)
-        window._set_combo_data(window._ui_language_combo, "vi")
+        window.features.runtime._show_runtime_warmup_status(english_message)
+        window.features.settings._set_combo_data(window.features.layout._ui_language_combo, "vi")
         qapp.processEvents()
 
-        window._runtime_warmup_finished_successfully({"translation_seconds": 0.1})
+        window.features.runtime._runtime_warmup_finished_successfully({"translation_seconds": 0.1})
 
-        assert window.statusBar().currentMessage() == window._tr("status_runtime_warmup_ready")
-        window._settings_save_timer.stop()
+        assert window.statusBar().currentMessage() == window.features.settings._tr("status_runtime_warmup_ready")
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2961,12 +3125,14 @@ def test_runtime_warmup_status_does_not_override_user_status(qapp) -> None:
     try:
         window.statusBar().showMessage("User opened a file")
 
-        window._runtime_warmup_status_changed(window._tr("warmup_loading_translation"))
-        window._runtime_warmup_finished_successfully({})
-        window._runtime_warmup_failed("boom")
+        window.features.runtime._runtime_warmup_status_changed(
+            window.features.settings._tr("warmup_loading_translation")
+        )
+        window.features.runtime._runtime_warmup_finished_successfully({})
+        window.features.runtime._runtime_warmup_failed("boom")
 
         assert window.statusBar().currentMessage() == "User opened a file"
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2974,12 +3140,14 @@ def test_runtime_warmup_status_does_not_override_user_status(qapp) -> None:
 def test_runtime_warmup_status_can_replace_previous_failure(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._runtime_warmup_failed("boom")
+        window.features.runtime._runtime_warmup_failed("boom")
 
-        window._runtime_warmup_status_changed(window._tr("warmup_loading_translation"))
+        window.features.runtime._runtime_warmup_status_changed(
+            window.features.settings._tr("warmup_loading_translation")
+        )
 
-        assert window.statusBar().currentMessage() == window._tr("warmup_loading_translation")
-        window._settings_save_timer.stop()
+        assert window.statusBar().currentMessage() == window.features.settings._tr("warmup_loading_translation")
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -2988,11 +3156,11 @@ def test_player_window_fits_common_laptop_width(qapp) -> None:
     window = PlayerWindow()
     try:
         for language in ("vi", "en"):
-            window._set_combo_data(window._ui_language_combo, language)
+            window.features.settings._set_combo_data(window.features.layout._ui_language_combo, language)
             qapp.processEvents()
             assert window.minimumSizeHint().width() <= 1366
-            assert window._controls.minimumSizeHint().width() <= 900
-        window._settings_save_timer.stop()
+            assert window.features.layout._controls.minimumSizeHint().width() <= 900
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3003,89 +3171,95 @@ def test_panel_visibility_buttons_toggle_top_bottom_right_independently(qapp) ->
         window.resize(1366, 768)
         window.show()
         qapp.processEvents()
-        media_layout = window._media_frame.parentWidget().layout()
-        assert window._controls.isVisible()
-        assert window._source_bar.isVisible()
-        assert window._settings_scroll.isVisible()
-        assert window._panel_visibility_bar.isVisible()
-        assert all(widget.isVisible() for widget in window._header_controls)
-        assert media_layout.itemAt(media_layout.indexOf(window._media_frame)).alignment() & Qt.AlignCenter
+        media_layout = window.features.media.frame.frame.parentWidget().layout()
+        assert window.features.layout._controls.isVisible()
+        assert window.features.layout._source_bar.isVisible()
+        assert window.features.layout._settings_scroll.isVisible()
+        assert window.features.layout._panel_visibility_bar.isVisible()
+        assert all(widget.isVisible() for widget in window.features.layout._header_controls)
+        assert media_layout.itemAt(media_layout.indexOf(window.features.media.frame.frame)).alignment() & Qt.AlignCenter
 
-        window._top_panel_toggle_button.click()
+        window.features.layout._top_panel_toggle_button.click()
         qapp.processEvents()
 
-        assert window._top_panel_hidden is True
-        assert not window._source_bar.isVisible()
-        assert window._controls.isVisible()
-        assert window._settings_scroll.isVisible()
-        assert window._top_panel_toggle_button.toolTip() == window._tr("top_panel_show_tooltip")
+        assert window.features.media.playback.top_panel_hidden is True
+        assert not window.features.layout._source_bar.isVisible()
+        assert window.features.layout._controls.isVisible()
+        assert window.features.layout._settings_scroll.isVisible()
+        assert window.features.layout._top_panel_toggle_button.toolTip() == window.features.settings._tr(
+            "top_panel_show_tooltip"
+        )
 
-        window._bottom_panel_toggle_button.click()
+        window.features.layout._bottom_panel_toggle_button.click()
         qapp.processEvents()
 
-        assert window._bottom_panel_hidden is True
-        assert not window._source_bar.isVisible()
-        assert not window._controls.isVisible()
-        assert window._settings_scroll.isVisible()
-        assert window._bottom_panel_toggle_button.toolTip() == window._tr("bottom_panel_show_tooltip")
+        assert window.features.media.playback.bottom_panel_hidden is True
+        assert not window.features.layout._source_bar.isVisible()
+        assert not window.features.layout._controls.isVisible()
+        assert window.features.layout._settings_scroll.isVisible()
+        assert window.features.layout._bottom_panel_toggle_button.toolTip() == window.features.settings._tr(
+            "bottom_panel_show_tooltip"
+        )
 
-        window._set_sidebar_panel_visible(False)
+        window.features.media._set_sidebar_panel_visible(False)
         qapp.processEvents()
         qapp.processEvents()
 
-        assert window._sidebar_panel_hidden is True
-        assert not window._source_bar.isVisible()
-        assert not window._controls.isVisible()
-        assert window._settings_scroll.isHidden()
+        assert window.features.media.playback.sidebar_panel_hidden is True
+        assert not window.features.layout._source_bar.isVisible()
+        assert not window.features.layout._controls.isVisible()
+        assert window.features.layout._settings_scroll.isHidden()
         assert window.statusBar().isVisible()
-        assert window._panel_visibility_bar.isVisible()
-        assert window._right_panel_toggle_button.toolTip() == window._tr("right_panel_show_tooltip")
-        assert window._root_layout.contentsMargins().left() == 14
-        assert window._video_layout.contentsMargins().left() == 12
-        assert window._video_panel.property("focusMedia") is None
-        assert window._media_frame.property("focusMedia") is None
-        assert window._splitter.sizes()[1] == 0
+        assert window.features.layout._panel_visibility_bar.isVisible()
+        assert window.features.layout._right_panel_toggle_button.toolTip() == window.features.settings._tr(
+            "right_panel_show_tooltip"
+        )
+        assert window.features.layout._root_layout.contentsMargins().left() == 14
+        assert window.features.layout._video_layout.contentsMargins().left() == 12
+        assert window.features.layout._video_panel.property("focusMedia") is None
+        assert window.features.media.frame.frame.property("focusMedia") is None
+        assert window.features.layout._splitter.sizes()[1] == 0
 
-        window._handle_escape_shortcut()
+        window.features.media._handle_escape_shortcut()
         qapp.processEvents()
 
-        assert window._top_panel_hidden is False
-        assert window._bottom_panel_hidden is False
-        assert window._sidebar_panel_hidden is False
-        assert window._controls.isVisible()
-        assert window._source_bar.isVisible()
-        assert window._settings_scroll.isVisible()
+        assert window.features.media.playback.top_panel_hidden is False
+        assert window.features.media.playback.bottom_panel_hidden is False
+        assert window.features.media.playback.sidebar_panel_hidden is False
+        assert window.features.layout._controls.isVisible()
+        assert window.features.layout._source_bar.isVisible()
+        assert window.features.layout._settings_scroll.isVisible()
         assert window.statusBar().isVisible()
-        assert all(widget.isVisible() for widget in window._header_controls)
-        assert window._root_layout.contentsMargins().left() == 14
-        assert window._video_layout.contentsMargins().left() == 12
-        assert window._video_panel.property("focusMedia") is False
-        assert window._media_frame.property("focusMedia") is False
-        assert window._video_panel.frameShape() == QFrame.Shape.NoFrame
-        assert window._media_frame.frameShape() == QFrame.Shape.NoFrame
+        assert all(widget.isVisible() for widget in window.features.layout._header_controls)
+        assert window.features.layout._root_layout.contentsMargins().left() == 14
+        assert window.features.layout._video_layout.contentsMargins().left() == 12
+        assert window.features.layout._video_panel.property("focusMedia") is False
+        assert window.features.media.frame.frame.property("focusMedia") is False
+        assert window.features.layout._video_panel.frameShape() == QFrame.Shape.NoFrame
+        assert window.features.media.frame.frame.frameShape() == QFrame.Shape.NoFrame
 
-        window._set_top_panel_visible(False)
-        window._set_bottom_panel_visible(False)
-        window._set_sidebar_panel_visible(False)
+        window.features.media._set_top_panel_visible(False)
+        window.features.media._set_bottom_panel_visible(False)
+        window.features.media._set_sidebar_panel_visible(False)
         qapp.processEvents()
-        window._reset_panel_sizes()
+        window.features.media._reset_panel_sizes()
         qapp.processEvents()
 
-        assert window._top_panel_hidden is False
-        assert window._bottom_panel_hidden is False
-        assert window._sidebar_panel_hidden is False
-        assert window._controls.isVisible()
-        assert window._source_bar.isVisible()
-        assert window._settings_scroll.isVisible()
+        assert window.features.media.playback.top_panel_hidden is False
+        assert window.features.media.playback.bottom_panel_hidden is False
+        assert window.features.media.playback.sidebar_panel_hidden is False
+        assert window.features.layout._controls.isVisible()
+        assert window.features.layout._source_bar.isVisible()
+        assert window.features.layout._settings_scroll.isVisible()
         assert window.statusBar().isVisible()
-        assert all(widget.isVisible() for widget in window._header_controls)
-        assert window._root_layout.contentsMargins().left() == 14
-        assert window._video_layout.contentsMargins().left() == 12
-        assert window._video_panel.property("focusMedia") is False
-        assert window._media_frame.property("focusMedia") is False
-        assert window._video_panel.frameShape() == QFrame.Shape.NoFrame
-        assert window._media_frame.frameShape() == QFrame.Shape.NoFrame
-        window._settings_save_timer.stop()
+        assert all(widget.isVisible() for widget in window.features.layout._header_controls)
+        assert window.features.layout._root_layout.contentsMargins().left() == 14
+        assert window.features.layout._video_layout.contentsMargins().left() == 12
+        assert window.features.layout._video_panel.property("focusMedia") is False
+        assert window.features.media.frame.frame.property("focusMedia") is False
+        assert window.features.layout._video_panel.frameShape() == QFrame.Shape.NoFrame
+        assert window.features.media.frame.frame.frameShape() == QFrame.Shape.NoFrame
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3097,30 +3271,30 @@ def test_escape_restores_full_ui_from_focus_media_fullscreen(qapp) -> None:
         window.show()
         qapp.processEvents()
 
-        window._set_sidebar_panel_visible(False)
+        window.features.media._set_sidebar_panel_visible(False)
         qapp.processEvents()
-        window._set_video_fullscreen(True)
-        qapp.processEvents()
-
-        assert window._sidebar_panel_hidden is True
-        assert window._video_fullscreen is True
-
-        window._handle_escape_shortcut()
-        qapp.processEvents()
+        window.features.media._set_video_fullscreen(True)
         qapp.processEvents()
 
-        assert window._video_fullscreen is False
-        assert window._sidebar_panel_hidden is False
-        assert window._media_frame.parentWidget() is window._video_panel
-        assert window._controls.isVisible()
-        assert window._source_bar.isVisible()
-        assert window._settings_scroll.isVisible()
+        assert window.features.media.playback.sidebar_panel_hidden is True
+        assert window.features.media.playback.video_fullscreen is True
+
+        window.features.media._handle_escape_shortcut()
+        qapp.processEvents()
+        qapp.processEvents()
+
+        assert window.features.media.playback.video_fullscreen is False
+        assert window.features.media.playback.sidebar_panel_hidden is False
+        assert window.features.media.frame.frame.parentWidget() is window.features.layout._video_panel
+        assert window.features.layout._controls.isVisible()
+        assert window.features.layout._source_bar.isVisible()
+        assert window.features.layout._settings_scroll.isVisible()
         assert window.statusBar().isVisible()
-        assert window._video_panel.frameShape() == QFrame.Shape.NoFrame
-        assert window._media_frame.frameShape() == QFrame.Shape.NoFrame
-        assert window._root_layout.contentsMargins().left() == 14
-        assert window._video_layout.contentsMargins().left() == 12
-        window._settings_save_timer.stop()
+        assert window.features.layout._video_panel.frameShape() == QFrame.Shape.NoFrame
+        assert window.features.media.frame.frame.frameShape() == QFrame.Shape.NoFrame
+        assert window.features.layout._root_layout.contentsMargins().left() == 14
+        assert window.features.layout._video_layout.contentsMargins().left() == 12
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3133,32 +3307,32 @@ def test_repeated_right_panel_toggle_preserves_layout_state(qapp) -> None:
         qapp.processEvents()
 
         for _ in range(3):
-            window._set_sidebar_panel_visible(False)
+            window.features.media._set_sidebar_panel_visible(False)
             qapp.processEvents()
             qapp.processEvents()
 
-            assert window._sidebar_panel_hidden is True
-            assert window._settings_scroll.isHidden()
-            assert window._source_bar.isVisible()
-            assert window._controls.isVisible()
-            assert window._root_layout.contentsMargins().left() == 14
-            assert window._video_layout.contentsMargins().left() == 12
-            assert window._video_panel.frameShape() == QFrame.Shape.NoFrame
-            assert window._media_frame.frameShape() == QFrame.Shape.NoFrame
+            assert window.features.media.playback.sidebar_panel_hidden is True
+            assert window.features.layout._settings_scroll.isHidden()
+            assert window.features.layout._source_bar.isVisible()
+            assert window.features.layout._controls.isVisible()
+            assert window.features.layout._root_layout.contentsMargins().left() == 14
+            assert window.features.layout._video_layout.contentsMargins().left() == 12
+            assert window.features.layout._video_panel.frameShape() == QFrame.Shape.NoFrame
+            assert window.features.media.frame.frame.frameShape() == QFrame.Shape.NoFrame
 
-            window._set_sidebar_panel_visible(True)
+            window.features.media._set_sidebar_panel_visible(True)
             qapp.processEvents()
             qapp.processEvents()
 
-            assert window._sidebar_panel_hidden is False
-            assert window._settings_scroll.isVisible()
-            assert window._source_bar.isVisible()
-            assert window._controls.isVisible()
-            assert window._root_layout.contentsMargins().left() == 14
-            assert window._video_layout.contentsMargins().left() == 12
-            assert window._video_panel.frameShape() == QFrame.Shape.NoFrame
-            assert window._media_frame.frameShape() == QFrame.Shape.NoFrame
-        window._settings_save_timer.stop()
+            assert window.features.media.playback.sidebar_panel_hidden is False
+            assert window.features.layout._settings_scroll.isVisible()
+            assert window.features.layout._source_bar.isVisible()
+            assert window.features.layout._controls.isVisible()
+            assert window.features.layout._root_layout.contentsMargins().left() == 14
+            assert window.features.layout._video_layout.contentsMargins().left() == 12
+            assert window.features.layout._video_panel.frameShape() == QFrame.Shape.NoFrame
+            assert window.features.media.frame.frame.frameShape() == QFrame.Shape.NoFrame
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3169,7 +3343,7 @@ def test_focus_media_refreshes_document_page_after_resize(qapp, monkeypatch) -> 
         window.resize(1366, 768)
         window.show()
         qapp.processEvents()
-        window._set_document_mode(
+        window.features.media._set_document_mode(
             True,
             6000,
             [
@@ -3185,27 +3359,27 @@ def test_focus_media_refreshes_document_page_after_resize(qapp, monkeypatch) -> 
         qapp.processEvents()
 
         calls = []
-        original_update_document_page = window._update_document_page
+        original_update_document_page = window.features.media._update_document_page
 
         def update_document_page_spy(force: bool = False) -> None:
             calls.append(force)
             original_update_document_page(force=force)
 
-        monkeypatch.setattr(window, "_update_document_page", update_document_page_spy)
+        monkeypatch.setattr(window.features.media, "_update_document_page", update_document_page_spy)
 
-        window._set_sidebar_panel_visible(False)
+        window.features.media._set_sidebar_panel_visible(False)
         qapp.processEvents()
         qapp.processEvents()
 
         assert True in calls
 
         calls.clear()
-        window._set_sidebar_panel_visible(True)
+        window.features.media._set_sidebar_panel_visible(True)
         qapp.processEvents()
         qapp.processEvents()
 
         assert True in calls
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3216,28 +3390,30 @@ def test_panel_expand_button_widens_control_panel(qapp) -> None:
         window.resize(1366, 768)
         window.show()
         qapp.processEvents()
-        before = window._splitter.sizes()
-        before_min_width = window._settings_scroll.minimumWidth()
+        before = window.features.layout._splitter.sizes()
+        before_min_width = window.features.layout._settings_scroll.minimumWidth()
 
-        window._expand_sidebar_panel()
+        window.features.media._expand_sidebar_panel()
         qapp.processEvents()
-        after = window._splitter.sizes()
+        after = window.features.layout._splitter.sizes()
 
-        assert window._panel_expand_button.toolTip() == window._tr("sidebar_wider_tooltip")
-        assert window._settings_scroll.minimumWidth() > before_min_width
-        assert window._sidebar_panel_sizes[1] > before[1]
+        assert window.features.layout._panel_expand_button.toolTip() == window.features.settings._tr(
+            "sidebar_wider_tooltip"
+        )
+        assert window.features.layout._settings_scroll.minimumWidth() > before_min_width
+        assert window.features.media.playback.sidebar_panel_sizes[1] > before[1]
         assert after[1] >= before[1]
 
-        window._set_sidebar_panel_visible(False)
+        window.features.media._set_sidebar_panel_visible(False)
         qapp.processEvents()
-        assert window._sidebar_panel_hidden is True
+        assert window.features.media.playback.sidebar_panel_hidden is True
 
-        window._expand_sidebar_panel()
+        window.features.media._expand_sidebar_panel()
         qapp.processEvents()
 
-        assert window._sidebar_panel_hidden is False
-        assert window._settings_scroll.isVisible()
-        window._settings_save_timer.stop()
+        assert window.features.media.playback.sidebar_panel_hidden is False
+        assert window.features.layout._settings_scroll.isVisible()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3249,30 +3425,32 @@ def test_panel_collapse_button_narrows_control_panel(qapp) -> None:
         window.show()
         qapp.processEvents()
 
-        window._expand_sidebar_panel()
+        window.features.media._expand_sidebar_panel()
         qapp.processEvents()
-        expanded_sizes = list(window._sidebar_panel_sizes)
-        expanded_min_width = window._settings_scroll.minimumWidth()
+        expanded_sizes = list(window.features.media.playback.sidebar_panel_sizes)
+        expanded_min_width = window.features.layout._settings_scroll.minimumWidth()
 
-        window._collapse_sidebar_panel()
+        window.features.media._collapse_sidebar_panel()
         qapp.processEvents()
 
-        assert window._panel_collapse_button.toolTip() == window._tr("sidebar_narrower_tooltip")
-        assert window._settings_scroll.minimumWidth() == DEFAULT_SIDEBAR_PANEL_WIDTH
-        assert window._sidebar_panel_sizes[1] < expanded_sizes[1]
-        assert window._sidebar_panel_sizes[0] > expanded_sizes[0]
+        assert window.features.layout._panel_collapse_button.toolTip() == window.features.settings._tr(
+            "sidebar_narrower_tooltip"
+        )
+        assert window.features.layout._settings_scroll.minimumWidth() == DEFAULT_SIDEBAR_PANEL_WIDTH
+        assert window.features.media.playback.sidebar_panel_sizes[1] < expanded_sizes[1]
+        assert window.features.media.playback.sidebar_panel_sizes[0] > expanded_sizes[0]
         assert expanded_min_width > DEFAULT_SIDEBAR_PANEL_WIDTH
 
-        window._set_sidebar_panel_visible(False)
+        window.features.media._set_sidebar_panel_visible(False)
         qapp.processEvents()
-        assert window._sidebar_panel_hidden is True
+        assert window.features.media.playback.sidebar_panel_hidden is True
 
-        window._collapse_sidebar_panel()
+        window.features.media._collapse_sidebar_panel()
         qapp.processEvents()
 
-        assert window._sidebar_panel_hidden is False
-        assert window._settings_scroll.isVisible()
-        window._settings_save_timer.stop()
+        assert window.features.media.playback.sidebar_panel_hidden is False
+        assert window.features.layout._settings_scroll.isVisible()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3280,16 +3458,18 @@ def test_panel_collapse_button_narrows_control_panel(qapp) -> None:
 def test_sidebar_header_stays_outside_scroll_area(qapp) -> None:
     window = PlayerWindow()
     try:
-        assert window._splitter.widget(1) is window._settings_scroll
-        assert not isinstance(window._settings_scroll, QScrollArea)
-        assert isinstance(window._settings_tabs.widget(0), QScrollArea)
-        assert window._settings_tabs.parentWidget() is window._settings_scroll
+        assert window.features.layout._splitter.widget(1) is window.features.layout._settings_scroll
+        assert not isinstance(window.features.layout._settings_scroll, QScrollArea)
+        assert isinstance(window.features.layout._settings_tabs.widget(0), QScrollArea)
+        assert window.features.layout._settings_tabs.parentWidget() is window.features.layout._settings_scroll
 
-        window._settings_tabs.setCurrentIndex(7)
+        window.features.layout._settings_tabs.setCurrentIndex(7)
         qapp.processEvents()
 
-        assert window._settings_tab_contains(window._settings_tabs.currentWidget(), window._runtime_tab_widget)
-        window._settings_save_timer.stop()
+        assert window.features.runtime._settings_tab_contains(
+            window.features.layout._settings_tabs.currentWidget(), window.features.runtime._runtime_tab_widget
+        )
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3297,31 +3477,31 @@ def test_sidebar_header_stays_outside_scroll_area(qapp) -> None:
 def test_player_window_guide_and_device_auto_follow_language(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._set_combo_data(window._ui_language_combo, "en")
+        window.features.settings._set_combo_data(window.features.layout._ui_language_combo, "en")
         qapp.processEvents()
-        assert "Start from your goal" in window._user_guide_html()
-        assert "Quick workflow" in window._user_guide_html()
-        assert "Common fixes" in window._user_guide_html()
-        assert "Quy trình nhanh" not in window._user_guide_html()
-        assert [title for title, _html in window._user_guide_tabs()] == [
+        assert "Start from your goal" in window.features.user_guide._user_guide_html()
+        assert "Quick workflow" in window.features.user_guide._user_guide_html()
+        assert "Common fixes" in window.features.user_guide._user_guide_html()
+        assert "Quy trình nhanh" not in window.features.user_guide._user_guide_html()
+        assert [title for title, _html in window.features.user_guide._user_guide_tabs()] == [
             "Workflow",
             "Sources",
             "Current setup",
             "Reference",
         ]
-        assert "Mainstream video platforms" in window._user_guide_html()
-        assert window._capture_system_device_combo.itemText(0) == "Auto"
+        assert "Mainstream video platforms" in window.features.user_guide._user_guide_html()
+        assert window.features.layout._capture_system_device_combo.itemText(0) == "Auto"
 
-        window._set_combo_data(window._ui_language_combo, "vi")
+        window.features.settings._set_combo_data(window.features.layout._ui_language_combo, "vi")
         qapp.processEvents()
-        assert "Chọn nhanh theo mục tiêu" in window._user_guide_html()
-        assert "Quy trình nhanh" in window._user_guide_html()
-        assert "Sự cố thường gặp" in window._user_guide_html()
-        assert "Nền tảng video phổ biến" in window._user_guide_html()
-        assert "AI_PLAYER_EXTRA_YTDLP_HOSTS" in window._user_guide_html()
-        assert len(window._user_guide_tabs()) == 4
-        assert window._capture_system_device_combo.itemText(0) == "Tự động"
-        window._settings_save_timer.stop()
+        assert "Chọn nhanh theo mục tiêu" in window.features.user_guide._user_guide_html()
+        assert "Quy trình nhanh" in window.features.user_guide._user_guide_html()
+        assert "Sự cố thường gặp" in window.features.user_guide._user_guide_html()
+        assert "Nền tảng video phổ biến" in window.features.user_guide._user_guide_html()
+        assert "AI_PLAYER_EXTRA_YTDLP_HOSTS" in window.features.user_guide._user_guide_html()
+        assert len(window.features.user_guide._user_guide_tabs()) == 4
+        assert window.features.layout._capture_system_device_combo.itemText(0) == "Tự động"
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3333,18 +3513,18 @@ def test_player_window_command_buttons_share_standard_metrics(qapp) -> None:
         window.show()
         qapp.processEvents()
 
-        height = window._COMMAND_BUTTON_HEIGHT
-        width = window._COMMAND_BUTTON_WIDTH
-        icon_size = window._ICON_BUTTON_SIZE
+        height = window.features.ui._COMMAND_BUTTON_HEIGHT
+        width = window.features.ui._COMMAND_BUTTON_WIDTH
+        icon_size = window.features.ui._ICON_BUTTON_SIZE
 
         command_buttons = (
-            window._task_status_button,
-            window._open_source_button,
-            window._start_dubbing_button,
-            window._meeting_button,
-            window._export_button,
-            window._tools_menu_button,
-            window._display_options_button,
+            window.features.layout._task_status_button,
+            window.features.layout._open_source_button,
+            window.features.layout._start_dubbing_button,
+            window.features.layout._meeting_button,
+            window.features.layout._export_button,
+            window.features.layout._tools_menu_button,
+            window.features.layout._display_options_button,
         )
         for button in command_buttons:
             assert button.minimumHeight() == height
@@ -3353,13 +3533,13 @@ def test_player_window_command_buttons_share_standard_metrics(qapp) -> None:
             assert button.maximumWidth() == width
 
         icon_buttons = (
-            window._play_button,
-            window._pause_button,
-            window._stop_button,
-            window._previous_page_button,
-            window._next_page_button,
-            window._media_home_button,
-            window._focus_media_button,
+            window.features.layout._play_button,
+            window.features.layout._pause_button,
+            window.features.layout._stop_button,
+            window.features.layout._previous_page_button,
+            window.features.layout._next_page_button,
+            window.features.bindings._media_home_button,
+            window.features.layout._focus_media_button,
         )
         for button in icon_buttons:
             assert button.minimumWidth() == icon_size
@@ -3367,7 +3547,7 @@ def test_player_window_command_buttons_share_standard_metrics(qapp) -> None:
             assert button.minimumHeight() == icon_size
             assert button.maximumHeight() == icon_size
 
-        for card in window._media_start_workflow_cards.values():
+        for card in window.features.layout._media_start_workflow_cards.values():
             open_button = card._workflow_open_button
             preset_button = card._workflow_preset_button
             assert open_button.minimumHeight() == height
@@ -3382,7 +3562,7 @@ def test_player_window_command_buttons_share_standard_metrics(qapp) -> None:
             preset_left = preset_button.mapTo(card, QPoint(0, 0)).x()
             assert open_left >= card.width() - (width + 18)
             assert preset_left >= card.width() - (width + 18)
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3391,28 +3571,30 @@ def test_media_start_quick_panel_opens_pasted_and_recent_sources(qapp, monkeypat
     window = PlayerWindow()
     try:
         opened: list[str] = []
-        monkeypatch.setattr(window, "_open_smart_source_text", lambda value: opened.append(str(value).strip()))
+        monkeypatch.setattr(
+            window.features.sources, "_open_smart_source_text", lambda value: opened.append(str(value).strip())
+        )
 
-        window._media_start_quick_source_edit.setText("https://example.com/video.mp4")
-        window._media_start_submit_quick_source()
+        window.features.layout._media_start_quick_source_edit.setText("https://example.com/video.mp4")
+        window.features.sources._media_start_submit_quick_source()
 
         assert opened == ["https://example.com/video.mp4"]
-        assert window._media_start_quick_source_edit.text() == ""
+        assert window.features.layout._media_start_quick_source_edit.text() == ""
 
-        window._video_url_recent_urls = ("https://example.com/recent.mp4",)
-        window._refresh_media_start_context()
-        recent_button = window._media_start_recent_buttons[0]
+        window.features.sources._video_url_recent_urls = ("https://example.com/recent.mp4",)
+        window.features.layout._refresh_media_start_context()
+        recent_button = window.features.layout._media_start_recent_buttons[0]
 
         assert not recent_button.isHidden()
         assert recent_button.property("source") == "https://example.com/recent.mp4"
         recent_button.click()
         assert opened[-1] == "https://example.com/recent.mp4"
-        assert window._media_start_config_summary.text()
+        assert window.features.layout._media_start_config_summary.text()
 
         mime_data = QMimeData()
         mime_data.setText("https://example.com/drop.mp4")
-        assert window._media_start_mime_supported(mime_data)
-        window._settings_save_timer.stop()
+        assert window.features.sources._media_start_mime_supported(mime_data)
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3424,16 +3606,16 @@ def test_media_start_sections_do_not_overlap(qapp) -> None:
         window.show()
         qapp.processEvents()
 
-        content = window._media_start_content
+        content = window.features.layout._media_start_content
         workflow_bottom = max(
             card.mapTo(content, QPoint(0, 0)).y() + card.height()
-            for card in window._media_start_workflow_cards.values()
+            for card in window.features.layout._media_start_workflow_cards.values()
         )
-        quick_top = window._media_start_drop_zone.mapTo(content, QPoint(0, 0)).y()
+        quick_top = window.features.layout._media_start_drop_zone.mapTo(content, QPoint(0, 0)).y()
 
         assert quick_top >= workflow_bottom
-        assert isinstance(window._media_start_overlay, QScrollArea)
-        window._settings_save_timer.stop()
+        assert isinstance(window.features.layout._media_start_overlay, QScrollArea)
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3441,47 +3623,46 @@ def test_media_start_sections_do_not_overlap(qapp) -> None:
 def test_runtime_stop_tasks_button_fits_localized_text(qapp) -> None:
     window = PlayerWindow()
     try:
-        button = window._runtime_stop_tasks_button
+        button = window.features.runtime._runtime_stop_tasks_button
 
-        assert button.width() > window._COMMAND_BUTTON_WIDTH
+        assert button.width() > window.features.ui._COMMAND_BUTTON_WIDTH
         assert button.width() >= button.sizeHint().width()
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
 
-def test_translation_model_combo_drops_incompatible_current_model(qapp) -> None:
+def test_translation_model_combo_excludes_removed_ct2_model(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._set_combo_data(window._translator_combo, "nllb")
-        window._refresh_translation_models(LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH)
+        window.features.settings._set_combo_data(window.features.layout._translator_combo, "nllb")
+        window.features.settings._refresh_translation_models(LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH)
         qapp.processEvents()
-        nllb_models = [window._nllb_model_combo.itemData(index) for index in range(window._nllb_model_combo.count())]
+        nllb_models = [
+            window.features.layout._nllb_model_combo.itemData(index)
+            for index in range(window.features.layout._nllb_model_combo.count())
+        ]
         assert LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH not in nllb_models
-        assert window._nllb_model_combo.currentData() == LOCAL_TRANSLATION_MODEL_PATH
+        assert window.features.layout._nllb_model_combo.currentData() == LOCAL_TRANSLATION_MODEL_PATH
 
-        window._set_combo_data(window._translator_combo, "nllb_ct2")
-        window._refresh_translation_models(LOCAL_TRANSLATION_MODEL_PATH)
-        qapp.processEvents()
-        ct2_models = [window._nllb_model_combo.itemData(index) for index in range(window._nllb_model_combo.count())]
-        assert LOCAL_TRANSLATION_MODEL_PATH not in ct2_models
-        assert window._nllb_model_combo.currentData() == LOCAL_TRANSLATION_MODEL_CT2_INT8_PATH
-        window._settings_save_timer.stop()
+        assert window.features.layout._translator_combo.findData("nllb_ct2") == -1
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
 
-def test_source_filter_mode_combo_excludes_auto(qapp) -> None:
+def test_source_filter_mode_combo_only_includes_ai(qapp) -> None:
     window = PlayerWindow()
     try:
         modes = [
-            window._source_filter_mode_combo.itemData(index)
-            for index in range(window._source_filter_mode_combo.count())
+            window.features.layout._source_filter_mode_combo.itemData(index)
+            for index in range(window.features.layout._source_filter_mode_combo.count())
         ]
 
-        assert modes == ["fast", "ai"]
-        assert window._source_filter_mode_combo.findData("auto") == -1
-        window._settings_save_timer.stop()
+        assert modes == ["ai"]
+        assert window.features.layout._source_filter_mode_combo.findData("fast") == -1
+        assert window.features.layout._source_filter_mode_combo.findData("auto") == -1
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3492,17 +3673,17 @@ def test_video_url_full_cache_is_below_auto_match_audio(qapp) -> None:
         window.show()
         qapp.processEvents()
 
-        auto_match_y = window._auto_match_audio_check.mapTo(
+        auto_match_y = window.features.layout._auto_match_audio_check.mapTo(
             window,
-            window._auto_match_audio_check.rect().topLeft(),
+            window.features.layout._auto_match_audio_check.rect().topLeft(),
         ).y()
-        full_cache_y = window._video_url_full_cache_check.mapTo(
+        full_cache_y = window.features.layout._video_url_full_cache_check.mapTo(
             window,
-            window._video_url_full_cache_check.rect().topLeft(),
+            window.features.layout._video_url_full_cache_check.rect().topLeft(),
         ).y()
 
         assert full_cache_y > auto_match_y
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3510,14 +3691,14 @@ def test_video_url_full_cache_is_below_auto_match_audio(qapp) -> None:
 def test_player_window_video_cache_dir_updates_runtime_config(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._video_cache_dir_edit.setText(r"D:\media-cache")
+        window.features.layout._video_cache_dir_edit.setText(r"D:\media-cache")
 
-        assert window._current_runtime_config().video_cache_dir == r"D:\media-cache"
+        assert window.features.settings._current_runtime_config().video_cache_dir == r"D:\media-cache"
 
-        window._reset_video_cache_dir()
+        window.features.sources._reset_video_cache_dir()
 
-        assert window._current_runtime_config().video_cache_dir == ""
-        window._settings_save_timer.stop()
+        assert window.features.settings._current_runtime_config().video_cache_dir == ""
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3525,22 +3706,22 @@ def test_player_window_video_cache_dir_updates_runtime_config(qapp) -> None:
 def test_video_url_forces_full_cache_when_source_filter_is_enabled(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._video_url_full_cache_check.setChecked(False)
-        window._source_filter_check.setChecked(False)
+        window.features.layout._video_url_full_cache_check.setChecked(False)
+        window.features.layout._source_filter_check.setChecked(False)
         qapp.processEvents()
-        assert window._effective_video_url_full_cache() is False
-        assert window._source_filter_forces_video_url_full_cache() is False
+        assert window.features.source_progress._effective_video_url_full_cache() is False
+        assert window.features.source_progress._source_filter_forces_video_url_full_cache() is False
 
-        window._source_filter_check.setChecked(True)
+        window.features.layout._source_filter_check.setChecked(True)
         qapp.processEvents()
-        assert window._effective_video_url_full_cache() is True
-        assert window._source_filter_forces_video_url_full_cache() is True
+        assert window.features.source_progress._effective_video_url_full_cache() is True
+        assert window.features.source_progress._source_filter_forces_video_url_full_cache() is True
 
-        window._video_url_full_cache_check.setChecked(True)
+        window.features.layout._video_url_full_cache_check.setChecked(True)
         qapp.processEvents()
-        assert window._effective_video_url_full_cache() is True
-        assert window._source_filter_forces_video_url_full_cache() is False
-        window._settings_save_timer.stop()
+        assert window.features.source_progress._effective_video_url_full_cache() is True
+        assert window.features.source_progress._source_filter_forces_video_url_full_cache() is False
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3549,22 +3730,22 @@ def test_page_video_url_uses_full_cache_for_smoother_playback(qapp, monkeypatch)
     window = PlayerWindow()
     started: list[dict[str, object]] = []
     try:
-        window._video_url_full_cache_check.setChecked(False)
-        window._source_filter_check.setChecked(False)
-        monkeypatch.setattr(window, "_save_settings", lambda: None)
+        window.features.layout._video_url_full_cache_check.setChecked(False)
+        window.features.layout._source_filter_check.setChecked(False)
+        monkeypatch.setattr(window.features.settings, "_save_settings", lambda: None)
         monkeypatch.setattr(
-            window._video_url,
+            window.features.sources.url_controller,
             "start",
             lambda url, quality, **kwargs: started.append({"url": url, "quality": quality, **kwargs}) or True,
         )
 
-        window._open_resolved_video_url("https://www.njav.com/vi/xvideos/rki-729-uncensored-leak")
+        window.features.sources._open_resolved_video_url("https://www.njav.com/vi/xvideos/rki-729-uncensored-leak")
 
         assert started[-1]["full_cache"] is True
-        assert started[-1]["play_after_cache_percent"] == window._config.video_url_play_after_cache_percent
-        assert window._last_video_url_request["full_cache"] is True
+        assert started[-1]["play_after_cache_percent"] == window.features.config.video_url_play_after_cache_percent
+        assert window.features.sources._last_video_url_request["full_cache"] is True
     finally:
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
         window.close()
 
 
@@ -3572,28 +3753,28 @@ def test_direct_media_url_keeps_selected_cache_mode(qapp, monkeypatch) -> None:
     window = PlayerWindow()
     started: list[dict[str, object]] = []
     try:
-        window._video_url_full_cache_check.setChecked(False)
-        window._source_filter_check.setChecked(False)
-        monkeypatch.setattr(window, "_save_settings", lambda: None)
+        window.features.layout._video_url_full_cache_check.setChecked(False)
+        window.features.layout._source_filter_check.setChecked(False)
+        monkeypatch.setattr(window.features.settings, "_save_settings", lambda: None)
         monkeypatch.setattr(
-            window._video_url,
+            window.features.sources.url_controller,
             "start",
             lambda url, quality, **kwargs: started.append({"url": url, "quality": quality, **kwargs}) or True,
         )
 
-        window._open_resolved_video_url("https://cdn.example.test/video.mp4")
+        window.features.sources._open_resolved_video_url("https://cdn.example.test/video.mp4")
 
         assert started[-1]["full_cache"] is False
         assert started[-1]["play_after_cache_percent"] == 0
-        assert window._last_video_url_request["full_cache"] is False
+        assert window.features.sources._last_video_url_request["full_cache"] is False
     finally:
-        window._settings_save_timer.stop()
+        window.features.layout._settings_save_timer.stop()
         window.close()
 
 
 def test_video_url_forbidden_failure_is_not_quality_issue() -> None:
-    assert PlayerWindow._video_url_failure_is_forbidden("HTTP Error 403: Forbidden")
-    assert not PlayerWindow._video_url_failure_is_forbidden("HTTP Error 429: Too Many Requests")
+    assert PlayerSourceFeature._video_url_failure_is_forbidden("HTTP Error 403: Forbidden")
+    assert not PlayerSourceFeature._video_url_failure_is_forbidden("HTTP Error 429: Too Many Requests")
 
 
 def test_video_url_source_headers_fallback_to_input_url() -> None:
@@ -3605,7 +3786,7 @@ def test_video_url_source_headers_fallback_to_input_url() -> None:
         is_resolved=True,
     )
 
-    headers = PlayerWindow._http_headers_for_video_source(source)
+    headers = PlayerSourceFeature._http_headers_for_video_source(source)
 
     assert headers["Referer"] == "https://www.njav.com/vi/xvideos/demo"
     assert headers["User-Agent"].startswith("Mozilla/5.0")
@@ -3614,23 +3795,27 @@ def test_video_url_source_headers_fallback_to_input_url() -> None:
 def test_subtitle_background_combo_updates_overlay_style(qapp) -> None:
     window = PlayerWindow()
     try:
-        window._set_combo_data(window._subtitle_background_combo, "rgba(0, 0, 0, 160)")
+        window.features.settings._set_combo_data(
+            window.features.layout._subtitle_background_combo, "rgba(0, 0, 0, 160)"
+        )
         qapp.processEvents()
 
-        assert window._subtitle_background_color() == "rgba(0, 0, 0, 160)"
-        assert window._subtitle_overlay.subtitleBackgroundColor().getRgb() == (0, 0, 0, 160)
-        assert window._subtitle_overlay.styleSheet() == ""
-        assert window._subtitle_overlay.font().pixelSize() == window._subtitle_font_size()
-        assert window._subtitle_overlay.frameShape() == QFrame.Shape.NoFrame
-        assert window._subtitle_overlay.lineWidth() == 0
-        assert window._subtitle_overlay.midLineWidth() == 0
-        assert window._subtitle_overlay.parentWidget() is None
-        assert window._subtitle_overlay.isWindow()
-        assert window._subtitle_overlay.windowFlags() & Qt.NoDropShadowWindowHint
-        assert window._subtitle_overlay.windowFlags() & Qt.BypassWindowManagerHint
-        assert window._subtitle_overlay.testAttribute(Qt.WA_NoSystemBackground)
-        assert not window._subtitle_overlay.testAttribute(Qt.WA_StyledBackground)
-        window._settings_save_timer.stop()
+        assert window.features.media._subtitle_background_color() == "rgba(0, 0, 0, 160)"
+        assert window.features.layout._subtitle_overlay.subtitleBackgroundColor().getRgb() == (0, 0, 0, 160)
+        assert window.features.layout._subtitle_overlay.styleSheet() == ""
+        assert (
+            window.features.layout._subtitle_overlay.font().pixelSize() == window.features.media._subtitle_font_size()
+        )
+        assert window.features.layout._subtitle_overlay.frameShape() == QFrame.Shape.NoFrame
+        assert window.features.layout._subtitle_overlay.lineWidth() == 0
+        assert window.features.layout._subtitle_overlay.midLineWidth() == 0
+        assert window.features.layout._subtitle_overlay.parentWidget() is None
+        assert window.features.layout._subtitle_overlay.isWindow()
+        assert window.features.layout._subtitle_overlay.windowFlags() & Qt.NoDropShadowWindowHint
+        assert window.features.layout._subtitle_overlay.windowFlags() & Qt.BypassWindowManagerHint
+        assert window.features.layout._subtitle_overlay.testAttribute(Qt.WA_NoSystemBackground)
+        assert not window.features.layout._subtitle_overlay.testAttribute(Qt.WA_StyledBackground)
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()
 
@@ -3640,22 +3825,22 @@ def test_timed_live_subtitle_tracks_source_audio_time(qapp, monkeypatch) -> None
     try:
         current_ms = {"value": 0}
         fake_player = SimpleNamespace(get_time_ms=lambda: current_ms["value"], stop=lambda: None)
-        monkeypatch.setattr(window, "_player", fake_player)
-        window._set_combo_data(window._subtitle_mode_combo, "target")
-        window._set_timed_live_subtitle(10.0, 2.0, "source line", "target line")
+        monkeypatch.setattr(window.features.layout, "_player", fake_player)
+        window.features.settings._set_combo_data(window.features.layout._subtitle_mode_combo, "target")
+        window.features.dubbing._set_timed_live_subtitle(10.0, 2.0, "source line", "target line")
 
         current_ms["value"] = 9000
-        window._update_subtitle_overlay()
-        assert not window._subtitle_overlay.isVisible()
+        window.features.media._update_subtitle_overlay()
+        assert not window.features.layout._subtitle_overlay.isVisible()
 
         current_ms["value"] = 10500
-        window._update_subtitle_overlay()
-        assert window._subtitle_overlay.text() == "target line"
-        assert window._subtitle_overlay.isVisible()
+        window.features.media._update_subtitle_overlay()
+        assert window.features.layout._subtitle_overlay.text() == "target line"
+        assert window.features.layout._subtitle_overlay.isVisible()
 
         current_ms["value"] = 14000
-        window._update_subtitle_overlay()
-        assert not window._subtitle_overlay.isVisible()
-        window._settings_save_timer.stop()
+        window.features.media._update_subtitle_overlay()
+        assert not window.features.layout._subtitle_overlay.isVisible()
+        window.features.layout._settings_save_timer.stop()
     finally:
         window.close()

@@ -47,8 +47,7 @@ def test_recent_source_label_uses_filename_for_local_paths() -> None:
 
 def test_recent_source_label_truncates_long_labels_from_the_left() -> None:
     assert (
-        recent_source_label("https://example.com/very/long/source/path/demo.mp4", max_length=18)
-        == "...e/path/demo.mp4"
+        recent_source_label("https://example.com/very/long/source/path/demo.mp4", max_length=18) == "...e/path/demo.mp4"
     )
 
 
