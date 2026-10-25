@@ -361,8 +361,13 @@ class PlayerUiFeature(Feature):
                 border-radius: 0;
             }
             QScrollArea#sideScroll {
-                background: transparent;
+                background: #ffffff;
                 border: 0;
+            }
+            QScrollArea#sideScroll QWidget#qt_scrollarea_viewport,
+            QScrollArea#sideScroll QWidget[settingsPage="true"] {
+                background: #ffffff;
+                color: #172033;
             }
             QScrollBar:vertical {
                 background: transparent;
@@ -408,6 +413,13 @@ class PlayerUiFeature(Feature):
                 color: #172033;
                 font-size: 8.5pt;
             }
+            QLabel#runtimeValue {
+                background: #f7f9fb;
+                border: 1px solid #d8dee7;
+                border-radius: 7px;
+                color: #172033;
+                padding: 6px 8px;
+            }
             QLabel#presetInspector {
                 background: #f7f9fb;
                 border: 1px solid #d8dee7;
@@ -429,6 +441,24 @@ class PlayerUiFeature(Feature):
             QPushButton#presetCardButton:hover {
                 background: #f7fbfa;
                 border-color: #8bbdb6;
+            }
+            QPushButton#workflowCardButton,
+            QPushButton#readinessActionButton {
+                text-align: left;
+                padding: 7px 10px;
+            }
+            QPushButton#readinessActionButton {
+                background: #ffffff;
+                border-color: #d5dde8;
+            }
+            QPushButton#readinessActionButton:hover {
+                background: #f2f7ff;
+                border-color: #7da2df;
+                color: #19479f;
+            }
+            QPushButton#readinessActionButton:pressed {
+                background: #e6edff;
+                border-color: #2459c4;
             }
             QPushButton#presetCardButton:checked {
                 background: #e6f3f1;
@@ -678,6 +708,39 @@ class PlayerUiFeature(Feature):
                 border-radius: 8px;
                 padding: 10px;
                 selection-background-color: #146c63;
+            }
+            QTableWidget {
+                background: #ffffff;
+                alternate-background-color: #f8fafc;
+                color: #172033;
+                border: 1px solid #d8dee7;
+                gridline-color: #e1e7ef;
+                selection-background-color: #e6f3f1;
+                selection-color: #172033;
+            }
+            QTableWidget::item {
+                background: #ffffff;
+                color: #172033;
+                padding: 5px;
+            }
+            QTableWidget::item:selected {
+                background: #e6f3f1;
+                color: #0b514b;
+            }
+            QHeaderView::section {
+                background: #eef2f6;
+                color: #172033;
+                border: 0;
+                border-right: 1px solid #d8dee7;
+                border-bottom: 1px solid #d8dee7;
+                padding: 5px;
+                font-weight: 600;
+            }
+            QTableCornerButton::section {
+                background: #eef2f6;
+                border: 0;
+                border-right: 1px solid #d8dee7;
+                border-bottom: 1px solid #d8dee7;
             }
             QTableWidget#transcriptSegmentTable {
                 background: #ffffff;
@@ -984,10 +1047,30 @@ class PlayerUiFeature(Feature):
             }
             QComboBox, QLineEdit {
                 background: #ffffff;
+                color: #172033;
                 border: 1px solid #c6d0dc;
                 border-radius: 7px;
                 padding: 5px 9px;
                 min-height: 22px;
+                placeholder-text-color: #667085;
+            }
+            QComboBox QAbstractItemView {
+                background: #ffffff;
+                color: #172033;
+                border: 1px solid #c6d0dc;
+                selection-background-color: #e6edff;
+                selection-color: #172033;
+                outline: 0;
+            }
+            QComboBox QAbstractItemView::item {
+                background: #ffffff;
+                color: #172033;
+                min-height: 28px;
+                padding: 5px 8px;
+            }
+            QComboBox QAbstractItemView::item:selected {
+                background: #e6edff;
+                color: #172033;
             }
             QComboBox:hover, QLineEdit:hover {
                 border-color: #8c99aa;
@@ -996,7 +1079,7 @@ class PlayerUiFeature(Feature):
                 border-color: #146c63;
             }
             QComboBox:disabled, QLineEdit:disabled {
-                color: #8a96a6;
+                color: #64748b;
                 background: #ffffff;
             }
             QCheckBox {

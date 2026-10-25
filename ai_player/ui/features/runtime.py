@@ -52,7 +52,8 @@ class PlayerRuntimeFeature(Feature):
 
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(7)
+        grid.setVerticalSpacing(4)
+        grid.setColumnStretch(0, 1)
         self.context.runtime._runtime_labels: dict[str, QLabel] = {}
         rows = [
             ("health", "runtime_health"),
@@ -73,12 +74,17 @@ class PlayerRuntimeFeature(Feature):
         ]
         for row, (key, title) in enumerate(rows):
             title_label = self.context.ui._field_label(title)
+            title_label.setMinimumWidth(0)
+            title_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             value_label = QLabel("...")
+            value_label.setObjectName("runtimeValue")
             value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
             value_label.setWordWrap(True)
+            value_label.setMinimumWidth(0)
+            value_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             self.context.runtime._runtime_labels[key] = value_label
-            grid.addWidget(title_label, row, 0)
-            grid.addWidget(value_label, row, 1)
+            grid.addWidget(title_label, row * 2, 0)
+            grid.addWidget(value_label, row * 2 + 1, 0)
         layout.addLayout(grid)
         layout.addStretch(1)
         self.context.runtime.controller.bind(

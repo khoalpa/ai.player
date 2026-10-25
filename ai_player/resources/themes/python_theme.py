@@ -191,13 +191,25 @@ def qt_stylesheet(legacy: str = "") -> str:
         f"""
     QMainWindow, QWidget#root, QDialog, QMenu {{ color:{v["text"]}; background-color:{v["bg"]}; }}
     QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
-        background:{v["panel"]}; border:1px solid {v["border"]}; border-radius:{radius}; padding:5px;
+        color:{v["text"]}; background:{v["panel"]}; border:1px solid {v["border"]}; border-radius:{radius}; padding:5px;
+        placeholder-text-color:{v["muted"]};
         selection-background-color:{v["accent"]}; selection-color:{v["accent-ink"]};
     }}
+    QAbstractItemView {{
+        color:{v["text"]}; background:{v["panel"]}; alternate-background-color:{v["surface"]};
+        border:1px solid {v["border"]}; selection-background-color:{v["accent-soft"]};
+        selection-color:{v["text"]}; outline:0;
+    }}
+    QAbstractItemView::item {{ color:{v["text"]}; background:{v["panel"]}; padding:5px; }}
+    QAbstractItemView::item:selected {{ color:{v["text"]}; background:{v["accent-soft"]}; }}
+    QComboBox QAbstractItemView {{ color:{v["text"]}; background:{v["panel"]}; }}
+    QCheckBox, QRadioButton, QGroupBox {{ color:{v["text"]}; }}
+    QMenu::item {{ color:{v["text"]}; background:{v["panel"]}; padding:6px 18px; }}
+    QMenu::item:selected {{ color:{v["text"]}; background:{v["accent-soft"]}; }}
     QPushButton {{ background:{v["panel"]}; border:1px solid {v["border"]}; border-radius:{radius}; padding:5px 10px; }}
     QPushButton:hover {{ background:{v["surface"]}; border-color:{v["accent"]}; }}
     QPushButton:focus, QLineEdit:focus {{ border:2px solid {v["accent"]}; }}
-    QPushButton:disabled {{ color:{v["disabled"]}; }}
+    QPushButton:disabled, QCheckBox:disabled, QRadioButton:disabled {{ color:{v["disabled"]}; }}
     QToolTip {{ color:{v["text"]}; background:{v["panel"]}; border:1px solid {v["border"]}; }}
     """
         + legacy

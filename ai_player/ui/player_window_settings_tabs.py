@@ -30,6 +30,7 @@ from ai_player.ui.features.media import DEFAULT_SIDEBAR_PANEL_WIDTH
 
 
 def scrollable_settings_tab(content: QWidget) -> QScrollArea:
+    content.setProperty("settingsPage", True)
     scroll = QScrollArea()
     scroll.setObjectName("sideScroll")
     scroll.setWidgetResizable(True)

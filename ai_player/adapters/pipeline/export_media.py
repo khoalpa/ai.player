@@ -128,6 +128,8 @@ def mux_video_args(
                 quality.preset,
                 "-crf",
                 str(quality.crf),
+                "-pix_fmt",
+                "yuv420p",
             ]
         )
     command.extend(
@@ -185,6 +187,8 @@ def document_video_args(concat_file: Path, output_path: Path, quality: VideoQual
         quality.preset,
         "-crf",
         str(quality.crf),
+        "-pix_fmt",
+        "yuv420p",
         "-y",
         str(output_path),
     ]

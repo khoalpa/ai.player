@@ -35,9 +35,31 @@ def create_engine(model_name: str, device: str, backend: str):
         backend = "pytorch" if device == "cuda" else "onnx"
     if backend == "onnx":
         device = "cpu"
+    _quiet_torchaudio_ffmpeg_probe()
     from vieneu import Vieneu
 
     return Vieneu(mode="v3turbo", **engine_kwargs(Path(model_name), device, backend))
+
+
+def _quiet_torchaudio_ffmpeg_probe() -> None:
+    """Hide non-fatal Media Foundation encoder-probe errors on Windows.
+
+    VieNeu may use ``torchaudio.load`` to decode reference audio from a video.
+    TorchAudio's FFmpeg backend enumerates Windows MFT encoders while loading and
+    reports a missing AV1 encoder at error level even though decoding succeeds.
+    Fatal FFmpeg failures still surface through the normal Python exception and
+    the server's JSON error response.
+    """
+    if os.name != "nt":
+        return
+    try:
+        from torio.utils import ffmpeg_utils
+
+        ffmpeg_utils.set_log_level(8)  # AV_LOG_FATAL
+    except (AttributeError, ImportError, OSError, RuntimeError):
+        # Some CPU-only installations intentionally have no TorchAudio FFmpeg
+        # extension. VieNeu can still use its soundfile/soxr decoding paths.
+        return
 
 
 def main() -> int:

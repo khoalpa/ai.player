@@ -111,7 +111,7 @@ class PlayerReadinessFeature(Feature):
         self.context.readiness._readiness_profile_toggle.setCheckable(True)
         self.context.readiness._readiness_profile_toggle.setProperty("i18n_key", "first_run_profile_change")
         self.context.readiness._readiness_profile_toggle.setFixedHeight(self.context.ui._COMMAND_BUTTON_HEIGHT)
-        self.context.readiness._readiness_profile_toggle.setFixedWidth(self.context.ui._COMMAND_BUTTON_WIDTH)
+        self.context.readiness._readiness_profile_toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout.addWidget(self.context.readiness._readiness_profile_toggle)
         profile_panel = QWidget(tab)
         self.context.readiness._readiness_profile_panel = profile_panel
@@ -227,7 +227,7 @@ class PlayerReadinessFeature(Feature):
                     self.context.readiness._readiness_speed_button,
                     self.context.readiness._readiness_runtime_button,
                 ),
-                columns=2,
+                columns=1,
             )
         )
 
@@ -275,7 +275,7 @@ class PlayerReadinessFeature(Feature):
                     self.context.readiness._readiness_document_button,
                     self.context.readiness._readiness_meeting_button,
                 ),
-                columns=2,
+                columns=1,
             )
         )
 
@@ -312,14 +312,18 @@ class PlayerReadinessFeature(Feature):
         for column in range(columns):
             grid.setColumnStretch(column, 1)
         for index, button in enumerate(buttons):
+            button.setObjectName("readinessActionButton")
+            button.setProperty("readinessAction", True)
             self.context.readiness._fit_readiness_button(button)
             grid.addWidget(button, index // columns, index % columns)
         return row
 
     @staticmethod
     def _fit_readiness_button(button: QPushButton) -> None:
+        button.setMaximumWidth(16777215)
         button.setMinimumWidth(0)
-        button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        button.setFixedHeight(max(40, button.minimumHeight()))
+        button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     def _readiness_select_profile(self, profile_key: str) -> None:
         profile = self.context.readiness._readiness_controller.select_profile(profile_key)

@@ -95,8 +95,26 @@ def test_player_window_constructs_offscreen(qapp) -> None:
     window = PlayerWindow()
     try:
         assert window.windowTitle()
+        stylesheet = window.styleSheet()
+        assert "QScrollArea#sideScroll QWidget#qt_scrollarea_viewport" in stylesheet
+        assert 'QScrollArea#sideScroll QWidget[settingsPage="true"]' in stylesheet
         assert window.features.layout._settings_tabs.tabText(0) == window.features.settings._tr("first_run_tab")
         assert window.features.layout._settings_tabs.tabText(1) == window.features.settings._tr("task_center_tab")
+        basic_scroll = window.features.layout._settings_tabs.widget(2)
+        assert isinstance(basic_scroll, QScrollArea)
+        assert basic_scroll.widget().property("settingsPage") is True
+        transcript_scroll = window.features.layout._settings_tabs.widget(6)
+        assert isinstance(transcript_scroll, QScrollArea)
+        assert transcript_scroll.widget().property("settingsPage") is True
+        assert window.features.task_center._task_center_table.objectName() == "taskCenterTable"
+        assert "QTableWidget::item:selected" in stylesheet
+        assert "QHeaderView::section" in stylesheet
+        assert "QComboBox QAbstractItemView::item:selected" in stylesheet
+        assert "placeholder-text-color" in stylesheet
+        runtime_health = window.features.runtime._runtime_labels["health"]
+        assert runtime_health.objectName() == "runtimeValue"
+        assert runtime_health.minimumWidth() == 0
+        assert runtime_health.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
         assert window.features.readiness._readiness_selected_profile == "auto"
         assert (
             window.features.media.processing.source_filter_worker_mode
@@ -151,6 +169,12 @@ def test_player_window_constructs_offscreen(qapp) -> None:
         readiness_video_button = window.features.readiness._readiness_workflow_buttons["first_run_workflow_video"]
         assert readiness_video_button.text() == window.features.settings._tr("first_run_workflow_video")
         assert window.features.settings._tr("first_run_workflow_video_detail") in readiness_video_button.toolTip()
+        assert window.features.readiness._readiness_runtime_button.objectName() == "readinessActionButton"
+        assert window.features.readiness._readiness_runtime_button.minimumHeight() >= 38
+        assert (
+            window.features.readiness._readiness_runtime_button.sizePolicy().horizontalPolicy()
+            == QSizePolicy.Policy.Expanding
+        )
 
         media_quick_button = window.features.layout._media_start_profile_buttons["quick"]
         assert media_quick_button.text() == window.features.settings._tr("first_run_profile_quick")

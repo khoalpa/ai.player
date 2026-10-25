@@ -87,6 +87,7 @@ class PlayerTaskCenterFeature(Feature):
         layout.addWidget(toolbar)
 
         self.context.task_center._task_center_table = QTableWidget(0, 3)
+        self.context.task_center._task_center_table.setObjectName("taskCenterTable")
         self.context.task_center._task_center_table.setHorizontalHeaderLabels(
             [
                 self.context.settings._tr("task_center_name"),

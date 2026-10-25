@@ -34,6 +34,8 @@ def test_media_mux_video_args_apply_export_range(tmp_path) -> None:
 
     assert args[:4] == ["-ss", "10.000", "-i", "video.mp4"]
     assert args[args.index("-t") + 1] == "5.500"
+    assert args[args.index("-c:v") + 1] == "libx264"
+    assert args[args.index("-pix_fmt") + 1] == "yuv420p"
     assert args[-1] == str(tmp_path / "out.mp4")
 
 
