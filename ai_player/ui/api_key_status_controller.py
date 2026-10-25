@@ -193,18 +193,21 @@ class ApiKeyStatusController:
         demo: bool = False,
         secret: bool = False,
     ) -> None:
+        from ai_player.resources.themes.python_theme import values
+
+        theme = values()
         if demo:
             key = "api_key_status_demo"
-            color = "#b45309"
+            color = theme["warning"]
         elif not required:
             key = "api_secret_status_not_needed" if secret else "api_key_status_not_needed"
-            color = "#667085"
+            color = theme["muted"]
         elif has_value:
             key = "api_secret_status_saved" if secret else "api_key_status_saved"
-            color = "#237a57"
+            color = theme["success"]
         else:
             key = "api_secret_status_missing" if secret else "api_key_status_missing"
-            color = "#b42318"
+            color = theme["danger"]
         label.setText(self.context.settings._tr(key))
         label.setProperty("api_status_key", key)
         label.setStyleSheet(f"color: {color}; font-size: 8.5pt;")

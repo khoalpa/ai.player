@@ -52,9 +52,7 @@ class PlayerMeetingFeature(Feature):
         )
         self.context.lifecycle.workers.meeting_worker.failed.connect(self.context.meeting._meeting_failed)
         self.context.layout._meeting_button.setText(self.context.settings._tr("meeting_stop_label"))
-        self.context.layout._meeting_button.setIcon(
-            self.context.window.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop)
-        )
+        self.context.layout._meeting_button.setIcon(self.context.ui._app_icon(QStyle.StandardPixmap.SP_MediaStop))
         self.context.lifecycle.workers.meeting_worker.start()
         self.context.window.statusBar().showMessage(self.context.settings._tr("status_meeting_recording"))
 
@@ -134,6 +132,4 @@ class PlayerMeetingFeature(Feature):
     def _reset_meeting_button(self) -> None:
         self.context.layout._meeting_button.setEnabled(True)
         self.context.layout._meeting_button.setText(self.context.settings._tr("meeting_start_label"))
-        self.context.layout._meeting_button.setIcon(
-            self.context.window.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
-        )
+        self.context.layout._meeting_button.setIcon(self.context.ui._app_icon(QStyle.StandardPixmap.SP_MediaPlay))

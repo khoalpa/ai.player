@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QGridLayout,
@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSlider,
     QStyle,
+    QStyleFactory,
     QVBoxLayout,
     QWidget,
 )
@@ -54,7 +55,53 @@ class PlayerUiFeature(Feature):
         pixmap = name if isinstance(name, QStyle.StandardPixmap) else self.context.ui._ICON_ALIASES.get(str(name or ""))
         if pixmap is None:
             pixmap = QStyle.StandardPixmap.SP_FileIcon
-        return self.context.window.style().standardIcon(pixmap)
+        # Asking a widget wrapped by QStyleSheetStyle for a standard icon can
+        # return a transparent pixmap on Windows (notably the panel arrows).
+        # Render from a stable base style and tint the glyph with the theme's
+        # text role so icon-only buttons always contrast with their surface.
+        from ai_player.resources.themes.python_theme import values
+
+        base_icon = QStyleFactory.create("Fusion").standardIcon(pixmap)
+        color = QColor(values()["text"])
+        icon = QIcon()
+        for edge in (16, 20, 24, 32):
+            source = base_icon.pixmap(QSize(edge, edge))
+            if source.isNull():
+                continue
+            source_image = source.toImage()
+            opaque = [
+                (x, y)
+                for y in range(source_image.height())
+                for x in range(source_image.width())
+                if source_image.pixelColor(x, y).alpha() > 0
+            ]
+            bounds = (
+                QRect(
+                    min(x for x, _y in opaque),
+                    min(y for _x, y in opaque),
+                    max(x for x, _y in opaque) - min(x for x, _y in opaque) + 1,
+                    max(y for _x, y in opaque) - min(y for _x, y in opaque) + 1,
+                )
+                if opaque
+                else QRect()
+            )
+            glyph = source.copy(bounds) if bounds.isValid() and not bounds.isEmpty() else source
+            target_edge = max(12, edge - 4)
+            glyph = glyph.scaled(
+                target_edge,
+                target_edge,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            tinted = QPixmap(QSize(edge, edge))
+            tinted.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(tinted)
+            painter.drawPixmap((edge - glyph.width()) // 2, (edge - glyph.height()) // 2, glyph)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            painter.fillRect(tinted.rect(), color)
+            painter.end()
+            icon.addPixmap(tinted, QIcon.Mode.Normal, QIcon.State.Off)
+        return icon if not icon.isNull() else base_icon
 
     def _make_button(self, text: str, icon: QIcon) -> QPushButton:
         label = self.context.ui._i18n_text(text)
@@ -216,6 +263,7 @@ class PlayerUiFeature(Feature):
         key = tooltip if tooltip in UI_TEXT.get("vi", {}) else UI_TEXT_ALIASES.get(tooltip)
         if key:
             button.setProperty("i18n_tooltip_key", key)
+        button.setIconSize(QSize(18, 18))
         button.setFixedSize(self.context.ui._ICON_BUTTON_SIZE, self.context.ui._ICON_BUTTON_SIZE)
         button.setCursor(Qt.PointingHandCursor)
         return button

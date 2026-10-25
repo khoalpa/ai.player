@@ -689,13 +689,16 @@ class PlayerMediaFeature(Feature):
         page = self.context.media.document.pages[page_index]
         title = html.escape(f"{page.title} / {len(self.context.media.document.pages)}")
         image_path = str(getattr(page, "image_path", "") or "").replace("\\", "/")
+        from ai_player.resources.themes.python_theme import values
+
+        theme = values()
         if not image_path:
             body = html.escape(page.text).replace("\n", "<br>")
             self.context.layout._document_view.setHtml(
-                "<div style='color:#52657a; font-size:15px; font-weight:600; margin-bottom:16px;'>"
+                f"<div style='color:{theme['muted']}; font-size:15px; font-weight:600; margin-bottom:16px;'>"
                 f"{title}"
                 "</div>"
-                "<div style='color:#172033; font-size:24px; line-height:1.55; padding:36px 48px;'>"
+                f"<div style='color:{theme['text']}; font-size:24px; line-height:1.55; padding:36px 48px;'>"
                 f"{body}</div>"
             )
             return
@@ -703,7 +706,7 @@ class PlayerMediaFeature(Feature):
         size_attr = f" width='{width}' height='{height}'" if width and height else ""
         self.context.layout._document_view.setHtml(
             "<body style='margin:0; padding:0; overflow:hidden;'>"
-            "<div style='height:26px; color:#52657a; font-size:15px; font-weight:600; "
+            f"<div style='height:26px; color:{theme['muted']}; font-size:15px; font-weight:600; "
             "line-height:22px; padding:0 4px;'>"
             f"{title}</div>"
             "<div style='text-align:center; overflow:hidden;'>"
@@ -1228,7 +1231,7 @@ class PlayerMediaFeature(Feature):
             if panel_visible
             else QStyle.StandardPixmap.SP_TitleBarUnshadeButton
         )
-        self.context.layout._panel_toggle_button.setIcon(self.context.window.style().standardIcon(icon))
+        self.context.layout._panel_toggle_button.setIcon(self.context.ui._app_icon(icon))
 
     def _sync_panel_visibility_buttons(self) -> None:
         if self.context.has("_top_panel_toggle_button"):
@@ -1281,7 +1284,7 @@ class PlayerMediaFeature(Feature):
         tooltip_key = hide_tooltip_key if panel_visible else show_tooltip_key
         icon = hide_icon if panel_visible else show_icon
         button.setText("")
-        button.setIcon(self.context.window.style().standardIcon(icon))
+        button.setIcon(self.context.ui._app_icon(icon))
         button.setToolTip(self.context.settings._tr(tooltip_key))
         button.setProperty("i18n_tooltip_key", tooltip_key)
 

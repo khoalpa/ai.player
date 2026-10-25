@@ -120,18 +120,21 @@ class PlayerTranscriptFeature(Feature):
             table.setItem(row, column, item)
 
     def _style_transcript_segment_row(self, row: int, segment: dict, has_target: bool) -> None:
+        from ai_player.resources.themes.python_theme import values
+
         table = self.context.get("_transcript_segment_table", None)
         if table is None:
             return
+        theme = values()
         metadata = segment.get("metadata", {}) if isinstance(segment, dict) else {}
         if isinstance(metadata, dict) and metadata.get("retry_requested"):
-            color = QColor("#fff7e8")
+            color = QColor(theme["warning-soft"])
         elif isinstance(metadata, dict) and metadata.get("reviewed"):
-            color = QColor("#eef8f3")
+            color = QColor(theme["success-soft"])
         elif not has_target:
-            color = QColor("#f8fafc")
+            color = QColor(theme["surface"])
         else:
-            color = QColor("#ffffff")
+            color = QColor(theme["panel"])
         for column in range(table.columnCount()):
             item = table.item(row, column)
             if item is not None:
@@ -706,12 +709,18 @@ class PlayerTranscriptFeature(Feature):
 
     @staticmethod
     def _transcript_line_html(text: str, role: str) -> str:
-        color = "#1d4ed8" if role == "raw" else "#15803d"
+        from ai_player.resources.themes.python_theme import values
+
+        theme = values()
+        color = theme["info"] if role == "raw" else theme["success"]
         return f"<div style='color: {color}; margin: 0 0 10px 0;'>{_html_with_breaks(text)}</div>"
 
     @staticmethod
     def _transcript_labeled_line_html(label: str, text: str, role: str) -> str:
-        color = "#1d4ed8" if role == "raw" else "#15803d"
+        from ai_player.resources.themes.python_theme import values
+
+        theme = values()
+        color = theme["info"] if role == "raw" else theme["success"]
         return (
             f"<div style='color: {color}; margin-bottom: 4px;'>"
             f"<span style='font-weight: 700;'>{html.escape(label)}:</span> "

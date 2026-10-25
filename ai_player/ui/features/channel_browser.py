@@ -191,7 +191,7 @@ class PlayerChannelBrowserFeature(Feature):
             return
         visible = bool(self.context.get("_telegram_side_panel_visible", True))
         icon = QStyle.StandardPixmap.SP_ArrowRight if visible else QStyle.StandardPixmap.SP_ArrowLeft
-        button.setIcon(self.context.window.style().standardIcon(icon))
+        button.setIcon(self.context.ui._app_icon(icon))
         tooltip_key = "telegram_channel_side_hide" if visible else "telegram_channel_side_show"
         button.setToolTip(self.context.settings._tr(tooltip_key))
         button.setAccessibleName(self.context.settings._tr(tooltip_key))

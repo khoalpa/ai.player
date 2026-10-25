@@ -76,6 +76,9 @@ class UserGuideFeature(Feature):
         )
 
     def _guide_html_page(self, body_html: str, *, include_intro: bool = False) -> str:
+        from ai_player.resources.themes.python_theme import values
+
+        theme = values()
         intro_html = (
             f'<p class="muted">{html.escape(self.context.user_guide._guide_text("intro"))}</p>' if include_intro else ""
         )
@@ -84,21 +87,21 @@ class UserGuideFeature(Feature):
         <head>
         <meta charset="utf-8">
         <style>
-            body {{ font-family: Segoe UI, Arial, sans-serif; font-size: 13px; color: #172033; }}
+            body {{ font-family: Segoe UI, Arial, sans-serif; font-size: 13px; color: {theme["text"]}; }}
             h1 {{ font-size: 24px; margin: 0 0 12px 0; }}
-            h2 {{ font-size: 18px; margin: 22px 0 8px 0; color: #075985; }}
+            h2 {{ font-size: 18px; margin: 22px 0 8px 0; color: {theme["accent"]}; }}
             h3 {{ font-size: 15px; margin: 16px 0 6px 0; }}
             ul {{ margin-top: 6px; }}
             li {{ margin-bottom: 5px; }}
             table {{ border-collapse: collapse; width: 100%; margin-top: 8px; }}
-            th, td {{ border: 1px solid #d7dde5; padding: 7px 8px; vertical-align: top; }}
-            th {{ background: #eef6ff; text-align: left; }}
+            th, td {{ border: 1px solid {theme["border"]}; padding: 7px 8px; vertical-align: top; }}
+            th {{ background: {theme["accent-soft"]}; text-align: left; }}
             .decision-table td:first-child, .troubleshooting-table td:first-child {{ width: 22%; font-weight: 700; }}
-            .ok {{ color: #15803d; font-weight: 700; }}
-            .warn {{ color: #b45309; font-weight: 700; }}
-            .bad {{ color: #b91c1c; font-weight: 700; }}
-            .muted {{ color: #607086; }}
-            code {{ background: #f3f4f6; padding: 1px 4px; border-radius: 4px; }}
+            .ok {{ color: {theme["success"]}; font-weight: 700; }}
+            .warn {{ color: {theme["warning"]}; font-weight: 700; }}
+            .bad {{ color: {theme["danger"]}; font-weight: 700; }}
+            .muted {{ color: {theme["muted"]}; }}
+            code {{ background: {theme["surface"]}; padding: 1px 4px; border-radius: 4px; }}
         </style>
         </head>
         <body>

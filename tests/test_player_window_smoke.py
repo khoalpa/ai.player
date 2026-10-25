@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QMimeData, QPoint, Qt, QTimer, QUrl
+from PySide6.QtCore import QMimeData, QPoint, QSize, Qt, QTimer, QUrl
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QFrame, QMessageBox, QScrollArea, QSizePolicy
 
@@ -151,6 +151,23 @@ def test_player_window_constructs_offscreen(qapp) -> None:
         assert window.features.config.video_url_full_cache is True
         assert window.features.layout._aspect_combo.currentData() == DEFAULT_MEDIA_ASPECT_RATIO
         assert not window.features.layout._panel_toggle_button.icon().isNull()
+        for button in (
+            window.features.layout._top_panel_toggle_button,
+            window.features.layout._bottom_panel_toggle_button,
+            window.features.layout._right_panel_toggle_button,
+        ):
+            assert button.iconSize() == QSize(18, 18)
+            icon_image = button.icon().pixmap(button.iconSize()).toImage()
+            visible_pixels = [
+                (x, y)
+                for y in range(icon_image.height())
+                for x in range(icon_image.width())
+                if icon_image.pixelColor(x, y).alpha() > 0
+            ]
+            assert visible_pixels
+            visible_width = max(x for x, _y in visible_pixels) - min(x for x, _y in visible_pixels) + 1
+            visible_height = max(y for _x, y in visible_pixels) - min(y for _x, y in visible_pixels) + 1
+            assert max(visible_width, visible_height) >= 14
         assert (
             window.features.layout._panel_toggle_button.icon().cacheKey()
             != window.features.layout._panel_collapse_button.icon().cacheKey()
